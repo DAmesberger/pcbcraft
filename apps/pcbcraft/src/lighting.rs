@@ -39,6 +39,9 @@ pub const STUDIO_INTENSITY: f32 = 1.0;
 /// (tuned against the earlier `Contrast`) the band crossed the middle of a
 /// bare board as a pale haze; at 240° it softened across the far end; at
 /// 285° it is a crisp sheen off the board's middle (`write_look_pictures`).
+/// Seen low, that sheen was a hard-edged white shaft across the board; the
+/// gloss mask's coat roughness (`material::mask_coat_roughness`) now keeps
+/// its edges soft.
 pub const STUDIO: StudioPreset = StudioPreset::Contrast;
 const STUDIO_TURN_DEG: f32 = 285.0;
 /// Scale of the direct lights' records.

@@ -46,20 +46,32 @@ impl Viewport {
 
     /// Whether the look is drawn now: on, with a focus.
     pub fn following(&self) -> bool {
-        self.fade.is_some()
+        self.fade.as_deref().is_some_and(model_scene::Fade::follows)
+    }
+
+    /// The see-through look for the current preference, focus and layers:
+    /// the net followed, else the X-ray view's see-through copper, else
+    /// none.
+    pub(super) fn wanted_fade(&self) -> Option<Arc<model_scene::Fade>> {
+        let follow = if self.follow {
+            model_scene::Fade::new(self.focus.iter().copied())
+        } else {
+            None
+        };
+        follow
+            .or_else(|| self.layers.see_through().then(model_scene::Fade::x_ray))
+            .map(Arc::new)
     }
 
     /// The look for the current preference and focus, published when it
     /// changed: the stream packed again and the instanced meshes split.
     fn refresh_fade(&mut self) {
-        let fade = if self.follow {
-            model_scene::Fade::new(self.focus.iter().copied()).map(Arc::new)
-        } else {
-            None
-        };
+        let fade = self.wanted_fade();
         if fade != self.fade {
             self.fade = fade;
             self.publish_shadows();
+            // The net's tint becomes its lift, or back.
+            self.publish_highlight();
             if self.model.is_some() {
                 self.start_repack();
             }
@@ -343,6 +355,108 @@ mod tests {
             })
             .unwrap_or_default();
         assert_eq!(after, instanced, "the instanced triangles are kept");
+        Ok(())
+    }
+
+    /// The X-ray layer view draws the copper see-through, so a top pour
+    /// does not hide the layers under it: every shown body goes to the
+    /// see-through triangles and placements at the X-ray opacity, with no
+    /// opaque copper left. It is a repack of the cached meshes, not a
+    /// rebuild, and it is not following a net. Show all makes it solid.
+    #[test]
+    fn x_ray_draws_the_copper_see_through_without_a_rebuild() -> TestResult {
+        let mut viewport = vias(8)?;
+        let before = meshes(&viewport);
+        let generation = viewport.generation;
+        let stack = viewport.model.as_ref().ok_or("no model")?.stack.clone();
+        viewport.set_layers(crate::layer_view::LayerView::x_ray(&stack));
+        settle(&mut viewport)?;
+        assert!(!viewport.following(), "X-ray follows no net");
+        let scene = published(&viewport)?;
+        assert!(scene.tris.is_empty(), "no opaque copper");
+        assert!(!scene.trans.is_empty(), "the copper is drawn see-through");
+        assert!(
+            alphas(&scene, &scene.trans)
+                .iter()
+                .all(|a| *a == model_scene::X_RAY_ALPHA)
+        );
+        assert!(
+            scene
+                .instanced
+                .iter()
+                .all(|m| m.look == InstanceLook::Faded && m.graph.is_none()),
+            "the vias are see-through placements too"
+        );
+        assert_eq!(viewport.generation, generation, "no new model");
+        assert_eq!(meshes(&viewport), before, "the cached meshes are kept");
+        viewport.set_layers(crate::layer_view::LayerView::default());
+        settle(&mut viewport)?;
+        let solid = published(&viewport)?;
+        assert!(solid.trans.is_empty() && !solid.tris.is_empty());
+        Ok(())
+    }
+
+    /// While the net is followed its bodies show in their own copper look,
+    /// untinted; only the selected object keeps the selection tint. Turning
+    /// the look off tints the whole net again.
+    #[test]
+    fn the_followed_net_shows_its_copper_untinted() -> TestResult {
+        let mut viewport = vias(8)?;
+        let (net, _, _) = super::super::tests::above_via(&mut viewport, 1)?;
+        let (picked, _, _) = super::super::tests::above_via(&mut viewport, 5)?;
+        viewport.highlight_selected(vec![net, picked], vec![picked]);
+        // The tinted placements, by colour: the net's (0), the selected (1).
+        let tinted = |v: &Viewport| -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+            let scene = v
+                .hl_slot
+                .lock()
+                .map_err(|_| "slot poisoned")?
+                .clone()
+                .ok_or("no highlight")?;
+            let mut colours: Vec<u32> = scene
+                .selected_instanced
+                .iter()
+                .flat_map(|m| m.instances.chunks_exact(52))
+                .filter_map(|p| p.get(48..52).and_then(|b| b.try_into().ok()))
+                .map(u32::from_le_bytes)
+                .collect();
+            colours.sort_unstable();
+            colours.dedup();
+            Ok(colours)
+        };
+        assert_eq!(tinted(&viewport)?, vec![0, 1], "the net and the selected");
+        viewport.set_follow_net(true);
+        viewport.set_focus(vec![net, picked]);
+        assert!(viewport.following());
+        assert_eq!(tinted(&viewport)?, vec![1], "only the selected is tinted");
+        viewport.set_follow_net(false);
+        assert_eq!(tinted(&viewport)?, vec![0, 1]);
+        Ok(())
+    }
+
+    /// The Standard look publishes the model without its materials (every
+    /// face in its plain colour under the modelling light), the Realistic
+    /// look with them; switching is a repack of the cached meshes, never a
+    /// rebuild.
+    #[test]
+    fn the_standard_look_drops_the_materials_without_a_rebuild() -> TestResult {
+        let mut viewport = vias(8)?;
+        let before = meshes(&viewport);
+        let generation = viewport.generation;
+        let shaded = |s: &GpuScene| {
+            !s.graphs.draws().is_empty() || s.instanced.iter().any(|m| m.graph.is_some())
+        };
+        assert!(shaded(&published(&viewport)?), "Realistic by default");
+        viewport.set_realistic(false);
+        settle(&mut viewport)?;
+        let standard = published(&viewport)?;
+        assert!(!shaded(&standard), "no material in the Standard look");
+        assert!(!standard.tris.is_empty() && !standard.instanced.is_empty());
+        viewport.set_realistic(true);
+        settle(&mut viewport)?;
+        assert!(shaded(&published(&viewport)?));
+        assert_eq!(viewport.generation, generation, "no new model");
+        assert_eq!(meshes(&viewport), before, "the cached meshes are kept");
         Ok(())
     }
 }

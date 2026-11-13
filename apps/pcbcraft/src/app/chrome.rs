@@ -832,8 +832,14 @@ impl App {
             let follow_label =
                 self.with_shortcut("Follow net (see-through)", AppCommand::ToggleFollowNet);
             let mut follow = self.scene.viewport.follow_net();
-            if crate::layer_view::button(&mut child, &mut view, &stack, &mut follow, &follow_label)
-            {
+            if crate::layer_view::button(
+                &mut child,
+                &mut view,
+                &stack,
+                &mut follow,
+                &follow_label,
+                canvas,
+            ) {
                 self.scene.viewport.set_layers(view.clone());
                 self.pcb.set_layer_view(view);
             }

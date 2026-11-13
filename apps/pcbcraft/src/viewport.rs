@@ -247,10 +247,18 @@ impl Viewport {
         self.realistic
     }
 
-    /// Draw the Realistic look or Solidcraft's Standard one. Only the frame's
-    /// look changes: no geometry is rebuilt.
+    /// Draw the Realistic look or Solidcraft's Standard one. The frame's
+    /// look changes, and the model's stream is packed again from the cached
+    /// meshes with or without its materials ([`Self::publish_stream`]): no
+    /// geometry is rebuilt.
     pub fn set_realistic(&mut self, on: bool) {
+        if self.realistic == on {
+            return;
+        }
         self.realistic = on;
+        if self.model.is_some() {
+            self.start_repack();
+        }
     }
 
     /// The viewport's state without a GPU (the renderer is installed by
@@ -484,6 +492,8 @@ impl Viewport {
             return;
         }
         self.layers = layers;
+        // X-ray draws the copper see-through: the same repack.
+        self.fade = self.wanted_fade();
         self.publish_shadows();
         self.publish_highlight();
         self.start_repack();
@@ -563,8 +573,22 @@ impl Viewport {
     /// its placed bodies drawn instanced: the shown layers' definition meshes
     /// (the same shared triangles each time, so their GPU buffers are kept)
     /// at their placements under the display transform.
+    ///
+    /// The Standard look draws every face in its plain colour, lit by
+    /// Solidcraft's modelling light; the materials (metals, coats,
+    /// patterns) are the Realistic look's. Without its studio a metal
+    /// reflects nothing but the few fixed lights of Solidcraft's default
+    /// material preview, and a face turned from them has no light at all:
+    /// header pins read dark brown and two of the board's edges black. So
+    /// the Standard look publishes the stream without its materials.
     fn publish_stream(&mut self, mut stream: GpuScene) {
         stream.instanced = self.instanced(&mut stream);
+        if !self.realistic {
+            stream.graphs = Default::default();
+            for mesh in &mut stream.instanced {
+                mesh.graph = None;
+            }
+        }
         Self::publish(&self.slot, &mut self.key, stream);
     }
 
@@ -715,18 +739,24 @@ impl Viewport {
         let edge = [edge.r(), edge.g(), edge.b(), 255];
         let mut scene =
             GpuScene::with_palette(Palette::with_stable(vec![rgba, strong, face, edge]));
+        // Following the net, its bodies show in their own copper look, the
+        // only solid ones in the faded board: a tint over them (any colour,
+        // at any opacity the highlight layer draws) turned the copper grey
+        // or selection blue. Only the selected object keeps its tint.
+        let tinted = if self.following() {
+            &self.selected
+        } else {
+            &self.highlighted
+        };
         if let Some(model) = &self.model {
             scene.blocks = model
                 .highlight
                 .iter()
-                .filter(|(item, layer, _)| {
-                    self.highlighted.contains(item) && self.layers.draws(*layer)
-                })
+                .filter(|(item, layer, _)| tinted.contains(item) && self.layers.draws(*layer))
                 .map(|(_, _, block)| block.clone())
                 .collect();
-            if !self.highlighted.is_empty() {
-                let highlighted: std::collections::HashSet<u64> =
-                    self.highlighted.iter().copied().collect();
+            if !tinted.is_empty() {
+                let highlighted: std::collections::HashSet<u64> = tinted.iter().copied().collect();
                 let selected: std::collections::HashSet<u64> =
                     self.selected.iter().copied().collect();
                 let display = self.display_place();
@@ -823,6 +853,42 @@ impl Viewport {
             .collect()
     }
 
+    /// Every shown body's pick identity along the pointer ray through a
+    /// pixel of a `width` × `height` view, nearest first, each once: what
+    /// lies under the pointer, the bodies seen through too.
+    pub fn picks_along(&self, x: f64, y: f64, width: f64, height: f64) -> Vec<u64> {
+        let Some(model) = self.model.as_ref() else {
+            return Vec::new();
+        };
+        let (origin, direction) = self.camera.ray(x, y, width, height);
+        let (origin, direction) = self.model_ray(origin, direction);
+        let mut hits: Vec<(f64, u64)> = model
+            .geometry
+            .iter()
+            .filter(|g| self.layers.shows(g))
+            .filter(|g| box_hit(g, origin, direction))
+            .filter_map(|g| Some((g.raycast(origin, direction)?.0, g.item?)))
+            .collect();
+        hits.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let mut seen = std::collections::HashSet::new();
+        hits.into_iter()
+            .filter_map(|(_, item)| seen.insert(item).then_some(item))
+            .collect()
+    }
+
+    /// [`Self::picks_along`] at a screen point of the view last drawn.
+    pub fn picks_at(&self, at: egui::Pos2) -> Vec<u64> {
+        let Some(rect) = self.rect else {
+            return Vec::new();
+        };
+        self.picks_along(
+            f64::from(at.x - rect.left()),
+            f64::from(at.y - rect.top()),
+            f64::from(rect.width()),
+            f64::from(rect.height()),
+        )
+    }
+
     /// The pick identity under a pixel of a `width` × `height` view.
     pub fn pick(&self, x: f64, y: f64, width: f64, height: f64) -> Option<u64> {
         self.hit(x, y, width, height).and_then(|(_, g)| g.item)
@@ -900,8 +966,13 @@ impl Viewport {
     pub(crate) fn frame(&self, view_proj: [[f32; 4]; 4], size_px: [f32; 2], ssaa: f32) -> Frame {
         let eye = self.camera.eye().to_f32();
         Frame {
-            product_lights: self
-                .realistic
+            // While a see-through look draws (the net followed, X-ray), the
+            // faded bodies are lit by Solidcraft's display drawing, which
+            // takes the frame's direct lights when it has them: the studio
+            // rig alone, tone mapped per channel, leaves them a dark smoke.
+            // Without them they take the modelling light the Standard look
+            // has, and the solid bodies keep the studio.
+            product_lights: (self.realistic && self.fade.is_none())
                 .then(|| lighting::studio(&self.camera, &self.bounds)),
             product_look: self.realistic.then(lighting::look),
             units_per_mm: 1.0,

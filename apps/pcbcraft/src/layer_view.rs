@@ -146,6 +146,9 @@ impl From<Slot> for ViewLayer {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LayerView {
     hidden: BTreeSet<ViewLayer>,
+    /// The X-ray look: the shown copper and vias drawn see-through
+    /// ([`Self::x_ray`]), kept while single layers are toggled.
+    see_through: bool,
 }
 
 impl LayerView {
@@ -163,8 +166,8 @@ impl LayerView {
     }
 
     /// X-ray: only the copper and vias, every film, the laminate, the
-    /// components and their markings hidden, so the stackup's copper shows
-    /// layer over layer.
+    /// components and their markings hidden, and the copper drawn
+    /// see-through, so the stackup's copper shows layer over layer.
     pub fn x_ray(stack: &Stack) -> Self {
         let mut view = Self::default();
         for side in [Layer::Top, Layer::Bottom] {
@@ -174,6 +177,7 @@ impl LayerView {
         view.set_laminate(stack, false);
         view.set(ViewLayer::Bodies, false);
         view.set(ViewLayer::Markings, false);
+        view.see_through = true;
         view
     }
 
@@ -194,9 +198,14 @@ impl LayerView {
         view
     }
 
-    /// Whether any layer is hidden.
+    /// Whether any layer is hidden or the copper is drawn see-through.
     pub fn hides_any(&self) -> bool {
-        !self.hidden.is_empty()
+        !self.hidden.is_empty() || self.see_through
+    }
+
+    /// Whether the shown copper and vias are drawn see-through (X-ray).
+    pub fn see_through(&self) -> bool {
+        self.see_through
     }
 
     /// Whether `layer`'s toggle is on; the undivided laminate
@@ -225,6 +234,11 @@ impl LayerView {
         }
         if visible {
             self.hidden.remove(&layer);
+            // A film, the laminate or the parts back on the board end the
+            // X-ray look: the copper is solid again under them.
+            if !matches!(layer, ViewLayer::Copper(_) | ViewLayer::Vias) {
+                self.see_through = false;
+            }
         } else {
             self.hidden.insert(layer);
         }
@@ -257,13 +271,16 @@ impl LayerView {
 /// board of `stack`, with the follow-the-net toggle `follow` (labelled
 /// `follow_label`, its shortcut in it) under them. Returns whether `view`
 /// changed. The button is outlined while a layer is hidden or the net is
-/// followed.
+/// followed. The popover opens at the left of the 3D view `canvas`, above
+/// its hint line, so the board stays in sight while layers are toggled; it
+/// is never taller than the view and scrolls when it would be.
 pub fn button(
     ui: &mut Ui,
     view: &mut LayerView,
     stack: &Stack,
     follow: &mut bool,
     follow_label: &str,
+    canvas: egui::Rect,
 ) -> bool {
     let t = Tokens::get();
     let response = shell::icon_button(ui, "eye", "Layers", true);
@@ -276,18 +293,42 @@ pub fn button(
         );
     }
     let mut changed = false;
+    let (anchor, max_height) = popover_place(canvas);
     Container::new(ui.ctx(), Surface::Popup)
         .menu(&response)
-        .align(egui::RectAlign::TOP)
+        .anchor(anchor)
+        .align(egui::RectAlign::TOP_START)
+        .align_alternatives(&[])
+        .gap(0.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            crate::kit::form(ui, |ui| {
-                ui.set_width(POPOVER_WIDTH);
-                changed = popover(ui, view, stack);
-                follow_row(ui, follow, follow_label);
-            });
+            egui::ScrollArea::vertical()
+                .id_salt("layer-popover")
+                .max_height(max_height)
+                .show(ui, |ui| {
+                    crate::kit::form(ui, |ui| {
+                        ui.set_width(POPOVER_WIDTH);
+                        changed = popover(ui, view, stack);
+                        follow_row(ui, follow, follow_label);
+                    });
+                });
         });
     changed
+}
+
+/// Where the layer popover of a 3D view `canvas` opens: the corner its
+/// bottom-left sits on (at the view's left, above the hint line and the
+/// navigation bar) and the most height its content may take before it
+/// scrolls, the view's height above that corner less a margin and the
+/// popup's padding.
+fn popover_place(canvas: egui::Rect) -> (egui::Rect, f32) {
+    let t = Tokens::get();
+    let margin = t.space_8;
+    let bottom = (canvas.bottom() - crate::kit::navigation_band()).max(canvas.top());
+    let corner = pos2(canvas.left() + margin, bottom);
+    let padding = 4.0 * t.space_8;
+    let height = (bottom - canvas.top() - margin - padding).max(t.control_height);
+    (egui::Rect::from_min_max(corner, corner), height)
 }
 
 /// The popover's View caption and the follow-the-net check. Returns
@@ -718,6 +759,75 @@ mod tests {
         assert!(view.visible(ViewLayer::Markings));
         assert!(!view.shows_markings(), "no decals without their bodies");
         assert!(!view.draws(ViewLayer::Markings));
+        Ok(())
+    }
+
+    /// In a small window the popover opens beside the board, at the 3D
+    /// view's left, with its top row inside the view (it scrolls instead
+    /// of running off the window), and its last rows are reachable.
+    #[test]
+    fn the_popover_fits_a_small_view_at_its_side() -> Result<(), String> {
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, vec2(900.0, 420.0));
+        let canvas = egui::Rect::from_min_max(pos2(220.0, 70.0), pos2(900.0, 420.0));
+        let stack = four()?;
+        let mut view = LayerView::default();
+        let mut follow = false;
+        let bar = egui::Rect::from_center_size(
+            pos2(canvas.center().x, canvas.bottom() - 30.0),
+            vec2(40.0, 36.0),
+        );
+        let mut frame = |events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(bar));
+                button(&mut child, &mut view, &stack, &mut follow, "Follow", canvas);
+            });
+            output.textures_delta.clear();
+            output
+        };
+        frame(vec![]);
+        let at = bar.center();
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        frame(vec![egui::Event::PointerMoved(at)]);
+        frame(vec![press(true)]);
+        frame(vec![press(false)]);
+        let mut output = frame(vec![]);
+        for _ in 0..3 {
+            output = frame(vec![]);
+        }
+        let caption = text_at(&output, "Layers").ok_or("the popover did not open")?;
+        assert!(
+            canvas.contains(caption),
+            "the top row {caption:?} is inside the view {canvas:?}"
+        );
+        assert!(
+            caption.x < canvas.left() + POPOVER_WIDTH,
+            "at the view's side, not over its middle: {caption:?}"
+        );
+        // Every row drawn lies inside the view: what does not fit scrolls.
+        for clipped in &output.shapes {
+            if let egui::Shape::Text(text) = &clipped.shape
+                && text.galley.text() != "Layers"
+                && clipped.clip_rect.intersects(text.visual_bounding_rect())
+            {
+                let shown = clipped.clip_rect.intersect(text.visual_bounding_rect());
+                assert!(
+                    screen.contains_rect(shown),
+                    "{:?} drawn off the window at {shown:?}",
+                    text.galley.text()
+                );
+            }
+        }
         Ok(())
     }
 }

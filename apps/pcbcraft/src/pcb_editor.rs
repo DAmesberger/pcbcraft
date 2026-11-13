@@ -2293,6 +2293,37 @@ impl PcbEditor {
         }
     }
 
+    /// Select what a 3D click picked while the net is followed. `picked` is
+    /// the view's pick (the followed copper seen through the faded bodies
+    /// in front of it) and `along` every body under the pointer, nearest
+    /// first. A click whose nearest body is a part's own (its package, not
+    /// a pad) follows the net of that part's pad under the pointer, seen
+    /// through the faded package; with none of its pads there the part is
+    /// selected and the followed net kept, never another of its nets.
+    pub fn select_picked_following(
+        &mut self,
+        picked: Option<&pcbcraft_solidcraft::project::Source>,
+        along: &[&pcbcraft_solidcraft::project::Source],
+    ) {
+        use menu::Hit;
+        let part = along.first().and_then(|s| {
+            (s.pad.is_none() && s.track.is_none() && s.via.is_none() && s.fill.is_none())
+                .then_some(s.instance)
+                .flatten()
+        });
+        let Some(instance) = part else {
+            return self.select_picked(picked);
+        };
+        let net = self.highlighted;
+        match along
+            .iter()
+            .find(|s| s.instance == Some(instance) && s.pad.is_some())
+        {
+            Some(pad) => self.select_hit(Hit::Pad(instance, pad.net.or(net))),
+            None => self.set_selection(Some(instance), None, net),
+        }
+    }
+
     /// Select what `hit` picked (nothing clears the selection).
     fn select_hit(&mut self, hit: menu::Hit) {
         use menu::Hit;

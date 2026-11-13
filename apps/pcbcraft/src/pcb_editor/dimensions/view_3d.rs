@@ -327,6 +327,10 @@ impl PcbEditor {
             } else if !on && ui.input(|i| i.modifiers.shift || i.modifiers.command) {
                 // ⇧ or ⌘ adds the object, or takes it out, as in Layout.
                 self.toggle_picked(pick.and_then(|id| scene.source(id)), project);
+            } else if !on && scene.viewport.following() {
+                let along = at.map_or_else(Vec::new, |p| scene.viewport.picks_at(p));
+                let along: Vec<_> = along.iter().filter_map(|id| scene.source(*id)).collect();
+                self.select_picked_following(pick.and_then(|id| scene.source(id)), &along);
             } else if !on {
                 self.select_picked(pick.and_then(|id| scene.source(id)));
             }

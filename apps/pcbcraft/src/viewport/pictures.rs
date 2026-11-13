@@ -117,6 +117,14 @@ impl Gpu {
     /// The viewport's frame at `w` × `h` pixels (supersampled `ssaa` times),
     /// as straight RGBA.
     fn draw(&mut self, viewport: &mut Viewport, w: u32, h: u32, ssaa: f32) -> Option<Vec<u8>> {
+        // A look or layer change packs the stream again off the thread: as
+        // the window does, draw once it has landed.
+        for _ in 0..2000 {
+            if !viewport.receive_repack() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         // Material shapes compile over a few frames (their base response until then).
         let mut picture = self.draw_once(viewport, w, h, ssaa);
         for _ in 0..256 {
@@ -283,6 +291,9 @@ mod look;
 
 /// The follow-the-net look as drawn, and its pictures.
 mod follow;
+
+/// The ESP32-S31 example board's looks.
+mod esp32;
 
 /// The default overview of the showcase board is not flat: the studio's
 /// strip light lies on part of the gloss mask as a lacquer sheen, so the
