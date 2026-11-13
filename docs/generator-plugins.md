@@ -18,7 +18,7 @@ Design note and contract, 13 November 2026. GP0 built the module ABI, the SDK, t
 ## Commands
 
 - **`library.generate`** (core, Edit): `{ module: {hash, data?}, scope, params, name? }`. Bytes are needed only when the project does not embed the module yet; they must hash to `hash`. The command describes the module, completes the parameters (G7), and returns the part the project already holds with that key (`created: false`, nothing changes), or generates, expands, publishes the revisions as new lineages, embeds the module and records the part, as one undo step (`Outcome::Generated { report }`: root, revisions, key, result hash, created, the module's notes). Any refusal leaves the document unchanged.
-- **`library.generate_part`** (session, Edit): `{ generator | module, scope, preset?, params, name?, expected_revision }`. Reads a shipped module by name (`ShippedLibrary::generator`, bounded at 1 MiB) or an embedded one by hash, merges a preset's values under `params`, and applies `library.generate`. CLI and MCP use this request; the UI will build the same command.
+- **`library.generate_part`** (session, Edit): `{ generator | module, scope, preset?, params, name?, expected_revision }`. Reads a shipped module by name (`ShippedLibrary::generator`, bounded at 1 MiB) or an embedded one by hash, merges a preset's values under `params`, and applies `library.generate`. The CLI (`stdio`) uses this request; the UI will build the same command. MCP tools arrive with GP7: until then MCP neither lists nor calls `library.generate_part` or `library.generators` (`NOT_TOOLS` in `crates/automation/src/mcp.rs`), which keeps `tools/list` within its 64 KiB budget.
 - **`library.generators`** (session, Read): the shipped modules (name, hash, a summary of the description: parameters, presets, scopes), the embedded modules, and each generated part with its key, result hash and state.
 
 ## Checks on load
@@ -73,7 +73,7 @@ An entry that matches nothing fails the gate, so each is removed with the data i
 
 ## Tests
 
-- `crates/automation/src/session/generators_tests.rs` (the CLI and MCP request path): `a_generated_part_reopens_offline_identically`, `the_same_part_twice_is_found_not_made_again`, `refusals_change_nothing`, `a_changed_embedded_module_is_refused_naming_both_hashes`, `a_changed_stored_part_is_refused_naming_both_hashes`.
+- `crates/automation/src/session/generators_tests.rs` (the session request path the CLI uses): `a_generated_part_reopens_offline_identically`, `the_same_part_twice_is_found_not_made_again`, `refusals_change_nothing`, `a_changed_embedded_module_is_refused_naming_both_hashes`, `a_changed_stored_part_is_refused_naming_both_hashes`.
 - `crates/editor-core/src/library/generated/tests.rs`: the expansion and the checks with a stand-in runtime.
 - `crates/generators/src/worker.rs`: cancel, wall time, refusals through the worker.
 - `crates/io/src/shipped.rs`: `generator_modules_are_read_by_name_within_the_shelf`.
