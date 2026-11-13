@@ -320,10 +320,13 @@ pub fn number_input(
             changed = true;
         }
         ui.data_mut(|d| d.insert_temp(key, text.clone()));
-    } else if parsed.is_some() {
+    } else if parsed.is_some() || text == shown() {
+        // Valid text, or the value's own text (a value outside the range,
+        // as a via size without a fab profile): the field follows the
+        // value, so it shows the value's next change.
         ui.data_mut(|d| d.remove::<String>(key));
     } else {
-        // Invalid text is kept and marked, never silently replaced.
+        // Invalid typed text is kept and marked, never silently replaced.
         ui.data_mut(|d| d.insert_temp(key, text.clone()));
     }
     let invalid = parsed

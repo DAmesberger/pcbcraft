@@ -1876,6 +1876,13 @@ fn defaults() -> Vec<Command> {
             Chord::key(K::Delete),
         )
         .also(&[Chord::key(K::Backspace)]),
+        // The schematic's ⌘R (`schematic.rotate`); R is Route here.
+        key(
+            "pcb.rotate",
+            "Rotate the selected part 90°",
+            C::PcbLayout,
+            Chord::cmd(K::R),
+        ),
         view(
             "pcb.from-bottom",
             "View from bottom",

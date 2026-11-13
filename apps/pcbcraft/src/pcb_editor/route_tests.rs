@@ -1046,3 +1046,103 @@ fn the_track_card_ends_name_what_each_end_joins() -> TestResult {
     assert_eq!(ends(corner).as_deref(), Some("track → open"));
     Ok(())
 }
+
+/// Run 4, finding 2: the Route card's via size follows the rules. Without
+/// a profile the size is 0 mm and marked; once a profile is set, the card
+/// shows its via size and no error.
+#[test]
+fn the_route_card_via_size_follows_a_profile_set_later() -> TestResult {
+    let mut engine = Engine::default();
+    let canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    editor.on_tool("route", &engine);
+    let card = |editor: &mut PcbEditor, engine: &Engine| {
+        let mut output = canvas.ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(700.0, 1400.0))),
+                ..Default::default()
+            },
+            |ui| {
+                editor.subject_slot(ui, engine);
+            },
+        );
+        output.textures_delta.clear();
+        fn collect(shape: &Shape, out: &mut Vec<String>) {
+            match shape {
+                Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                Shape::Text(text) => out.push(text.galley.text().to_owned()),
+                _ => {}
+            }
+        }
+        let mut shown = Vec::new();
+        for shape in &output.shapes {
+            collect(&shape.shape, &mut shown);
+        }
+        shown
+    };
+    let error = "Enter 0.1 to 6 mm";
+    card(&mut editor, &engine);
+    let shown = card(&mut editor, &engine);
+    assert!(shown.iter().any(|t| t == error), "{shown:?}");
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::SetProfile {
+            profile: Box::new(pcbcraft_core::rules::fixtures::jlcpcb_example()?),
+            keep_overrides: false,
+        }),
+    )?;
+    card(&mut editor, &engine);
+    let shown = card(&mut editor, &engine);
+    assert!(!shown.iter().any(|t| t == error), "{shown:?}");
+    for size in ["0.3 mm", "0.45 mm"] {
+        assert!(shown.iter().any(|t| t == size), "{size}: {shown:?}");
+    }
+    Ok(())
+}
+
+/// Run 4, finding 14: ⌘R rotates the selected part 90° on the Layout
+/// canvas, the schematic's rotate key, as the card's Rotate 90° does; R
+/// stays Route.
+#[test]
+fn command_r_rotates_the_selected_part() -> TestResult {
+    let engine = Engine::demo()?;
+    let r1 = engine
+        .project()
+        .instance_by_designator("R1")
+        .map(|i| i.id)
+        .ok_or("R1")?;
+    let before = engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == r1)
+        .ok_or("R1 placement")?
+        .rotation_deg;
+    let mut canvas = Canvas::new();
+    let mut editor = PcbEditor::default();
+    canvas.frame(&mut editor, &engine, vec![], egui::Modifiers::NONE);
+    editor.set_selection(Some(r1), None, None);
+    let sent = canvas.key(
+        &mut editor,
+        &engine,
+        [1.0, 1.0],
+        egui::Key::R,
+        egui::Modifiers::COMMAND,
+    );
+    let Some(Operation::Layout(LayoutCommand::Move {
+        instance,
+        rotation_deg,
+        ..
+    })) = sent
+    else {
+        return Err(format!("⌘R sent {sent:?}").into());
+    };
+    assert_eq!(instance, r1);
+    assert_eq!(rotation_deg, (before + 90.0).rem_euclid(360.0));
+    assert!(editor.tool == Tool::Select, "⌘R does not arm Route");
+    assert_eq!(
+        crate::keys::shown(canvas.ctx(), "pcb.rotate"),
+        crate::keys::shown(canvas.ctx(), "schematic.rotate")
+    );
+    Ok(())
+}

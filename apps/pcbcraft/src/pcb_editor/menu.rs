@@ -149,12 +149,10 @@ impl PcbEditor {
                     ),
                 };
                 vec![
-                    Some(Entry::act(
-                        "Rotate 90°",
-                        "spin",
-                        Act::Rotate(instance),
-                        free,
-                    )),
+                    Some(
+                        Entry::act("Rotate 90°", "spin", Act::Rotate(instance), free)
+                            .key_of(ctx, "pcb.rotate"),
+                    ),
                     Some(Entry::act(
                         "Flip side",
                         "pattern_flip",
