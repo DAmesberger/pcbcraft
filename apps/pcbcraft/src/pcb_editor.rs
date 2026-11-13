@@ -70,6 +70,11 @@ mod part_place;
 mod parts_table;
 #[cfg(test)]
 pub use parts_table::Tab as TableTab;
+mod datum_paint;
+mod interface_card;
+mod interface_host;
+#[cfg(test)]
+mod interface_tests;
 #[cfg(test)]
 mod pick_tests;
 mod placement_card;
@@ -459,6 +464,13 @@ pub struct PcbEditor {
     pub production_folder: Option<std::path::PathBuf>,
     /// A folder the dialog was just pointed at, for the app to keep.
     chosen_production_folder: Option<std::path::PathBuf>,
+    /// The board interface: its card, previews and drawn datums
+    /// (`interface_card`).
+    interface: interface_card::InterfaceUi,
+    /// The project file, set by the app each frame: where the interface is
+    /// published by default, and what relative enclosure paths are read
+    /// against. `None` for a project never saved.
+    pub project_path: Option<std::path::PathBuf>,
     /// Board bounds a Locate asked the next Layout frame to frame.
     frame_request: Option<[Point; 2]>,
     /// Bounds the next Layout frame shows whole, zooming out past the
@@ -590,6 +602,8 @@ impl Default for PcbEditor {
             production: None,
             production_folder: None,
             chosen_production_folder: None,
+            interface: Default::default(),
+            project_path: None,
             frame_request: None,
             overview_request: None,
             show_in_schematic: None,
@@ -1251,6 +1265,8 @@ impl PcbEditor {
             subject
         } else if let Some(subject) = self.rules_subject() {
             subject
+        } else if self.interface.review.is_some() {
+            Subject::Review
         } else if self.setup.is_some()
             || self.stackup.is_some()
             || self.net_classes.is_some()
@@ -1297,12 +1313,19 @@ impl PcbEditor {
         if let Some(operation) = self.part_chooser_frame(ui.ctx(), engine) {
             return CardResponse::output(Some(operation));
         }
+        // A publish's record or an enclosure's read, the frame it arrives.
+        if let Some(operation) = self.interface_poll(ui.ctx()) {
+            return CardResponse::output(Some(operation));
+        }
         match self.subject() {
             Subject::Dialog if self.production.is_some() && !self.update.is_open() => {
                 self.production_slot(ui, engine)
             }
             Subject::Dialog | Subject::Review if self.rules.is_some() && !self.update.is_open() => {
                 self.rules_slot(ui, engine)
+            }
+            Subject::Review if self.interface.review.is_some() && !self.update.is_open() => {
+                self.interface_review_slot(ui, engine)
             }
             Subject::Tool if self.tool == Tool::Dimension => {
                 CardResponse::output(self.dimension_card(ui))
@@ -1427,7 +1450,8 @@ impl PcbEditor {
                 let moved = self.placement_section(ui, project, placement);
                 let text = self.text_section(ui, project, id);
                 let part = self.part_section(ui, engine, id);
-                moved.or(text).or(part)
+                let exported = self.interface_part_section(ui, engine, id);
+                moved.or(text).or(part).or(exported)
             }
             Inspected::Unplaced(_) => {
                 self.unplaced_section(ui, engine);
@@ -1448,7 +1472,9 @@ impl PcbEditor {
             Inspected::Group => self.group_section(ui, project),
             Inspected::Board | Inspected::Review => {
                 let renamed = self.board_section(ui, project);
-                renamed.or(self.board_shape_section(ui, engine))
+                let shape = self.board_shape_section(ui, engine);
+                let interface = self.interface_section(ui, engine);
+                renamed.or(shape).or(interface)
             }
         }
     }
