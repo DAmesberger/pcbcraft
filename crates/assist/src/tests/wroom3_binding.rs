@@ -71,7 +71,7 @@ struct Built {
 /// Imports `document` and builds the module package with `terminals`
 /// (`None`: the request's default), through the assistant's tools.
 fn build(document: &Value, terminals: Option<&str>) -> Fallible<Built> {
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let mut workspace = tools::Workspace::default();
     let preview =
         json!({"target": {"target": "new", "name": "ESP32-S31-WROOM-3"}, "document": document});

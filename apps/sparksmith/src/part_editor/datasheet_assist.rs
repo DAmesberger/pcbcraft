@@ -446,7 +446,7 @@ fn work(
     let mut backend =
         model::connect(&plan.config.profile, &connection).map_err(|e| e.to_string())?;
     let mut session =
-        Session::new(sparksmith_io::new_project::engine().map_err(|e| e.to_string())?);
+        Session::new(sparksmith_io::new_project::profiled_engine().map_err(|e| e.to_string())?);
     let _ = tx.send(Message::Line(format!(
         "Run profile {}",
         plan.config.run_profile.name

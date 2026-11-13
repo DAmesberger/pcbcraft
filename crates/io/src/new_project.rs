@@ -150,6 +150,28 @@ pub fn engine() -> Result<Engine> {
     Ok(Engine::new(&shipped()?.board))
 }
 
+/// [`engine`] on the fab profile a new board takes: the user's Settings
+/// default, else the shipped default (`rule_profiles::for_new_board`).
+pub fn profiled_engine() -> Result<Engine> {
+    let defaults = shipped()?;
+    let mut project = sparksmith_core::Project::new(&defaults.board);
+    sparksmith_core::rules::apply(
+        &mut project.rules,
+        sparksmith_core::rules::RulesCommand::SetProfile {
+            profile: Box::new(crate::rule_profiles::for_new_board_from_env(None)?),
+            keep_overrides: false,
+        },
+    )?;
+    Ok(Engine::from_file_with(
+        EditorFile {
+            version: sparksmith_core::format::FILE_VERSION,
+            project,
+            drafts: Default::default(),
+        },
+        &defaults.presets.glass_dk,
+    )?)
+}
+
 /// An engine for an already validated file, its stackup estimating Dk
 /// with the shipped stackup data.
 pub fn open(file: EditorFile) -> Result<Engine> {
