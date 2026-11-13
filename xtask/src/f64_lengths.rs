@@ -212,6 +212,10 @@ const COMPUTING_SHAPE: &str = "the computing shape (flattening, fillets, bounds,
 /// parameters.
 const NOT_LENGTHS: &[(&str, &str)] = &[
     (
+        "model/stackup.rs GlassDk.0",
+        "dielectric constants per glass style, not lengths",
+    ),
+    (
         "library/marking/codes.rs BandColour.tolerance",
         "a tolerance in percent, not a length",
     ),
@@ -410,6 +414,25 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
 /// migration, by the slice that converts them (to `Nm`, `PointNm`, `Angle`
 /// or, for values that feed expressions, an exact decimal). Only shrinks.
 const ALLOWED: &[(&str, Slice)] = &[
+    // Shipped stackup presets (library/stackups), mm and µm until U3.
+    ("model/stackup.rs GlassStep.from_mm", Slice::U3),
+    ("model/stackup.rs PresetDielectric.thickness_mm", Slice::U3),
+    ("model/stackup.rs StackupPresets.copper_um", Slice::U3),
+    ("model/stackup.rs StackupPresets.dielectric_mm", Slice::U3),
+    (
+        "model/stackup.rs StackupPresets.dielectric_mm_per_layer_above",
+        Slice::U3,
+    ),
+    (
+        "model/stackup.rs StackupPresets.mask_laminate_um",
+        Slice::U3,
+    ),
+    ("model/stackup.rs StackupPresets.mask_um", Slice::U3),
+    ("model/stackup.rs StackupPresets.prepreg_mm", Slice::U3),
+    (
+        "model/stackup.rs StackupPresets.prepreg_mm_above",
+        Slice::U3,
+    ),
     // Shipped symbol drawings (library/standards/symbols), mm until U2.
     ("library/symbol_style.rs DrawOp::Arrow.from", Slice::U2),
     ("library/symbol_style.rs DrawOp::Arrow.tip", Slice::U2),
