@@ -64,6 +64,8 @@ use pcbcraft_ui::ui_kit::type_face;
 mod layer_focus_tests;
 pub(crate) mod net_classes;
 #[cfg(test)]
+mod net_picker_tests;
+#[cfg(test)]
 mod pair_tests;
 mod pair_tool;
 mod part_place;
@@ -3021,6 +3023,18 @@ fn target_text(project: &Project, instance: Id) -> Option<pcbcraft_core::ids::Gr
 
 fn layer_options() -> [(Layer, String); 2] {
     [(Layer::Top, "Top"), (Layer::Bottom, "Bottom")].map(|(layer, name)| (layer, name.to_owned()))
+}
+/// A net picker's choices: `none` (no net, or the tool's default), then
+/// every net as [`pcbcraft_core::nets::described`] names it.
+fn net_options(project: &Project, none: &str) -> Vec<(Option<Id>, String)> {
+    let nets = pcbcraft_core::schematic::nets(project);
+    let mut options = Vec::with_capacity(nets.len() + 1);
+    options.push((None, none.to_owned()));
+    options.extend(
+        nets.iter()
+            .map(|net| (Some(net.id), pcbcraft_core::nets::described(project, net))),
+    );
+    options
 }
 /// The copper layers of `stack` (top to bottom) by their names.
 fn copper_options(stack: &[CopperLayer]) -> Vec<(CopperLayer, String)> {
