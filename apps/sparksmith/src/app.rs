@@ -1229,7 +1229,7 @@ impl App {
                     &ui.painter_at(rect),
                     rect,
                     sparksmith_ui::theme::Tokens::get().space_16,
-                    crate::navigation::hint_3d(),
+                    crate::navigation::hint_3d(crate::navigation::Device::last(ui.ctx())),
                 );
                 self.follow_pill(ui, rect);
             }

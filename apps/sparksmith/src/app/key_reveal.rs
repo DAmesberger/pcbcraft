@@ -451,10 +451,11 @@ impl App {
             .and_then(|c| self.registry.shortcut(c))
             .unwrap_or_default();
         let more = rows.len().saturating_sub(MAX_FREE_ROWS);
+        let device = crate::navigation::Device::last(ctx);
         let navigation = if self.model_key().is_some() {
-            crate::navigation::hint_3d().to_owned()
+            crate::navigation::hint_3d(device)
         } else {
-            "Two fingers pan · pinch zooms".to_owned()
+            crate::navigation::hint_2d(device)
         };
         let footer = if more > 0 {
             format!("{navigation}\n{more} more · every key: {all}")

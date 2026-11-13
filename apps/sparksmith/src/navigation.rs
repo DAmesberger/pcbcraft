@@ -116,6 +116,61 @@ impl Coast {
     }
 }
 
+/// The pointing device the canvases last saw navigating, so their hints
+/// name the gestures of the device in hand.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Device {
+    /// Nothing has navigated yet: hints name both.
+    #[default]
+    Unknown,
+    /// A wheel in lines, a bare wheel move, or a middle or right drag.
+    Mouse,
+    /// A bracketed two-finger scroll or a pinch.
+    Trackpad,
+}
+
+/// Where the last seen [`Device`] is kept in the egui context.
+const DEVICE_KEY: &str = "sparksmith.navigation.device";
+
+impl Device {
+    /// The device this frame's input comes from, if it tells: a pinch or a
+    /// bracketed scroll is a trackpad; a wheel in lines or pages, a bare
+    /// move in points, or a middle or right drag is a mouse.
+    fn seen(input: &InputState) -> Option<Device> {
+        let mut seen = None;
+        for event in &input.events {
+            match event {
+                egui::Event::Zoom(_) => seen = Some(Device::Trackpad),
+                egui::Event::MouseWheel { unit, phase, .. } => {
+                    seen = Some(match (unit, phase) {
+                        // A move inside a bracket follows its Start.
+                        (MouseWheelUnit::Point, TouchPhase::Move)
+                            if seen == Some(Device::Trackpad) =>
+                        {
+                            Device::Trackpad
+                        }
+                        (MouseWheelUnit::Point, TouchPhase::Move) => Device::Mouse,
+                        (MouseWheelUnit::Point, _) => Device::Trackpad,
+                        _ => Device::Mouse,
+                    });
+                }
+                _ => {}
+            }
+        }
+        let p = &input.pointer;
+        if p.is_decidedly_dragging() && (p.middle_down() || p.secondary_down()) {
+            seen = Some(Device::Mouse);
+        }
+        seen
+    }
+
+    /// The device the canvases last saw navigating.
+    pub fn last(ctx: &egui::Context) -> Device {
+        ctx.data(|d| d.get_temp(egui::Id::unique(DEVICE_KEY)))
+            .unwrap_or_default()
+    }
+}
+
 /// One canvas's trackpad state across frames.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Trackpad {
@@ -157,6 +212,10 @@ impl Trackpad {
     /// the result only while the pointer is over the canvas.
     pub fn read(&mut self, ui: &egui::Ui, shift_orbits: bool) -> Wheel {
         let options = ui.ctx().options(|o| o.input_options);
+        if let Some(seen) = ui.input(Device::seen) {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(egui::Id::unique(DEVICE_KEY), seen));
+        }
         ui.input(|input| self.read_input(input, &options, shift_orbits))
     }
 
@@ -291,10 +350,23 @@ pub fn command_key() -> &'static str {
     }
 }
 
-/// The 3D view's one-line canvas hint (the full list is the Fit view
-/// button's hover help, [`help_3d`]).
-pub fn hint_3d() -> &'static str {
-    "Shift + two fingers to orbit · two fingers to pan · pinch to zoom"
+/// The 3D view's one-line canvas hint for the device in hand (the full
+/// list is the Fit view button's hover help, [`help_3d`]).
+pub fn hint_3d(device: Device) -> &'static str {
+    match device {
+        Device::Trackpad => "Shift + two fingers to orbit · two fingers to pan · pinch to zoom",
+        Device::Mouse => "Right-drag to orbit · middle-drag to pan · wheel to zoom",
+        Device::Unknown => "Right-drag or Shift + two fingers to orbit · middle-drag to pan",
+    }
+}
+
+/// A flat canvas's one-line navigation hint for the device in hand.
+pub fn hint_2d(device: Device) -> &'static str {
+    match device {
+        Device::Trackpad => "Two fingers pan · pinch zooms",
+        Device::Mouse => "Middle-drag pans · wheel zooms",
+        Device::Unknown => "Two fingers or middle-drag pan · pinch or wheel zooms",
+    }
 }
 
 /// The 3D view's gestures, listed in the Keyboard shortcuts sheet under
@@ -531,7 +603,10 @@ pub(crate) mod tests {
 
     #[test]
     fn help_lines_stay_short() {
-        assert!(hint_3d().chars().count() <= 80);
+        for device in [Device::Unknown, Device::Mouse, Device::Trackpad] {
+            assert!(hint_3d(device).chars().count() <= 80);
+            assert!(hint_2d(device).chars().count() <= 80);
+        }
         for help in [help_3d(), help_3d_placement(), help_2d(true)] {
             for line in help.lines() {
                 assert!(line.chars().count() <= 80, "{line}");
