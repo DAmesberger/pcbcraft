@@ -339,9 +339,13 @@ fn the_status_reads_published_then_stale_then_broken() -> TestResult {
                 consumers: vec![Consumer {
                     feature: "USB opening".into(),
                     datum: datum.id,
+                    slot: datum.slot,
+                    via: Default::default(),
                     token,
                     name: format!("{part} opening"),
                 }],
+                board_sha256: None,
+                unexported: Vec::new(),
             },
         }),
     )?;
@@ -625,6 +629,8 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
                 references: Vec::new(),
                 bindings: Vec::new(),
                 consumers: Vec::new(),
+                board_sha256: None,
+                unexported: Vec::new(),
             },
         }),
     )?;
@@ -678,6 +684,7 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
             ],
             consumers: Vec::new(),
             refused: None,
+            findings: Vec::new(),
         })),
     );
     let shown = shows(&mut editor, &engine, &ctx);
@@ -702,6 +709,7 @@ fn the_enclosure_preview_lists_what_moves_or_why_it_is_refused() -> TestResult {
             objects: Vec::new(),
             consumers: Vec::new(),
             refused: Some("The board would not solve with the wall moved".into()),
+            findings: Vec::new(),
         })),
     );
     let shown = shows(&mut editor, &engine, &ctx);
