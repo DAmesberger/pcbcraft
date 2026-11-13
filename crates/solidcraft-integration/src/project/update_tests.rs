@@ -66,8 +66,8 @@ fn same_model(a: &NativeModel, b: &NativeModel) -> Result<()> {
     );
     // The saved metadata (sources, kinds, vias) is the fresh build's.
     assert_eq!(
-        a.native.session().doc.metadata,
-        b.native.session().doc.metadata
+        a.exact()?.session().doc.metadata,
+        b.exact()?.session().doc.metadata
     );
     Ok(())
 }
@@ -142,13 +142,12 @@ fn same_board(a: &NativeModel, b: &NativeModel) -> Result<()> {
             .collect()
     };
     assert_eq!(anonymous(&a.sources)?, anonymous(&b.sources)?, "sources");
-    let (saved_a, kinds_a) = identity::read(&a.native)?;
-    let (saved_b, kinds_b) = identity::read(&b.native)?;
+    let (saved_a, kinds_a) = identity::read(a.exact()?)?;
+    let (saved_b, kinds_b) = identity::read(b.exact()?)?;
     assert_eq!(anonymous(&saved_a)?, anonymous(&saved_b)?, "saved sources");
     assert_eq!(kinds_a, kinds_b, "saved body kinds");
-    let other = |m: &NativeModel| {
-        m.native
-            .session()
+    let other = |m: &Native| {
+        m.session()
             .doc
             .metadata
             .0
@@ -157,11 +156,11 @@ fn same_board(a: &NativeModel, b: &NativeModel) -> Result<()> {
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect::<Vec<_>>()
     };
-    assert_eq!(other(a), other(b), "other saved metadata");
+    assert_eq!(other(a.exact()?), other(b.exact()?), "other saved metadata");
     // Every body keeps the look a fresh build assigns, and no body that is
     // gone keeps one.
-    let looks = |m: &NativeModel| m.native.session().doc.appearances.bodies.clone();
-    assert_eq!(looks(a), looks(b), "body looks");
+    let looks = |m: &Native| m.session().doc.appearances.bodies.clone();
+    assert_eq!(looks(a.exact()?), looks(b.exact()?), "body looks");
     Ok(())
 }
 
@@ -564,8 +563,8 @@ fn a_track_edit_does_not_extrude_the_fills_again() -> Result<()> {
     .project()
     .clone();
     let model = build(&project)?;
-    let fills = |m: &NativeModel| -> Vec<(String, solidcraft_engine::kernel::Body)> {
-        m.native()
+    let fills = |m: &NativeModel| -> Result<Vec<(String, solidcraft_engine::kernel::Body)>> {
+        Ok(m.exact()?
             .session()
             .model
             .state()
@@ -573,9 +572,9 @@ fn a_track_edit_does_not_extrude_the_fills_again() -> Result<()> {
             .iter()
             .filter(|b| b.name.starts_with("fill_"))
             .map(|b| (b.name.clone(), b.body.clone()))
-            .collect()
+            .collect())
     };
-    let before = fills(&model);
+    let before = fills(&model)?;
     assert!(!before.is_empty(), "the showcase has poured copper");
     let track = project
         .tracks
@@ -585,7 +584,7 @@ fn a_track_edit_does_not_extrude_the_fills_again() -> Result<()> {
     track.width += 0.01;
     let (model, how) = updated(model, &project)?;
     assert!(matches!(how, Rebuilt::InPlace(n) if n > 0), "{how:?}");
-    let after = fills(&model);
+    let after = fills(&model)?;
     assert_eq!(after.len(), before.len());
     for ((name, was), (again, now)) in before.iter().zip(&after) {
         assert_eq!(name, again);

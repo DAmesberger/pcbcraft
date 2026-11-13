@@ -11,7 +11,7 @@ use pcbcraft_core::library::footprint_source::{DimKind, SketchRef};
 use pcbcraft_core::model::board::{BoardShape, CutoutKind};
 use pcbcraft_core::{Engine, Evaluators, Layer, Operation, Outcome, Query, QueryResult, format};
 
-pub(super) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+pub(crate) type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 pub(super) const EV: SketchBoardEvaluator = SketchBoardEvaluator;
 
@@ -22,7 +22,7 @@ pub(super) fn hosted() -> Evaluators<'static> {
     }
 }
 
-pub(super) fn apply(engine: &mut Engine, op: Operation) -> pcbcraft_core::Result<Outcome> {
+pub(crate) fn apply(engine: &mut Engine, op: Operation) -> pcbcraft_core::Result<Outcome> {
     engine.apply_hosted(engine.revision(), op, hosted())
 }
 

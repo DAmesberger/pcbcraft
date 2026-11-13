@@ -85,12 +85,19 @@ pub enum Flat {
 const NO_COMPONENT: u64 = u64::MAX;
 
 pub struct NativeModel {
-    native: Native,
+    /// The board's native design; `None` for a meshed model
+    /// ([`Flat::Meshed`]), which has no design of the board.
+    native: Option<Native>,
     /// How the board's flat bodies are held.
     flat: Flat,
     /// The flat bodies' meshes made for this model ([`Flat::Meshed`]), for
     /// an update to reuse.
     meshes: mesh::Memo,
+    /// The part designs this model places ([`Flat::Meshed`]): one per
+    /// package revision, each its own evaluated design ([`designs`]), for
+    /// an update to reuse. They hold the bodies the parts' geometry
+    /// measures.
+    designs: designs::Memo,
     /// The fills' plans made for this model, for an update to reuse.
     plans: plan::Memo,
     pub geometry: Vec<Geometry>,
@@ -113,13 +120,15 @@ pub struct NativeModel {
     display: appearance::Memo,
     /// The evaluated bodies [`Geometry::volume`] measures: geometry
     /// reaches them only while this model (or a snapshot of it) lives.
-    world: std::sync::Arc<solidcraft_engine::doc::ModelState>,
+    /// `None` for a meshed model, whose part bodies its designs hold.
+    world: Option<std::sync::Arc<solidcraft_engine::doc::ModelState>>,
 }
 
 /// How [`update`] made its model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Rebuilt {
-    /// The previous model, updated in place by this many native commands.
+    /// The previous model, updated in place by this many native commands
+    /// (a meshed model, from what it kept, by none).
     InPlace(usize),
     /// Built anew, and why: the board changed in more than values, or the
     /// update failed (`None`: nothing was built before).
@@ -139,16 +148,16 @@ struct Reused {
 
 impl NativeModel {
     /// Write the model as a new `.solidcraft` file; refuses existing files,
-    /// and a model whose flat bodies are meshed ([`Flat::Meshed`]): its
-    /// design lacks them.
+    /// and a model whose flat bodies are meshed ([`Flat::Meshed`]): it has
+    /// no design of the board.
     pub fn save(&self, path: &str) -> Result<()> {
-        if self.flat == Flat::Meshed {
-            return Err(Error::Invalid(
+        match (&self.native, self.flat) {
+            (Some(native), Flat::Native) => native.save_new(path),
+            _ => Err(Error::Invalid(
                 "a model with meshed board bodies is drawn, never saved; build the exact model"
                     .into(),
-            ));
+            )),
         }
-        self.native.save_new(path)
     }
 
     /// How the model holds the board's flat bodies.
@@ -156,9 +165,28 @@ impl NativeModel {
         self.flat
     }
 
-    /// The native design the model was built as.
-    pub fn native(&self) -> &Native {
-        &self.native
+    /// The native design the model was built as; `None` for a meshed
+    /// model ([`Flat::Meshed`]), which places its parts' own designs.
+    pub fn native(&self) -> Option<&Native> {
+        self.native.as_ref()
+    }
+
+    /// The native design, without the rest of the model; `None` for a
+    /// meshed model.
+    pub(crate) fn into_native(self) -> Option<Native> {
+        self.native
+    }
+
+    /// The evaluated world of the board's native design; `None` for a
+    /// meshed model.
+    pub fn world(&self) -> Option<&solidcraft_engine::doc::ModelState> {
+        self.world.as_deref()
+    }
+
+    /// How many part designs a meshed model places: one per package
+    /// revision, each evaluated once ([`designs`]).
+    pub fn part_designs(&self) -> usize {
+        self.designs.len()
     }
 
     /// A copy of this model that stays as it is while this one is updated
@@ -166,9 +194,10 @@ impl NativeModel {
     /// design and meshes: an earlier board kept for an undo back to it.
     pub fn snapshot(&self) -> Self {
         Self {
-            native: self.native.snapshot(),
+            native: self.native.as_ref().map(Native::snapshot),
             flat: self.flat,
             meshes: self.meshes.clone(),
+            designs: self.designs.clone(),
             plans: self.plans.clone(),
             geometry: self.geometry.clone(),
             sources: self.sources.clone(),
@@ -181,6 +210,20 @@ impl NativeModel {
             world: self.world.clone(),
         }
     }
+}
+
+#[cfg(test)]
+impl NativeModel {
+    /// The exact model's design; refused for a meshed one.
+    pub(crate) fn exact(&self) -> Result<&Native> {
+        self.native.as_ref().ok_or_else(no_design)
+    }
+}
+
+/// A meshed model asked for the board's design.
+#[cfg(test)]
+pub(crate) fn no_design() -> Error {
+    Error::Verification("a meshed model has no design of the board".into())
 }
 
 /// The previous model's geometry by identity, for [`finish_with`].
@@ -210,10 +253,6 @@ impl Previous {
 /// A native design under construction, recording each body's kind.
 struct Builder {
     native: Native,
-    /// How the board's flat bodies are made.
-    flat: Flat,
-    /// Flat-body meshes made before ([`mesh::Memo`]).
-    meshes: mesh::Memo,
     /// Fill plans made before ([`plan::Memo`]).
     plans: plan::Memo,
     bodies: BTreeMap<String, BodyKind>,
@@ -246,18 +285,16 @@ struct Builder {
 }
 
 impl Builder {
-    fn new(name: &str, sources: &SourceCache, flat: Flat) -> Result<Self> {
-        Ok(Self::on(Native::new(name)?, sources, flat))
+    fn new(name: &str, sources: &SourceCache) -> Result<Self> {
+        Ok(Self::on(Native::new(name)?, sources))
     }
 
     /// A build that continues `native`, after what it holds already (the
     /// slots of an exported board interface).
-    fn on(mut native: Native, sources: &SourceCache, flat: Flat) -> Self {
+    fn on(mut native: Native, sources: &SourceCache) -> Self {
         native.record();
         Self {
             native,
-            flat,
-            meshes: mesh::Memo::default(),
             plans: plan::Memo::default(),
             bodies: BTreeMap::new(),
             models: Vec::new(),
@@ -276,11 +313,9 @@ impl Builder {
 
     /// A build of an edited board replayed against `native`, the model
     /// `known` and `previous` came from ([`Native::replaying`]).
-    #[allow(clippy::too_many_arguments)]
     fn replaying(
         native: Native,
-        flat: Flat,
-        (meshes, plans): (mesh::Memo, plan::Memo),
+        plans: plan::Memo,
         known: Vec<ModelDefinition>,
         known_libraries: Vec<(u64, LibraryDefinition)>,
         previous: Previous,
@@ -289,8 +324,6 @@ impl Builder {
     ) -> Self {
         Self {
             native,
-            flat,
-            meshes,
             plans,
             bodies: BTreeMap::new(),
             models: Vec::new(),
@@ -1017,9 +1050,10 @@ fn finish_with(
         }
     }
     Ok(NativeModel {
-        native,
+        native: Some(native),
         flat: Flat::Native,
         meshes: mesh::Memo::default(),
+        designs: designs::Memo::default(),
         plans: plan::Memo::default(),
         geometry,
         sources,
@@ -1029,7 +1063,7 @@ fn finish_with(
         reuse,
         updated: None,
         display: appearance::Memo::default(),
-        world,
+        world: Some(world),
     })
 }
 
@@ -1265,6 +1299,126 @@ fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
                 designator,
                 defaults,
                 origin,
+            })
+        })
+        .collect()
+}
+
+/// What a placed part's model is made of.
+#[derive(Clone, Copy)]
+enum PartModel<'a> {
+    /// A library model (STEP or glTF): the model, how the package uses it
+    /// and its asset bytes.
+    Library((&'a LibraryModelDefinition, &'a LibraryModel, &'a [u8])),
+    /// A part file at the package's values, and its bytes.
+    PartFile(
+        &'a pcbcraft_core::library::package_model::PartFileModel,
+        &'a [u8],
+    ),
+    /// The package's generated model.
+    Generated,
+    /// The package envelope, a box.
+    Envelope,
+}
+
+/// One placed part and what its model is made of.
+struct PlacedPart<'a> {
+    placement: &'a Placement,
+    instance: &'a pcbcraft_core::ComponentInstance,
+    package: &'a PackageDefinition,
+    footprint: &'a pcbcraft_core::library::FootprintDefinition,
+    /// The model definition's name: one per package revision.
+    stem: String,
+    model: PartModel<'a>,
+}
+
+impl<'a> PlacedPart<'a> {
+    /// The part's source label.
+    fn label(&self) -> String {
+        match self.model {
+            PartModel::Envelope => format!("{} envelope", self.instance.designator),
+            _ => format!("{} model", self.instance.designator),
+        }
+    }
+
+    /// The part's source, picked as `pick`: its bodies in `component`, as
+    /// `occurrence` of a shared definition.
+    fn source(&self, pick: u64, component: u64, occurrence: Option<u64>) -> Source {
+        Source {
+            pick_id: pick,
+            instance: Some(self.instance.id),
+            pad: None,
+            track: None,
+            via: None,
+            fill: None,
+            net: None,
+            layer: Some(self.placement.layer.into()),
+            label: self.label(),
+            component,
+            occurrence,
+        }
+    }
+
+    /// The display-only layers drawn for the part (terminations, overcoat
+    /// and solder fillets), picked as `pick`: drawn in the package frame,
+    /// so only while the model frame is that frame; of a generated model
+    /// only a chip's fillets.
+    fn display(&self, pick: u64) -> Option<Part<'a>> {
+        if !package_frame(&datum_frame(self.package)) {
+            return None;
+        }
+        let generated = match self.model {
+            PartModel::Generated => true,
+            PartModel::Envelope => false,
+            PartModel::Library(_) | PartModel::PartFile(..) => return None,
+        };
+        if generated && self.package.chip_kind().is_none() {
+            return None;
+        }
+        Some(Part {
+            pick: Some(pick),
+            package: self.package,
+            footprint: Some(self.footprint),
+            body: Body::of(self.package),
+            placement: Some(self.placement),
+            generated,
+        })
+    }
+}
+
+/// Every placed part, in placement order, and what its model is made of;
+/// refused when a placement's instance, physical implementation or model
+/// file is missing.
+fn placed_parts(project: &Project) -> Result<Vec<PlacedPart<'_>>> {
+    project
+        .placements
+        .iter()
+        .map(|placement| {
+            let instance = project
+                .instance(placement.instance)
+                .ok_or_else(|| Error::Invalid("missing instance".into()))?;
+            let physical = instances::resolve(&project.library, instance)
+                .ok()
+                .and_then(|r| r.physical)
+                .ok_or_else(|| {
+                    Error::Invalid("placed instance has no physical implementation".into())
+                })?;
+            let package = &physical.package.definition;
+            let model = match &package.model {
+                PackageModel::Library(use_) => PartModel::Library(library_model(project, use_)?),
+                PackageModel::PartFile(use_) => {
+                    PartModel::PartFile(use_, part_bytes(project, use_)?)
+                }
+                _ if models::is_generated(package) => PartModel::Generated,
+                _ => PartModel::Envelope,
+            };
+            Ok(PlacedPart {
+                placement,
+                instance,
+                package,
+                footprint: &physical.footprint.definition,
+                stem: models::definition_name(physical.package.id, physical.package.revision.0),
+                model,
             })
         })
         .collect()
@@ -1553,7 +1707,7 @@ pub fn build(project: &Project) -> Result<NativeModel> {
 pub fn build_onto(native: Native, project: &Project) -> Result<NativeModel> {
     let sources = SourceCache::default();
     sources.begin();
-    let built = build_on(Builder::on(native, &sources, Flat::Native), project);
+    let built = build_on(Builder::on(native, &sources), project);
     sources.sweep();
     built
 }
@@ -1582,7 +1736,8 @@ pub fn build_with(
 
 /// [`build_with`], holding the board's flat bodies as `flat` says: built
 /// natively (the exact model) or meshed from the board plan (the live
-/// view's, [`mesh`]). An [`update`] of the model keeps its way.
+/// view's, [`mesh`], with each part its own design, [`designs`]). An
+/// [`update`] of the model keeps its way.
 pub fn build_flat(
     project: &Project,
     sources: &SourceCache,
@@ -1590,12 +1745,15 @@ pub fn build_flat(
     flat: Flat,
 ) -> Result<NativeModel> {
     sources.begin();
-    let built = Builder::new(&project.name, sources, flat).and_then(|mut b| {
-        if let Some(cancel) = cancel {
-            b.native.cancel_with(cancel);
-        }
-        build_on(b, project)
-    });
+    let built = match flat {
+        Flat::Native => Builder::new(&project.name, sources).and_then(|mut b| {
+            if let Some(cancel) = cancel {
+                b.native.cancel_with(cancel);
+            }
+            build_on(b, project)
+        }),
+        Flat::Meshed => build_meshed(project, Kept::default(), sources, cancel.as_ref()),
+    };
     sources.sweep();
     built
 }
@@ -1609,6 +1767,11 @@ pub fn build_flat(
 /// the model [`build`] makes of `project`. An update (comparing, then
 /// changing a few features) always finishes; a build anew stops with
 /// [`Error::Cancelled`] at its next native command once `cancel` is set.
+///
+/// A meshed model ([`Flat::Meshed`]) has no design to update: it is made
+/// again from what the previous one kept (the meshes, fill plans, display
+/// layers and part designs it can reuse), running no native command but
+/// those of a part design it does not hold.
 pub fn update(
     previous: NativeModel,
     project: &Project,
@@ -1619,6 +1782,7 @@ pub fn update(
         native,
         flat,
         meshes,
+        designs,
         plans,
         geometry,
         models,
@@ -1628,35 +1792,199 @@ pub fn update(
         ..
     } = previous;
     let mut why = None;
-    if let Some(native) = native.replaying() {
-        let b = Builder::replaying(
-            native,
-            flat,
-            (meshes, plans),
-            models,
-            libraries,
-            Previous::of(geometry, reuse),
-            display,
-            sources,
-        );
-        sources.begin();
-        let updated = build_on(b, project);
-        sources.sweep();
-        match updated {
-            Ok(model) => {
-                let ran = model.updated.unwrap_or(0);
-                return Ok((model, Rebuilt::InPlace(ran)));
+    match native {
+        None => {
+            let kept = Kept {
+                meshes,
+                plans,
+                display,
+                designs,
+            };
+            sources.begin();
+            let made = build_meshed(project, kept, sources, cancel.as_ref());
+            sources.sweep();
+            match made {
+                Ok(model) => return Ok((model, Rebuilt::InPlace(0))),
+                // Refused or cancelled, it would be anew.
+                Err(error @ (Error::Invalid(_) | Error::Cancelled)) => return Err(error),
+                Err(error) => why = Some(error.to_string()),
             }
-            // Refused, it would be refused anew.
-            Err(error @ Error::Invalid(_)) => return Err(error),
-            // Changed in more than values, or the update failed.
-            Err(error) => why = Some(error.to_string()),
+        }
+        Some(native) => {
+            if let Some(native) = native.replaying() {
+                let b = Builder::replaying(
+                    native,
+                    plans,
+                    models,
+                    libraries,
+                    Previous::of(geometry, reuse),
+                    display,
+                    sources,
+                );
+                sources.begin();
+                let updated = build_on(b, project);
+                sources.sweep();
+                match updated {
+                    Ok(model) => {
+                        let ran = model.updated.unwrap_or(0);
+                        return Ok((model, Rebuilt::InPlace(ran)));
+                    }
+                    // Refused, it would be refused anew.
+                    Err(error @ Error::Invalid(_)) => return Err(error),
+                    // Changed in more than values, or the update failed.
+                    Err(error) => why = Some(error.to_string()),
+                }
+            }
         }
     }
     Ok((
         build_flat(project, sources, cancel, flat)?,
         Rebuilt::Anew(why),
     ))
+}
+
+/// What a meshed model keeps for the next one ([`build_meshed`]).
+#[derive(Default)]
+struct Kept {
+    meshes: mesh::Memo,
+    plans: plan::Memo,
+    display: appearance::Memo,
+    designs: designs::Memo,
+}
+
+/// The live view's model of `project` ([`Flat::Meshed`]). No design of
+/// the board is made: its flat bodies are meshed from the board plan
+/// ([`mesh`]), and each part is its package revision's own design
+/// ([`designs`]), evaluated once and shared by every placement, placed by
+/// the document's transform (the pose the exact build's joints solve,
+/// [`pcbcraft_core::interface::package::model_to_board`]). What `kept`
+/// holds is taken instead of made again. The sources (and so the picks)
+/// are the exact build's, in its order. A part design not held is built
+/// on every core, stopping with [`Error::Cancelled`] at its next native
+/// command once `cancel` is set.
+fn build_meshed(
+    project: &Project,
+    kept: Kept,
+    library: &SourceCache,
+    cancel: Option<&std::sync::Arc<std::sync::atomic::AtomicBool>>,
+) -> Result<NativeModel> {
+    pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
+    let stackup = &project.stackup;
+    stackup.check().map_err(|e| Error::Invalid(e.to_string()))?;
+    let Kept {
+        mut meshes,
+        mut plans,
+        display: mut memo,
+        designs: held,
+    } = kept;
+    let pads = placed_pads(project)?;
+    let plan = plan::of_pads(project, &pads, &mut plans)?;
+    let placed = placed_parts(project)?;
+    let (designs, made) = designs::prepare(&held, &placed, library, cancel)?;
+    drop(held);
+    let mut sources = vec![];
+    let fills = fill::marks(project, &plan.fills, &mut sources)?;
+    let mut parts = vec![];
+    let mut placed_geometry = vec![];
+    for (part, design) in placed.iter().zip(&made) {
+        let pick = next_pick(&sources);
+        parts.extend(part.display(pick));
+        sources.push(part.source(pick, NO_COMPONENT, None));
+        let pose = pcbcraft_core::interface::package::model_to_board(
+            part.placement,
+            part.package,
+            stackup,
+        )
+        .map_err(|e| Error::Invalid(e.to_string()))?;
+        placed_geometry.extend(design.place(&pose, pick, part.placement.layer.into()));
+    }
+    let mut lands = Vec::with_capacity(pads.len());
+    for pad in &pads {
+        let pick = next_pick(&sources);
+        if let Some(source) = pad_lands(pad, pick, &mut lands)? {
+            sources.push(source);
+        }
+    }
+    let mut paths = Vec::with_capacity(project.tracks.len());
+    for track in &project.tracks {
+        let pick = next_pick(&sources);
+        sources.push(track_source(track, pick, NO_COMPONENT, &mut paths));
+    }
+    let display = appearance::Board::of(project);
+    let none = vec![None; project.vias.len()];
+    let marks = marks(project, &none, &none, &mut sources)?;
+    for mark in &marks {
+        lands.extend(mark.lands(&display));
+    }
+    let drawn = Drawn {
+        project,
+        display: &display,
+        lands: &lands,
+        paths: &paths,
+        marks: &marks,
+        fills: &fills,
+        parts: &parts,
+        picks: part_picks(&sources),
+    };
+    // The flat bodies are meshed while the display layers are drawn, picked
+    // as the sources name them.
+    let meshed = |meshes: &mut mesh::Memo| -> Result<Vec<Geometry>> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let started = std::time::Instant::now();
+        let (bodies, stats) = mesh::bodies(&plan, &sources, meshes)?;
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
+            eprintln!(
+                "pcbcraft: {} flat bodies meshed in {:.1} ms ({} meshes made, {} reused)",
+                stats.bodies,
+                started.elapsed().as_secs_f64() * 1e3,
+                stats.meshed,
+                stats.reused
+            );
+        }
+        Ok(bodies.into_iter().map(|m| m.geometry).collect())
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (layers, flat) = std::thread::scope(|scope| {
+        let layers = scope.spawn(|| drawn.layers(&mut memo));
+        let flat = meshed(&mut meshes);
+        let layers = layers.join().unwrap_or_else(|_| {
+            Err(Error::Verification(
+                "drawing the board's layers failed".into(),
+            ))
+        });
+        (layers, flat)
+    });
+    #[cfg(target_arch = "wasm32")]
+    let (layers, flat) = (drawn.layers(&mut memo), meshed(&mut meshes));
+    let mut geometry = placed_geometry;
+    geometry.extend(flat?);
+    geometry.extend(layers?);
+    // Each package revision's definition once, in placement order.
+    let mut models: Vec<ModelDefinition> = Vec::new();
+    for design in &made {
+        for definition in design.definitions() {
+            if !models.iter().any(|d| d.component == definition.component) {
+                models.push(definition.clone());
+            }
+        }
+    }
+    Ok(NativeModel {
+        native: None,
+        flat: Flat::Meshed,
+        meshes,
+        designs,
+        plans,
+        geometry,
+        sources,
+        stack: crate::stack::Stack::of(stackup, project.fabrication.pad_finish),
+        models,
+        libraries: Vec::new(),
+        reuse: Reused::default(),
+        updated: None,
+        display: memo,
+        world: None,
+    })
 }
 
 /// Build `project` with `b`: a new design, or one replayed.
@@ -1668,13 +1996,10 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     // tracks, vias and laminate below are built from it.
     let plan = plan::of_pads(project, &pads, &mut b.plans)?;
     let plans = std::mem::take(&mut b.plans);
-    // Meshed, the native design holds the parts alone: none of the flat
-    // bodies' commands, parameters or joints below are made.
-    let native_flat = b.flat == Flat::Native;
     // The board is evaluated once its parts are in, not after every command.
     b.native.defer_evaluation()?;
     stackup_params(&mut b, project)?;
-    b.params(&object_params(project, &pads, native_flat)?)?;
+    b.params(&object_params(project, &pads)?)?;
     // What an edit rarely changes comes first in the design's history, so
     // evaluating an edit reuses it: the generated and library package
     // models and the via definitions, then the fills, then the parts and
@@ -1700,11 +2025,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             _ => {}
         }
     }
-    let mut styles = if native_flat {
-        via_styles(&mut b, project, &plan.vias)?
-    } else {
-        BTreeMap::new()
-    };
+    let mut styles = via_styles(&mut b, project, &plan.vias)?;
     let substrate = b.native.component("PCB substrate", true)?;
     let board = substrate.occurrence;
     let mut sources = vec![];
@@ -1728,102 +2049,45 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         &mut sources,
         &mut joints,
     )?;
-    for placement in &project.placements {
-        let instance = project
-            .instance(placement.instance)
-            .ok_or_else(|| Error::Invalid("missing instance".into()))?;
-        let physical = instances::resolve(&project.library, instance)
-            .ok()
-            .and_then(|r| r.physical)
-            .ok_or_else(|| {
-                Error::Invalid("placed instance has no physical implementation".into())
-            })?;
-        let package = &physical.package.definition;
-        let footprint = &physical.footprint.definition;
-        let prefix = format!("instance_{}", instance.id);
-        let library = match &package.model {
-            PackageModel::Library(use_) => Some(library_model(project, use_)?),
-            _ => None,
-        };
-        let part = match &package.model {
-            PackageModel::PartFile(use_) => {
-                let stem =
-                    models::definition_name(physical.package.id, physical.package.revision.0);
-                Some(b.define_part(&stem, use_, part_bytes(project, use_)?)?)
+    for part in placed_parts(project)? {
+        let prefix = format!("instance_{}", part.instance.id);
+        let (created, occurrence) = match part.model {
+            PartModel::Library(library) => {
+                let created = b.library_model(&part.stem, library)?;
+                (created, Some(created.occurrence))
             }
-            _ => None,
-        };
-        if library.is_some() || part.is_some() || models::is_generated(package) {
-            let stem = models::definition_name(physical.package.id, physical.package.revision.0);
-            let generated = library.is_none() && part.is_none();
-            let created = match (library, part) {
-                (Some(library), _) => b.library_model(&stem, library)?,
-                (None, Some(part)) => b.model_occurrence(&part)?,
-                (None, None) => b.model(&stem, package)?,
-            };
-            let frame = datum_frame(package);
-            let pick = next_pick(&sources);
-            // Display-only solder fillets of a chip, while its placement
-            // does not turn it out of the package frame they draw in.
-            if generated && package.chip_kind().is_some() && package_frame(&frame) {
-                parts.push(Part {
-                    pick: Some(pick),
-                    package,
-                    footprint: Some(footprint),
-                    body: Body::of(package),
-                    placement: Some(placement),
-                    generated: true,
-                });
+            PartModel::PartFile(use_, bytes) => {
+                let stem = b.define_part(&part.stem, use_, bytes)?;
+                let created = b.model_occurrence(&stem)?;
+                (created, Some(created.occurrence))
             }
-            joints.push((
-                BoardJoint {
-                    board,
-                    occurrence: created.occurrence,
-                    x: format!("{prefix}_x").into(),
-                    y: format!("{prefix}_y").into(),
-                    angle: format!("{prefix}_angle").into(),
-                    mount: placement.layer.into(),
-                },
-                holding_frame(&frame),
-                Some(copper_param(placement.layer.into())),
-            ));
-            sources.push(Source {
-                pick_id: pick,
-                instance: Some(instance.id),
-                pad: None,
-                track: None,
-                via: None,
-                fill: None,
-                net: None,
-                layer: Some(placement.layer.into()),
-                label: format!("{} model", instance.designator),
-                component: created.component,
-                occurrence: Some(created.occurrence),
-            });
-            continue;
-        }
-        let label = format!("{} envelope", instance.designator);
-        let created = b.native.component(&label, false)?;
-        let body = Body::of(package);
-        // The box in its model frame (z = 0 the seating plane), held at
-        // its placement in the datum frame as a generated model is.
-        b.body(
-            body.kind(),
-            BoxBody {
-                name: &label,
-                corner: [
-                    format!("- {prefix}_length / 2").into(),
-                    format!("- {prefix}_width / 2").into(),
-                    0.into(),
-                ],
-                size: [
-                    format!("{prefix}_length").into(),
-                    format!("{prefix}_width").into(),
-                    format!("{prefix}_height").into(),
-                ],
-            },
-        )?;
-        let frame = datum_frame(package);
+            PartModel::Generated => {
+                let created = b.model(&part.stem, part.package)?;
+                (created, Some(created.occurrence))
+            }
+            PartModel::Envelope => {
+                let created = b.native.component(&part.label(), false)?;
+                // The box in its model frame (z = 0 the seating plane), held at
+                // its placement in the datum frame as a generated model is.
+                b.body(
+                    Body::of(part.package).kind(),
+                    BoxBody {
+                        name: &part.label(),
+                        corner: [
+                            format!("- {prefix}_length / 2").into(),
+                            format!("- {prefix}_width / 2").into(),
+                            0.into(),
+                        ],
+                        size: [
+                            format!("{prefix}_length").into(),
+                            format!("{prefix}_width").into(),
+                            format!("{prefix}_height").into(),
+                        ],
+                    },
+                )?;
+                (created, None)
+            }
+        };
         joints.push((
             BoardJoint {
                 board,
@@ -1831,37 +2095,14 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
                 x: format!("{prefix}_x").into(),
                 y: format!("{prefix}_y").into(),
                 angle: format!("{prefix}_angle").into(),
-                mount: placement.layer.into(),
+                mount: part.placement.layer.into(),
             },
-            holding_frame(&frame),
-            Some(copper_param(placement.layer.into())),
+            holding_frame(&datum_frame(part.package)),
+            Some(copper_param(part.placement.layer.into())),
         ));
         let pick = next_pick(&sources);
-        // The display-only terminations, overcoat and fillets are drawn in
-        // the package frame: only while the model frame is that frame.
-        if package_frame(&frame) {
-            parts.push(Part {
-                pick: Some(pick),
-                package,
-                footprint: Some(footprint),
-                body,
-                placement: Some(placement),
-                generated: false,
-            });
-        }
-        sources.push(Source {
-            pick_id: pick,
-            instance: Some(instance.id),
-            pad: None,
-            track: None,
-            via: None,
-            fill: None,
-            net: None,
-            layer: Some(placement.layer.into()),
-            label,
-            component: created.component,
-            occurrence: None,
-        });
+        parts.extend(part.display(pick));
+        sources.push(part.source(pick, created.component, occurrence));
     }
     let mut lands = Vec::with_capacity(pads.len());
     if plan.pads.len() != pads.len() {
@@ -1872,74 +2113,11 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     for (pad, planned) in pads.iter().zip(&plan.pads) {
         let local = pad.pad();
         let pick = next_pick(&sources);
-        let copper = local.kind.copper();
-        // The outer layers the pad has copper on, its own side first.
-        let layers: Vec<Layer> = [pad.placed.layer, other(pad.placed.layer)]
-            .into_iter()
-            .filter(|l| pad.placed.on_copper(*l))
-            .collect();
-        // Display: copper, bores and mask openings per outer layer.
-        let shape = pad_outline::shape_contour(&local.shape, 0.0);
-        let mask = pad_outline::mask_opening(local, &pad.defaults);
-        let drills: Vec<Vec<Point>> = pad
-            .drills()
-            .iter()
-            .map(|d| flat(&pad.board(d)))
-            .collect::<Result<_>>()?;
-        let bores = pad.bores();
-        let opening_layers = if drills.is_empty() && copper != PadCopper::None {
-            layers.clone()
-        } else {
-            vec![Layer::Top, Layer::Bottom]
-        };
-        for layer in opening_layers {
-            let has_copper = layers.contains(&layer);
-            let mut openings = drills.clone();
-            if (has_copper || copper == PadCopper::None)
-                && let Some(mask) = &mask
-            {
-                openings.push(flat(&pad.board(mask))?);
-            }
-            let (copper_outline, bore) = match (&shape, has_copper) {
-                (Some(shape), true) => (
-                    Some(flat(&pad.board(shape))?),
-                    match bores.first() {
-                        Some(bore) if local.hole.is_some() => Some(flat(&pad.board(bore))?),
-                        _ => None,
-                    },
-                ),
-                _ => (None, None),
-            };
-            lands.push(Land {
-                pick: has_copper.then_some(pick),
-                layer,
-                copper: copper_outline,
-                bore,
-                openings,
-            });
-        }
-        if copper == PadCopper::None {
+        let Some(source) = pad_lands(pad, pick, &mut lands)? else {
             continue;
-        }
+        };
         let prefix = format!("instance_{}", pad.placed.instance);
         let pp = format!("pad_{}_{}", pad.placed.instance, local.id);
-        let source = Source {
-            pick_id: pick,
-            instance: Some(pad.placed.instance),
-            pad: Some(local.id),
-            track: None,
-            via: None,
-            fill: None,
-            net: pad.placed.net,
-            layer: Some(pad.placed.layer.into()),
-            label: format!("{} pad {}", pad.designator, local.number),
-            component: NO_COMPONENT,
-            occurrence: None,
-        };
-        if !native_flat {
-            sources.push(source);
-            continue;
-        }
         let created = b.native.component(&pp, false)?;
         let near_copper = copper_param(pad.placed.layer.into());
         let far_copper = copper_param(other(pad.placed.layer).into());
@@ -2027,93 +2205,226 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
-        let component = if native_flat {
-            // A track added or removed is a unit of its own: an update makes or
-            // deletes it alone.
-            b.native.unit(&prefix, None)?;
-            let created = b.native.component(&prefix, false)?;
-            let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
-            // The stadium in the track's frame: start at the origin, along +x.
-            b.native.whole_profile_body(ProfileBody {
-                name: &planned.body.name,
-                offset: 0.into(),
-                contours: &planned.body.loops,
-                height: copper_param(track.layer).into(),
-            })?;
-            b.record(&prefix, BodyKind::CopperTrack)?;
-            b.native.unit_end()?;
-            joints.push((
-                BoardJoint {
-                    board,
-                    occurrence: created.occurrence,
-                    x: format!("{prefix}_x0").into(),
-                    y: format!("{prefix}_y0").into(),
-                    angle: angle.into(),
-                    mount,
-                },
-                JointFrame::ORIGIN,
-                None,
-            ));
-            created.component
-        } else {
-            NO_COMPONENT
-        };
+        // A track added or removed is a unit of its own: an update makes or
+        // deletes it alone.
+        b.native.unit(&prefix, None)?;
+        let created = b.native.component(&prefix, false)?;
+        let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
+        // The stadium in the track's frame: start at the origin, along +x.
+        b.native.whole_profile_body(ProfileBody {
+            name: &planned.body.name,
+            offset: 0.into(),
+            contours: &planned.body.loops,
+            height: copper_param(track.layer).into(),
+        })?;
+        b.record(&prefix, BodyKind::CopperTrack)?;
+        b.native.unit_end()?;
+        joints.push((
+            BoardJoint {
+                board,
+                occurrence: created.occurrence,
+                x: format!("{prefix}_x0").into(),
+                y: format!("{prefix}_y0").into(),
+                angle: angle.into(),
+                mount,
+            },
+            JointFrame::ORIGIN,
+            None,
+        ));
         let pick = next_pick(&sources);
-        // Inner copper is buried: no mask cap or finish over it.
-        if let Some(side) = track.layer.side() {
-            paths.push(Path {
-                pick,
-                start: track.start,
-                end: track.end,
-                width: track.width,
-                layer: side,
-            });
-        }
-        sources.push(Source {
-            pick_id: pick,
-            instance: None,
-            pad: None,
-            track: Some(track.id),
-            via: None,
-            fill: None,
-            net: Some(track.net),
-            layer: Some(track.layer),
-            label: format!("Trace {}", track.id),
-            component,
-            occurrence: None,
-        });
+        sources.push(track_source(track, pick, created.component, &mut paths));
     }
     let display = appearance::Board::of(project);
-    let marks = if native_flat {
-        vias(&mut b, project, &mut styles, &mut sources)?
-    } else {
-        let none = vec![None; project.vias.len()];
-        marks(project, &none, &none, &mut sources)?
-    };
+    let marks = vias(&mut b, project, &mut styles, &mut sources)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
     }
-    let picks: BTreeMap<Id, u64> = sources
-        .iter()
-        .filter(|s| s.pad.is_none())
-        .filter_map(|s| s.instance.map(|i| (i, s.pick_id)))
-        .collect();
     // The display-only layers (mask, finish, silkscreen, edge) need no native
     // model: they are drawn while the native one gets its laminate and joints
     // and is finished and meshed.
     let mut memo = std::mem::take(&mut b.display);
-    let layers = |memo: &mut appearance::Memo| -> Result<Vec<Geometry>> {
-        let films = || fill::films(&display, &lands, &marks, &fills);
-        let open = || appearance::open_laminate(&display, &lands, &paths, &fill::outlines(&fills));
+    let drawn = Drawn {
+        project,
+        display: &display,
+        lands: &lands,
+        paths: &paths,
+        marks: &marks,
+        fills: &fills,
+        parts: &parts,
+        picks: part_picks(&sources),
+    };
+    let native = |mut b: Builder| -> Result<NativeModel> {
+        // The laminate last: its sketches hold every drill, which each
+        // command after it would otherwise read again.
+        b.native.activate(substrate.component)?;
+        laminate(&mut b, project, &plan.laminate)?;
+        // Every joint goes in once the parts are built, solved together (one
+        // by one, each would solve all the joints made before it); a copy of
+        // a shared definition starts where its first occurrence stands.
+        b.native.board_joints(&joints)?;
+        b.finish(sources)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let (model, layers) = std::thread::scope(|scope| {
+        let layers = scope.spawn(|| drawn.layers(&mut memo));
+        let model = native(b);
+        let layers = layers.join().unwrap_or_else(|_| {
+            Err(Error::Verification(
+                "drawing the board's layers failed".into(),
+            ))
+        });
+        (model, layers)
+    });
+    #[cfg(target_arch = "wasm32")]
+    let (model, layers) = (native(b), drawn.layers(&mut memo));
+    let mut model = model?;
+    model.geometry.extend(layers?);
+    model.display = memo;
+    model.plans = plans;
+    model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish);
+    Ok(model)
+}
+
+/// A placed pad's display lands (its copper, bore and mask openings on
+/// each outer layer, picked as `pick` where it has copper) into `lands`,
+/// and its source when it has copper, its bodies in no component yet.
+fn pad_lands(pad: &PlacedPad<'_>, pick: u64, lands: &mut Vec<Land>) -> Result<Option<Source>> {
+    let local = pad.pad();
+    let copper = local.kind.copper();
+    // The outer layers the pad has copper on, its own side first.
+    let layers: Vec<Layer> = [pad.placed.layer, other(pad.placed.layer)]
+        .into_iter()
+        .filter(|l| pad.placed.on_copper(*l))
+        .collect();
+    let shape = pad_outline::shape_contour(&local.shape, 0.0);
+    let mask = pad_outline::mask_opening(local, &pad.defaults);
+    let drills: Vec<Vec<Point>> = pad
+        .drills()
+        .iter()
+        .map(|d| flat(&pad.board(d)))
+        .collect::<Result<_>>()?;
+    let bores = pad.bores();
+    let opening_layers = if drills.is_empty() && copper != PadCopper::None {
+        layers.clone()
+    } else {
+        vec![Layer::Top, Layer::Bottom]
+    };
+    for layer in opening_layers {
+        let has_copper = layers.contains(&layer);
+        let mut openings = drills.clone();
+        if (has_copper || copper == PadCopper::None)
+            && let Some(mask) = &mask
+        {
+            openings.push(flat(&pad.board(mask))?);
+        }
+        let (copper_outline, bore) = match (&shape, has_copper) {
+            (Some(shape), true) => (
+                Some(flat(&pad.board(shape))?),
+                match bores.first() {
+                    Some(bore) if local.hole.is_some() => Some(flat(&pad.board(bore))?),
+                    _ => None,
+                },
+            ),
+            _ => (None, None),
+        };
+        lands.push(Land {
+            pick: has_copper.then_some(pick),
+            layer,
+            copper: copper_outline,
+            bore,
+            openings,
+        });
+    }
+    if copper == PadCopper::None {
+        return Ok(None);
+    }
+    Ok(Some(Source {
+        pick_id: pick,
+        instance: Some(pad.placed.instance),
+        pad: Some(local.id),
+        track: None,
+        via: None,
+        fill: None,
+        net: pad.placed.net,
+        layer: Some(pad.placed.layer.into()),
+        label: format!("{} pad {}", pad.designator, local.number),
+        component: NO_COMPONENT,
+        occurrence: None,
+    }))
+}
+
+/// A track's source, picked as `pick` with its body in `component`; an
+/// outer track's path (for the mask cap and finish over it) into `paths`.
+fn track_source(
+    track: &pcbcraft_core::Track,
+    pick: u64,
+    component: u64,
+    paths: &mut Vec<Path>,
+) -> Source {
+    // Inner copper is buried: no mask cap or finish over it.
+    if let Some(side) = track.layer.side() {
+        paths.push(Path {
+            pick,
+            start: track.start,
+            end: track.end,
+            width: track.width,
+            layer: side,
+        });
+    }
+    Source {
+        pick_id: pick,
+        instance: None,
+        pad: None,
+        track: Some(track.id),
+        via: None,
+        fill: None,
+        net: Some(track.net),
+        layer: Some(track.layer),
+        label: format!("Trace {}", track.id),
+        component,
+        occurrence: None,
+    }
+}
+
+/// Each placed instance's pick (its model or envelope's source).
+fn part_picks(sources: &[Source]) -> BTreeMap<Id, u64> {
+    sources
+        .iter()
+        .filter(|s| s.pad.is_none())
+        .filter_map(|s| s.instance.map(|i| (i, s.pick_id)))
+        .collect()
+}
+
+/// What the display-only layers of a board are drawn from.
+struct Drawn<'a> {
+    project: &'a Project,
+    display: &'a appearance::Board,
+    lands: &'a [Land],
+    paths: &'a [Path],
+    marks: &'a [ViaMark],
+    fills: &'a [fill::FillMark],
+    parts: &'a [Part<'a>],
+    picks: BTreeMap<Id, u64>,
+}
+
+impl Drawn<'_> {
+    /// The display-only layers (mask, finish, films over the fills, bare
+    /// laminate, legend and edge bands), each kind on a core of its own.
+    fn layers(&self, memo: &mut appearance::Memo) -> Result<Vec<Geometry>> {
+        let display = self.display;
+        let films = || fill::films(display, self.lands, self.marks, self.fills);
+        let open = || {
+            appearance::open_laminate(display, self.lands, self.paths, &fill::outlines(self.fills))
+        };
         let legend = || {
             crate::silkscreen::films(
-                project,
+                self.project,
                 &crate::silkscreen::Legend {
-                    board: &display,
-                    lands: &lands,
-                    paths: &paths,
-                    vias: &marks,
-                    picks: &picks,
+                    board: display,
+                    lands: self.lands,
+                    paths: self.paths,
+                    vias: self.marks,
+                    picks: &self.picks,
                 },
             )
         };
@@ -2124,7 +2435,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             let films = scope.spawn(films);
             let open = scope.spawn(open);
             let legend = scope.spawn(legend);
-            let layers = appearance::board_with(&display, &lands, &paths, &marks, &parts, memo);
+            let layers = appearance::board_with(
+                display, self.lands, self.paths, self.marks, self.parts, memo,
+            );
             let failed = || Err(Error::Verification("drawing a display layer failed".into()));
             (
                 layers,
@@ -2135,7 +2448,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         });
         #[cfg(target_arch = "wasm32")]
         let (layers, films, open, legend) = (
-            appearance::board_with(&display, &lands, &paths, &marks, &parts, memo),
+            appearance::board_with(
+                display, self.lands, self.paths, self.marks, self.parts, memo,
+            ),
             films(),
             open(),
             legend(),
@@ -2144,74 +2459,9 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         layers.extend(films?);
         layers.extend(open?);
         layers.extend(legend?);
-        layers.extend(crate::stackup_edge::bands(stackup, &display)?);
+        layers.extend(crate::stackup_edge::bands(&self.project.stackup, display)?);
         Ok(layers)
-    };
-    // Meshed, the flat bodies are meshed with the display layers, picked
-    // as the sources name them.
-    let mut meshes = std::mem::take(&mut b.meshes);
-    let meshed_sources = (!native_flat).then(|| sources.clone());
-    let meshed = |meshes: &mut mesh::Memo| -> Result<Vec<Geometry>> {
-        let Some(sources) = &meshed_sources else {
-            return Ok(Vec::new());
-        };
-        #[cfg(not(target_arch = "wasm32"))]
-        let started = std::time::Instant::now();
-        let (bodies, stats) = mesh::bodies(&plan, sources, meshes)?;
-        #[cfg(not(target_arch = "wasm32"))]
-        if std::env::var_os("PCBCRAFT_TIMINGS").is_some() {
-            eprintln!(
-                "pcbcraft: {} flat bodies meshed in {:.1} ms ({} meshes made, {} reused)",
-                stats.bodies,
-                started.elapsed().as_secs_f64() * 1e3,
-                stats.meshed,
-                stats.reused
-            );
-        }
-        Ok(bodies.into_iter().map(|m| m.geometry).collect())
-    };
-    let native = |mut b: Builder| -> Result<NativeModel> {
-        if native_flat {
-            // The laminate last: its sketches hold every drill, which each
-            // command after it would otherwise read again.
-            b.native.activate(substrate.component)?;
-            laminate(&mut b, project, &plan.laminate)?;
-        }
-        // Every joint goes in once the parts are built, solved together (one
-        // by one, each would solve all the joints made before it); a copy of
-        // a shared definition starts where its first occurrence stands.
-        b.native.board_joints(&joints)?;
-        b.finish(sources)
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    let (model, layers, flat) = std::thread::scope(|scope| {
-        let drawn = scope.spawn(|| layers(&mut memo));
-        let flat = scope.spawn(|| meshed(&mut meshes));
-        let model = native(b);
-        let failed = |what: &str| Error::Verification(format!("{what} failed"));
-        let layers = drawn
-            .join()
-            .unwrap_or_else(|_| Err(failed("drawing the board's layers")));
-        let flat = flat
-            .join()
-            .unwrap_or_else(|_| Err(failed("meshing the board's bodies")));
-        (model, layers, flat)
-    });
-    #[cfg(target_arch = "wasm32")]
-    let (model, layers, flat) = (native(b), layers(&mut memo), meshed(&mut meshes));
-    let mut model = model?;
-    model.geometry.extend(flat?);
-    model.geometry.extend(layers?);
-    model.display = memo;
-    model.meshes = meshes;
-    model.plans = plans;
-    model.flat = if native_flat {
-        Flat::Native
-    } else {
-        Flat::Meshed
-    };
-    model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish);
-    Ok(model)
+    }
 }
 
 /// One via definition per drill and diameter: its plated barrel through
@@ -2487,7 +2737,6 @@ const MAX_IMPORTED_PARAMS: usize = 8192;
 fn object_params(
     project: &Project,
     pads: &[PlacedPad<'_>],
-    flat: bool,
 ) -> Result<Vec<(String, f64, &'static str)>> {
     let mut out = Vec::new();
     for placement in &project.placements {
@@ -2513,9 +2762,6 @@ fn object_params(
                 out.push((format!("{prefix}_{axis}"), value, "mm"));
             }
         }
-    }
-    if !flat {
-        return Ok(out);
     }
     for pad in pads {
         let local = pad.pad();
@@ -2671,7 +2917,7 @@ pub fn preview(package: &PackageDefinition) -> Result<NativeModel> {
             "package envelope dimensions must be finite and positive".into(),
         ));
     }
-    let mut b = Builder::new("Package envelope", &SourceCache::default(), Flat::Native)?;
+    let mut b = Builder::new("Package envelope", &SourceCache::default())?;
     for (name, value) in ["length", "width", "height"]
         .into_iter()
         .zip(package.envelope())
@@ -2739,7 +2985,7 @@ pub fn preview_part(package: &PackageDefinition, bytes: &[u8]) -> Result<NativeM
             "model.unsupported: the package does not use a part file".into(),
         ));
     };
-    let mut b = Builder::new("Package model", &SourceCache::default(), Flat::Native)?;
+    let mut b = Builder::new("Package model", &SourceCache::default())?;
     let stem = b.define_part(DRAFT_MODEL, use_, bytes)?;
     let created = b.model_occurrence(&stem)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;
@@ -2752,12 +2998,13 @@ pub const DRAFT_MODEL: &str = "pkgdraft";
 /// The generated model of one package, draft or published, at its
 /// placement in the datum frame (z = 0 the seating plane).
 fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
-    let mut b = Builder::new("Package model", &SourceCache::default(), Flat::Native)?;
+    let mut b = Builder::new("Package model", &SourceCache::default())?;
     let created = b.model(DRAFT_MODEL, package)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;
     b.finish(vec![])
 }
 
+pub mod designs;
 mod fill;
 mod identity;
 pub mod mesh;

@@ -23,11 +23,11 @@ use pcbcraft_core::units::Nm;
 use pcbcraft_core::{Engine, Layer, Operation, Outcome};
 
 /// The example's original USB4105 part file (`author_parts`).
-const USB4105: &[u8] =
+pub(crate) const USB4105: &[u8] =
     include_bytes!("../../../../examples/esp32-s31-devboard/parts/usb4105.solidcraft");
 const MEDIA: &str = "application/x-solidcraft";
 
-fn spec(bytes: &[u8]) -> Fallible<PartSpec> {
+pub(crate) fn spec(bytes: &[u8]) -> Fallible<PartSpec> {
     let part = part_file::evaluate(bytes, &Default::default())?;
     let packed = PackedAsset {
         hash: asset_hash(bytes),

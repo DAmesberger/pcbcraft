@@ -29,7 +29,7 @@
 //! without copper beyond the pads (mechanical) or with all of it (full).
 //! Its feature ids follow the slots' and may change from build to build.
 use crate::native::{NamedLoop, Native};
-use crate::project::{self, NativeModel};
+use crate::project;
 use crate::{Error, Result};
 use pcbcraft_core::interface::{DatumGeometry, Frame, Sidecar, SidecarDatum};
 use pcbcraft_core::library::Outline;
@@ -67,7 +67,7 @@ pub struct Exported {
 
 enum Design {
     Slots(Box<Native>),
-    Board(Box<NativeModel>),
+    Board(Box<Native>),
 }
 
 impl Exported {
@@ -75,7 +75,7 @@ impl Exported {
     pub fn native(&self) -> &Native {
         match &self.design {
             Design::Slots(native) => native,
-            Design::Board(model) => model.native(),
+            Design::Board(native) => native,
         }
     }
 
@@ -599,7 +599,13 @@ pub fn build(project: &Project, mut sidecar: Sidecar) -> Result<Exported> {
     }
     let design = match section_two(project, sidecar.tier) {
         None => Design::Slots(Box::new(native)),
-        Some(board) => Design::Board(Box::new(project::build_onto(native, &board)?)),
+        Some(board) => Design::Board(Box::new(
+            project::build_onto(native, &board)?
+                .into_native()
+                .ok_or_else(|| {
+                    Error::Verification("the board's model has no native design".into())
+                })?,
+        )),
     };
     Ok(Exported { design, sidecar })
 }

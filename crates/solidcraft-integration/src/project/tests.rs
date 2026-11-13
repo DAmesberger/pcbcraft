@@ -8,7 +8,7 @@ use pcbcraft_core::library::{ChipForm, ChipKind, PackageDefinition, PackageForm,
 /// Give `package` a chip form of `kind` over its envelope, or a generic
 /// (moulded) one, with an envelope model: these tests exercise the
 /// envelope path (generated models are `models::tests`).
-fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
+pub(super) fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
     package.form = kind.map_or(PackageForm::Generic, |kind| {
         PackageForm::Chip(Box::new(ChipForm::new(kind, (package.envelope()).map(nm))))
     });
@@ -17,7 +17,7 @@ fn set_body(package: &mut PackageDefinition, kind: Option<ChipKind>) {
 
 /// The demo with envelope models instead of its generated chip models,
 /// lifted 0.05 mm off the lands as the samples lift an envelope.
-fn envelope_demo() -> Result<Project> {
+pub(super) fn envelope_demo() -> Result<Project> {
     let mut project = Engine::demo()
         .map_err(|error| Error::Verification(error.to_string()))?
         .project()
@@ -33,7 +33,7 @@ use pcbcraft_core::library::PadShape;
 use pcbcraft_core::{Endpoint, Engine, TerminalId, Track};
 
 /// The demo's two instances, by designator.
-fn instances(project: &Project) -> Result<(Id, Id)> {
+pub(super) fn instances(project: &Project) -> Result<(Id, Id)> {
     let id = |designator| {
         project
             .instance_by_designator(designator)
@@ -272,7 +272,12 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
 fn geometry_holds_no_evaluated_body_once_its_model_is_gone() -> Result<()> {
     let mut project = fixture()?;
     let model = build(&project)?;
-    let world = std::sync::Arc::downgrade(&model.world);
+    let world = std::sync::Arc::downgrade(
+        model
+            .world
+            .as_ref()
+            .ok_or_else(|| Error::Verification("no native design".into()))?,
+    );
     let substrate = |geometry: &[Geometry]| {
         geometry
             .iter()
@@ -362,7 +367,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
         assert_eq!(restored.surface, previous.surface);
     }
     looks_match_the_native_file(&before)?;
-    let mut reopened = before.native;
+    let mut reopened = before.native.ok_or_else(crate::project::no_design)?;
     let mut changes = json!({"board_thickness": "2.4 mm", "copper_thickness": "0.07 mm"});
     for (name, value) in [
         (format!("instance_{r1}_x"), "15 mm"),
@@ -691,7 +696,7 @@ fn via_build_profile() -> Result<()> {
 /// Every body's surface is exactly the look the native file stores, as
 /// Solidcraft's own product-scene extraction reads it.
 fn looks_match_the_native_file(model: &NativeModel) -> Result<()> {
-    let scene = solidcraft_engine::product_scene::extract(model.native.session())
+    let scene = solidcraft_engine::product_scene::extract(model.exact()?.session())
         .map_err(|e| Error::Verification(e.to_string()))?;
     assert_eq!(scene.meshes.len(), native(model).count());
     for (mesh, geometry) in scene.meshes.iter().zip(native(model)) {
@@ -1546,7 +1551,7 @@ fn shaped_copper_survives_reopening_and_follows_the_board_thickness() -> Result<
     assert_eq!(before.geometry.len(), native(&original).count());
     let total = |m: &NativeModel| -> f64 { native(m).map(|g| g.volume()).sum() };
     near(total(&before), total(&original));
-    let mut native_model = before.native;
+    let mut native_model = before.native.ok_or_else(crate::project::no_design)?;
     native_model.change_parameters(json!({"board_thickness": "2.4 mm"}))?;
     let changed = finish(native_model, before.sources)?;
     let through = pad_bodies(&changed, r1, PadId(2));
@@ -1702,7 +1707,7 @@ fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definit
     };
     let (p1, p2) = (pick_of(&before, r1), pick_of(&before, r2));
     let (a1, a2) = (span(&before, p1), span(&before, p2));
-    let mut native = before.native;
+    let mut native = before.native.ok_or_else(crate::project::no_design)?;
     let mut changes = json!({ format!("{stem}_length"): "3 mm" });
     changes[format!("instance_{r1}_x")] = json!("5 mm");
     native.change_parameters(changes)?;
@@ -1972,12 +1977,9 @@ fn ten_thousand_vias_and_many_tracks_survive_reopening() -> Result<()> {
     Ok(())
 }
 
-/// D2's board hook: a package with a library model (an original GLB with
-/// its own clear-coated material) builds one shared definition its
-/// instances occur in, its bodies carrying their instance's pick, the
-/// lead bound to its terminal, and the model material's full look drawn.
-#[test]
-fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> {
+/// The demo with its chip package on the original glTF fixture model, its
+/// first terminal on the model's lead.
+pub(super) fn library_demo() -> Result<Project> {
     use crate::models::imported::tests::{fixture_glb, lead_key, model, use_lead};
     use pcbcraft_core::library::bundle::{AssetBytes, PackedAsset};
     use pcbcraft_core::library::model3d::{LeadTag, ModelFormat};
@@ -2029,6 +2031,16 @@ fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> 
         model: reference,
         ..use_lead(terminal)
     });
+    Ok(project)
+}
+
+/// D2's board hook: a package with a library model (an original GLB with
+/// its own clear-coated material) builds one shared definition its
+/// instances occur in, its bodies carrying their instance's pick, the
+/// lead bound to its terminal, and the model material's full look drawn.
+#[test]
+fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> {
+    let mut project = library_demo()?;
     let (r1, r2) = instances(&project)?;
     let built = build(&project)?;
     assert_eq!(built.models.len(), 1, "one definition per package revision");

@@ -102,7 +102,7 @@ fn board() -> Project {
 /// Each Solidcraft feature kind's count and evaluation time in the model's
 /// last evaluation (features reused from an earlier one count as reused).
 fn features(model: &NativeModel) {
-    let session = model.native().session();
+    let session = model.native().unwrap().session();
     let kinds: BTreeMap<u64, &str> = session
         .doc
         .features
@@ -124,7 +124,7 @@ fn features(model: &NativeModel) {
     eprintln!(
         "{} features, {} bodies in the world, evaluation {:.0} ms in all",
         session.doc.features.len(),
-        model.native().world_state().unwrap().bodies.len(),
+        model.native().unwrap().world_state().unwrap().bodies.len(),
         total
     );
     let mut rows: Vec<_> = rows.into_iter().collect();
@@ -137,7 +137,7 @@ fn features(model: &NativeModel) {
     // The ten slowest single features, by name.
     let mut slow: Vec<_> = session.model.results.iter().collect();
     slow.sort_by(|a, b| b.ms.total_cmp(&a.ms));
-    let world = model.native().world_state().unwrap();
+    let world = model.native().unwrap().world_state().unwrap();
     for r in slow.iter().take(12) {
         // The faces and edges of the bodies the feature made.
         let (faces, edges) = world

@@ -1341,7 +1341,7 @@ pub fn laminate(project: &pcbcraft_core::Project) -> Option<Laminate> {
 mod closed_loop_tests;
 pub mod model_refs;
 #[cfg(test)]
-mod package_datum_tests;
+pub(crate) mod package_datum_tests;
 mod parts;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

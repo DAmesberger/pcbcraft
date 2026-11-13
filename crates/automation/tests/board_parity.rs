@@ -7,7 +7,11 @@
 //! 2. the board plan the build was made from ([`plan::parity`]): each
 //!    flat body the plan describes is built once, of its kind, source,
 //!    layer, box and volume, and nothing flat is built that the plan does
-//!    not describe.
+//!    not describe; and
+//! 3. the live view's model of the board ([`designs::parity`]): each part,
+//!    its package revision's own design placed by the document's
+//!    transform, lies where the exact build's solved joints hold it, every
+//!    vertex within 1 µm.
 //!
 //! Bodies are compared as sets, by kind, source object, layer, bounding box
 //! and volume. `SPARKSMITH_BLESS_PARITY=1` writes the records anew (only
@@ -16,7 +20,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use pcbcraft_core::Project;
-use pcbcraft_solidcraft::project::{self, NativeModel, mesh, plan};
+use pcbcraft_solidcraft::project::{self, NativeModel, designs, mesh, plan};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -124,7 +128,7 @@ fn source_name(model: &NativeModel, item: Option<u64>) -> String {
 
 /// The native bodies of `model` (its display-only layers left out).
 fn records(model: &NativeModel) -> Vec<Record> {
-    let count = model.native().world_state().unwrap().bodies.len();
+    let count = model.native().unwrap().world_state().unwrap().bodies.len();
     model.geometry[..count]
         .iter()
         .map(|g| Record {
@@ -226,6 +230,40 @@ fn example_boards_match_their_record_and_plan() {
                 "{name} against its plan, {} differences:\n  {}",
                 differences.len(),
                 differences
+                    .iter()
+                    .take(20)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join("\n  ")
+            ));
+        }
+        // The live view's model: each part its package revision's own
+        // design, placed by the document's transform where the exact
+        // build's solved joints hold it.
+        let start = Instant::now();
+        let live = project::build_flat(
+            project,
+            &pcbcraft_solidcraft::models::imported::SourceCache::default(),
+            None,
+            project::Flat::Meshed,
+        )
+        .unwrap();
+        let live_ms = start.elapsed().as_secs_f64() * 1e3;
+        let placed = designs::parity(&model, &live).unwrap();
+        eprintln!(
+            "{name}: live model ({} part designs) in {live_ms:.0} ms; {} part bodies, {} vertices, \
+             at most {:.2e} mm from the exact build's",
+            live.part_designs(),
+            placed.bodies,
+            placed.vertices,
+            placed.worst_mm
+        );
+        if !placed.differences.is_empty() {
+            failures.push(format!(
+                "{name}'s parts in the live model against the exact build, {} differences:\n  {}",
+                placed.differences.len(),
+                placed
+                    .differences
                     .iter()
                     .take(20)
                     .cloned()
