@@ -127,7 +127,8 @@ impl<'a> DialogPanel<'a> {
             scroll = scroll.vertical_scroll_offset(0.0);
         }
         let shown_id = self.id.with("refusal_shown");
-        scroll.show(ui, |ui| {
+        let body_top = ui.cursor().top();
+        let shown = scroll.show(ui, |ui| {
             egui::Frame::NONE
                 .inner_margin(egui::Margin::symmetric(t.space_12 as i8, t.space_8 as i8))
                 .show(ui, |ui| {
@@ -147,6 +148,17 @@ impl<'a> DialogPanel<'a> {
                     });
                 });
         });
+        // The column gives the dialog its whole body, up to `body_rows`.
+        let body = shown.content_size.y.min(body_height(
+            self.body_rows,
+            t.control_height,
+            padding,
+            f32::INFINITY,
+        ));
+        super::card::remember_dialog_wants(
+            ui.ctx(),
+            body_top - slot.top() + body + ui.spacing().item_spacing.y + FOOTER_HEIGHT,
+        );
         // Pin the footer to the slot's bottom when the slot is bounded.
         if slot.bottom().is_finite() {
             let gap = slot.bottom() - FOOTER_HEIGHT - ui.cursor().top();

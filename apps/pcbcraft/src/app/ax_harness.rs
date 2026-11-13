@@ -46,6 +46,8 @@ pub(crate) struct Ax {
     pub dir: tempfile::TempDir,
     frame: eframe::Frame,
     time: f64,
+    /// The window size, [`WINDOW`] unless a test sets another.
+    pub window: egui::Vec2,
     /// The last frame's nodes, in tree order.
     nodes: Vec<Node>,
     /// The texts the last frame painted, whole (a cut text's full text).
@@ -102,6 +104,7 @@ impl Ax {
             dir,
             frame: eframe::Frame::_new_kittest(),
             time: 0.0,
+            window: WINDOW,
             nodes: Vec::new(),
             texts: Vec::new(),
         };
@@ -120,7 +123,7 @@ impl Ax {
         self.time += FRAME_SECONDS;
         self.ctx.enable_accesskit();
         let input = egui::RawInput {
-            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, WINDOW)),
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, self.window)),
             time: Some(self.time),
             events,
             ..Default::default()

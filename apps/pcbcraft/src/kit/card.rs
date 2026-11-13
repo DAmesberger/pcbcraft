@@ -113,6 +113,9 @@ fn gap() -> f32 {
 pub struct Wants {
     pub subject: Option<f32>,
     pub issues: Option<f32>,
+    /// A docked dialog's height (header, body up to its `body_rows`,
+    /// footer); `None` when no dialog drew last frame.
+    pub dialog: Option<f32>,
 }
 
 /// The subject card's least height while Issues is expanded: its header
@@ -126,7 +129,9 @@ pub fn subject_rows_height() -> f32 {
 /// bottom and the subject has the rest. Expanded, Issues takes only the
 /// height its content uses and the subject the rest, but the subject
 /// keeps its header and [`SUBJECT_ROWS`] rows (or its whole content, when
-/// that is shorter), so a short card gives Issues the room. The Issues bar
+/// that is shorter), so a short card gives Issues the room. A docked dialog
+/// keeps the height it asks for, so its form shows without scrolling;
+/// Issues gets the rest. The Issues bar
 /// always keeps its full height, however short the column; the subject
 /// gives way first.
 pub fn column(rect: Rect, issues_expanded: bool, wants: Wants) -> Column {
@@ -137,10 +142,13 @@ pub fn column(rect: Rect, issues_expanded: bool, wants: Wants) -> Column {
     let subject_height = if issues_expanded {
         let usable = |h: Option<f32>| h.filter(|h| h.is_finite() && *h >= 0.0);
         let issues = usable(wants.issues).unwrap_or(f32::INFINITY).max(bar);
-        let keep = usable(wants.subject)
-            .unwrap_or(f32::INFINITY)
-            .min(subject_rows_height())
-            .min(room);
+        let keep = match usable(wants.dialog) {
+            Some(dialog) => dialog,
+            None => usable(wants.subject)
+                .unwrap_or(f32::INFINITY)
+                .min(subject_rows_height()),
+        }
+        .min(room);
         (height - gap() - issues).clamp(keep, room)
     } else {
         room
@@ -155,6 +163,7 @@ pub fn column(rect: Rect, issues_expanded: bool, wants: Wants) -> Column {
 
 const SUBJECT_WANTS: &str = "column-subject-wants";
 const ISSUES_WANTS: &str = "column-issues-wants";
+const DIALOG_WANTS: &str = "column-dialog-wants";
 
 /// Keep the height a card's content wants for the next frame's
 /// [`column`], repainting when it changed.
@@ -174,6 +183,11 @@ pub fn remember_issues_wants(ctx: &egui::Context, height: f32) {
     remember_wants(ctx, ISSUES_WANTS, height);
 }
 
+/// A docked dialog's height this frame, for the next frame's [`column`].
+pub fn remember_dialog_wants(ctx: &egui::Context, height: f32) {
+    remember_wants(ctx, DIALOG_WANTS, height);
+}
+
 /// What the cards asked for in the last frame that drew them, plus each
 /// card's frame margin (`margin`, vertical, in points); a card that was not
 /// drawn last frame (a dialog took the slot) asks for nothing.
@@ -187,6 +201,7 @@ pub fn wants(ctx: &egui::Context, margin: f32) -> Wants {
     Wants {
         subject: read(SUBJECT_WANTS),
         issues: read(ISSUES_WANTS),
+        dialog: read(DIALOG_WANTS),
     }
 }
 
@@ -322,6 +337,7 @@ mod tests {
             Wants {
                 subject: Some(900.0),
                 issues: Some(200.0),
+                dialog: None,
             },
         );
         assert!((c.issues.height() - 200.0).abs() < 1e-3, "{c:?}");
@@ -333,6 +349,7 @@ mod tests {
             Wants {
                 subject: Some(900.0),
                 issues: Some(5000.0),
+                dialog: None,
             },
         );
         assert!((c.subject.height() - rows).abs() < 1e-3);
@@ -343,6 +360,7 @@ mod tests {
             Wants {
                 subject: Some(150.0),
                 issues: Some(5000.0),
+                dialog: None,
             },
         );
         assert!((c.subject.height() - 150.0).abs() < 1e-3);
@@ -354,8 +372,21 @@ mod tests {
             Wants {
                 subject: None,
                 issues: Some(0.0),
+                dialog: None,
             },
         );
+        assert!(c.issues.height() >= ISSUES_BAR_HEIGHT);
+        // A docked dialog keeps the height it asks for beside a long list.
+        let c = column(
+            rect,
+            true,
+            Wants {
+                subject: None,
+                issues: Some(5000.0),
+                dialog: Some(600.0),
+            },
+        );
+        assert!((c.subject.height() - 600.0).abs() < 1e-3, "{c:?}");
         assert!(c.issues.height() >= ISSUES_BAR_HEIGHT);
     }
 
