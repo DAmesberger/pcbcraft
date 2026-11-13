@@ -27,13 +27,14 @@ If none is found, the message lists every folder searched and names the variable
 | Assist | `assist/` | Assistant run profiles and prompts |
 | Parts | `parts/` | Part files (`.solidcraft`), each with a sidecar |
 | Templates | `templates/` | Package templates and starter rows |
-| Generators | `generators/` | Built generator modules |
+| Generators | `generators/` | Built generator modules, `<name>.wasm` ([generator plugins](generator-plugins.md)) |
 
 ## Rules
 
 - **The core stays file-free.** `sparksmith-core` never reads the library. `sparksmith-io` loads the data and hands typed values to the core, and the core states what it needs as types or parameters.
-- **No compiled-in copy.** `include_str!` and `include_bytes!` of library data are not allowed outside tests. Test fixtures are original and invented.
+- **No compiled-in copy.** `include_str!` and `include_bytes!` of library data are not allowed outside tests; `cargo xtask no-builtin-data` enforces it, with an allowlist for the program's own assets and the sites still being moved. Test fixtures are original and invented.
 - **Users override, never edit.** A per-user file with the same id (for example in the config folder's `fab-profiles/`) wins over the shipped entry, and the shipped files stay read-only.
 - **No product or vendor names in code or tool text.** Names such as a fab house or a part number live only in the data that cites them.
 - **A missing or broken file is an error naming the file.** It never falls back silently to a value written in code.
 - **Packaging.** The macOS bundle copies `library/` into `Contents/Resources/library`.
+- **Generator modules are committed builds.** `cargo xtask generators build --update-lock` writes `library/generators/<name>.wasm`, and `cargo xtask generators check` fails when a shipped module is not a build `generators/modules.lock` records. Every platform ships the same bytes, so a part's key does not depend on where the program was built.

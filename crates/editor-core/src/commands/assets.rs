@@ -1,5 +1,6 @@
 //! Packed-asset housekeeping shared by the library handlers: assets that
-//! no published revision, draft or instance marking names any more are
+//! no published revision, draft, instance marking or generated part names
+//! any more are
 //! dropped by the command that stopped naming them, so they leave in the
 //! same undo step and are never saved into every later container.
 use crate::ids::{ContentHash, DefinitionId};
@@ -26,7 +27,7 @@ pub(crate) fn named_by_drafts(
 /// `None` when one cannot be read (then nothing is dropped).
 fn in_use(document: &Document) -> Option<BTreeSet<ContentHash>> {
     let library = &document.project.library;
-    let mut out = BTreeSet::new();
+    let mut out = crate::library::generated::named_modules(library);
     for model in &library.models {
         out.extend(model.definition.assets().map(|a| a.hash));
     }

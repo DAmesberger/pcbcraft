@@ -21,8 +21,10 @@
 //! Generator plugins sit beside the layers:
 //! - `sparksmith-generator-abi` is a leaf: wire types any crate may use; it
 //!   depends on no workspace crate.
-//! - `sparksmith-generators` (layer 2) runs modules; `sparksmith-generators-probe`
-//!   (layer 3) is a test module nothing may depend on.
+//! - `sparksmith-generators` (layer 1, beside the core: it depends on the ABI
+//!   only) runs modules, so `sparksmith-io` can check a project's generated
+//!   parts on load; `sparksmith-generators-probe` (layer 3) is a test module
+//!   nothing may depend on.
 //! - Generator crates (`sparksmith-gen-*`, built to wasm) depend on
 //!   `sparksmith-generator-sdk` and the ABI only, and nothing depends on them;
 //!   only they may depend on the SDK.
@@ -36,7 +38,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("sparksmith-kicad", 2),
     ("sparksmith-solidcraft", 2),
     ("sparksmith-firmware", 2),
-    ("sparksmith-generators", 2),
+    ("sparksmith-generators", 1),
     ("sparksmith-generators-probe", 3),
     ("sparksmith-automation", 3),
     ("sparksmith-assist", 4),

@@ -2,7 +2,7 @@
 
 A generator is a pure function in a WebAssembly module: typed parameters in, a complete part body out (symbol, package and footprint; the 3D model description arrives with slice GP2). Each directory here is one generator crate that builds to `wasm32-unknown-unknown`. The modules are loaded as data, never linked into the app; the host that runs them is `crates/generators` (`sparksmith-generators`).
 
-Status: slice GP0, the foundation. The modules are not yet used by the catalog, the gallery or the part editor (GP1, GP5, GP7); the in-code templates stay until GP5. ABI 1 is open to change until the first release.
+Status: slices GP0 and GP1. A part can be made from a module through the command engine (`library.generate`, `library.generate_part`); the project embeds the module and checks the part against it on every open ([generator plugins](../docs/generator-plugins.md)). The catalog, the gallery and the part editor do not use modules yet (GP5, GP7); the in-code templates stay until GP5. ABI 1 is open to change until the first release.
 
 ## Layout
 
@@ -14,6 +14,7 @@ Status: slice GP0, the foundation. The modules are not yet used by the catalog, 
 | `crates/generators-probe` | A test module: the host itself built for wasm32, so the native tests can show the wasm32 build gives the same results. Never shipped. |
 | `generators/<name>/` | One generator: `Cargo.toml` (cdylib), `src/`, `presets.json`, `golden.json`. |
 | `generators/modules.lock` | Each module's SHA-256 per build host, committed. |
+| `library/generators/<name>.wasm` | The shipped module, committed: a build the lock records (`build --update-lock` writes it, `check` verifies it). |
 
 `cargo xtask layers` keeps it apart: a generator crate depends on the SDK and the ABI only, only generator crates depend on the SDK, nothing depends on a generator crate or on the probe, and the ABI crate depends on no workspace crate (so `sparksmith-core` can use its types and trait without an interpreter).
 
@@ -34,7 +35,7 @@ The host checks a module before anything runs (size, a valid core module of the 
 
 **Request.** `{abi: 1, scope: component | package, params: {key: value}}`. The parameters are complete: the host fills every default from the description first (`sparksmith_generators::params::complete`), so the part key never depends on a module's defaults. Parameters a project setting decides (the least chip land gap, the resistor symbol style) are declared as `context` parameters and frozen into the request.
 
-**Identity.** Module hash: SHA-256 of the module bytes. Result hash: SHA-256 of the canonical `Generation` bytes (after the status byte). The part key (module hash with the params hash) is GP1's.
+**Identity.** Module hash: SHA-256 of the module bytes. Result hash: SHA-256 of the canonical `Generation` bytes (after the status byte). Params hash: SHA-256 of the canonical `Request` (ABI, scope, complete parameters; `sparksmith_core::library::generated::key`). The part key is the module hash with the params hash ([generator plugins](../docs/generator-plugins.md)).
 
 **Refusals** are `{code, field?, message}` with a sentence a person can act on: `param.unknown`, `param.missing`, `param.type`, `param.out_of_range`, `param.inconsistent` and `param.scope` for parameters; `generator.too_large`, `generator.invalid_module`, `generator.unsupported_feature`, `generator.has_imports`, `generator.missing_export`, `generator.abi_mismatch`, `generator.out_of_fuel`, `generator.memory_limit`, `generator.trapped`, `generator.output_too_large`, `generator.request_refused` and `generator.invalid_output` from the host. Every host refusal ends in "It was not run." or "Nothing was changed."
 
@@ -42,7 +43,7 @@ The host checks a module before anything runs (size, a valid core module of the 
 
 ```sh
 cargo xtask generators build                # build every module, print sizes and hashes
-cargo xtask generators build --update-lock  # … and write modules.lock (the only way it changes)
+cargo xtask generators build --update-lock  # … write modules.lock (the only way it changes) and library/generators/
 cargo xtask generators check                # in `cargo xtask ci`: build, compare with the lock, golden cases three ways
 cargo xtask generators reproduce            # two clean builds, compared with each other and the lock
 cargo xtask generators measure              # the numbers below
@@ -93,7 +94,7 @@ Limits (`sparksmith_generators::Limits::DEFAULT`, `v1::limits`), set from these 
 | Description | (1 MiB) | 256 KiB | 18 × the chip description |
 | Response | 4 MiB | 1 MiB | 380 × the largest chip response; a 1 024-pad grid array projects to about 0.3 MiB |
 | Per-kind counts | — | pads ≤ 1 024, terminals ≤ 1 024, graphics ≤ 4 096 per list, points ≤ 1 024, units ≤ 64, coordinates ≤ 1 m | `v1::limits` |
-| Wall time | 2 s | not enforced in GP0 | Fuel bounds the work; the worker thread with cancellation comes with GP1 |
+| Wall time | 2 s | 2 s per call (`worker::WALL`) | Fuel bounds the work; `sparksmith_generators::worker::Worker` runs each call on its own thread and refuses one past the wall time or cancelled (GP1) |
 
 The fuel limit and the response bound are tied: raise them together. The projections for larger families are estimates until those generators exist (GP3, GP4).
 

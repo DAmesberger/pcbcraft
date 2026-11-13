@@ -11,6 +11,7 @@ pub mod drafts;
 mod footprint;
 pub mod footprint_edit;
 pub mod footprint_source;
+pub mod generated;
 pub mod graphics;
 pub mod import;
 pub mod marking;
@@ -200,6 +201,12 @@ pub struct Library {
     /// offline with attached copies.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub assets: Shared<Vec<PackedAsset>>,
+    /// GP1: the parts generator modules made, with the module and the
+    /// complete parameters (`generated`). Outside revision bodies, as
+    /// origins are: a revision drafted from a generated one is the
+    /// person's own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub generated: Shared<Vec<generated::GeneratedPart>>,
 }
 
 /// A field revision with the quantity kind its value type names, if any.
@@ -634,7 +641,8 @@ pub fn validate(library: &Library) -> Result<()> {
             )));
         }
     }
-    bundle::validate_snapshot(library)
+    bundle::validate_snapshot(library)?;
+    generated::validate(library)
 }
 
 /// Text that publication accepts as a name or label.

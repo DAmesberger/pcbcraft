@@ -433,6 +433,12 @@ pub enum Request {
     /// Mechanical parts: the part files a project can place.
     #[serde(rename = "library.part_files")]
     PartFiles(NoParams),
+    /// GP1: shipped and embedded generator modules and generated parts.
+    #[serde(rename = "library.generators")]
+    Generators(NoParams),
+    /// GP1: make a part with a generator module (`library.generate`).
+    #[serde(rename = "library.generate_part")]
+    GeneratePart(generators::GeneratePartParams),
     /// Mechanical parts: place a part file directly on the board.
     #[serde(rename = "layout.place_part_file")]
     PlacePartFile(Box<mechanical_parts::PlacePartFileParams>),
@@ -501,6 +507,8 @@ sparksmith_core::declare_classes!(Request {
     UsePartFile "library.use_part_file" Edit "Use a part file as the model",
     SetPartValues "library.set_part_values" Edit "Set part file values",
     PartFiles "library.part_files" Read "List part files",
+    Generators "library.generators" Read "List generator modules",
+    GeneratePart "library.generate_part" Edit "Generate a part",
     PlacePartFile "layout.place_part_file" Edit "Place a part file on the board",
     SetPartFileValues "layout.set_part_file_values" Edit "Change a placed part file",
     InterfacePreview "interface.publish_preview" Read "Preview publishing the board interface",
@@ -635,6 +643,8 @@ impl Request {
             | Self::MarkingSurfaces(_)
             | Self::SetPartValues(_)
             | Self::PartFiles(_)
+            | Self::Generators(_)
+            | Self::GeneratePart(_)
             | Self::SetPartFileValues(_) => Vec::new(),
         }
     }
@@ -660,6 +670,7 @@ impl Request {
             Self::SetMarking(params) => Some(params.expected_revision),
             Self::UsePartFile(params) => Some(params.expected_revision),
             Self::SetPartValues(params) => Some(params.expected_revision),
+            Self::GeneratePart(params) => Some(params.expected_revision),
             Self::PlacePartFile(params) => Some(params.expected_revision),
             Self::SetPartFileValues(params) => Some(params.expected_revision),
             Self::InterfacePublish(params) => Some(params.expected_revision),
@@ -691,6 +702,7 @@ impl Request {
             | Self::MarkingSurfaces(_)
             | Self::CheckPartFile(_)
             | Self::PartFiles(_)
+            | Self::Generators(_)
             | Self::InterfacePreview(_) => None,
         }
     }
@@ -924,6 +936,16 @@ impl Request {
                 "List the SolidCraft part files this project can place or use.",
                 "List the SolidCraft part files this project can place or use (docs/mechanical-parts.md): the built-ins (name, title, summary, designator prefix, kind pads, mechanical or package, parameters with units and defaults, licence) and the project's Models of format solidcraft (model, name, file, licence). Not a document change.",
             ),
+            info::<NoParams>(
+                "library.generators",
+                "List generator modules (shipped and embedded) and the project's generated parts.",
+                "List the generator modules that ship with the program (name, module SHA-256, parameters with types, defaults and the project setting that fills them, presets, scopes), the modules this project embeds, and its generated parts, each with its part key (module and parameters hashes), result hash and state: current, shipped_differs (another module of the same generator ships; the project keeps its own copy, nothing changes by itself) or not_shipped (the embedded copy is the only one). Not a document change.",
+            ),
+            info::<generators::GeneratePartParams>(
+                "library.generate_part",
+                "Make a part (component or package) with a generator module, e.g. a chip resistor 0603.",
+                "Make a part with a generator module, through library.generate in one undo step at expected_revision: generator (a shipped name) or module (an embedded SHA-256), scope component (component, symbol, package, footprint, binding) or package, an optional preset and params (lengths in integer nm, angles in integer millidegrees; the rest from project settings and the module's defaults). The module is embedded once by hash, so the project reopens without the generator folder; a part the project already holds with the same key is returned unchanged (created: false). Refusals name the module's own problems (param.*) or the host's (generator.*); nothing changes.",
+            ),
             info::<mechanical_parts::PlacePartFileParams>(
                 "layout.place_part_file",
                 "Place a parametric 3D part such as a nut, standoff, spacer or heatsink on the board.",
@@ -1018,6 +1040,8 @@ pub struct Session {
     /// without building the snapshot.
     compact: bool,
     baseline: Option<reply::Baseline>,
+    /// The shipped library, when the host gives it (else located).
+    shipped: Option<sparksmith_io::shipped::ShippedLibrary>,
 }
 
 impl Session {
@@ -1065,6 +1089,7 @@ impl Session {
 
     /// Execute one typed request.
     pub fn execute(&mut self, request: Request) -> Result<Value> {
+        self.ensure_generators();
         // The one revision check of every document-changing request.
         if let Some(expected) = request.expected_revision() {
             self.engine.check_revision(expected)?;
@@ -1341,6 +1366,8 @@ impl Session {
             Request::UsePartFile(params) => return self.use_part_file(params),
             Request::SetPartValues(params) => return self.set_part_values(params),
             Request::PartFiles(_) => return self.part_files(),
+            Request::Generators(_) => return self.generators(),
+            Request::GeneratePart(params) => return self.generate_part(params),
             Request::PlacePartFile(params) => return self.place_part_file(*params),
             Request::SetPartFileValues(params) => return self.set_part_file_values(params),
             Request::InterfacePreview(params) => return self.interface_preview(params),
@@ -1647,6 +1674,7 @@ pub fn schemas() -> Value {
 mod assembly_link;
 pub mod discovery;
 mod firmware;
+mod generators;
 mod interface;
 mod marking;
 pub mod mechanical_parts;
@@ -1670,6 +1698,8 @@ mod fabrication_tests;
 mod firmware_tests;
 #[cfg(test)]
 mod folder_tests;
+#[cfg(test)]
+mod generators_tests;
 #[cfg(test)]
 mod high_speed_tests;
 #[cfg(test)]

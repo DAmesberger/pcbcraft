@@ -704,9 +704,27 @@ pub struct Engine {
     /// What the last applied operation re-routed of the copper its moved
     /// parts dragged ([`Engine::rerouted`]).
     rerouted: layout::router::reroute::Rerouted,
+    /// The host's generator runtime (`library.generate`, GP1): a host
+    /// setting like the waiver rule, kept across documents.
+    generators: Option<Arc<dyn library::generated::GeneratorRuntime + Send + Sync>>,
 }
 
 impl Engine {
+    /// Give this engine the host's generator runtime, which
+    /// `library.generate` runs modules through (the core never interprets
+    /// one). It stays across new and opened documents.
+    pub fn set_generators(
+        &mut self,
+        runtime: Arc<dyn library::generated::GeneratorRuntime + Send + Sync>,
+    ) {
+        self.generators = Some(runtime);
+    }
+
+    /// Whether this engine has a generator runtime.
+    pub fn has_generators(&self) -> bool {
+        self.generators.is_some()
+    }
+
     /// What the last operation applied re-routed of the copper its moved
     /// parts dragged along, and what it left unrouted: empty when it moved
     /// no part, or the carried copper stayed clean.
@@ -1284,6 +1302,7 @@ impl Engine {
             revision: self.revision,
             waiver_reason_required: self.waiver_reason_required,
             copper: self.copper.clone(),
+            generators: self.generators.clone(),
             ..Engine::default()
         };
         let mut outcomes = Vec::with_capacity(count);
@@ -1351,6 +1370,7 @@ impl Engine {
             waiver_reason_required: self.waiver_reason_required,
             copper: self.copper.clone(),
             rerouted: self.rerouted.clone(),
+            generators: self.generators.clone(),
         }
     }
 
@@ -1400,6 +1420,13 @@ impl Engine {
             _ => Vec::new(),
         };
         let outcome = match operation {
+            Operation::Library(commands::LibraryCommand::Generate(request)) => {
+                let runtime = self
+                    .generators
+                    .as_deref()
+                    .map(|r| r as &dyn library::generated::GeneratorRuntime);
+                commands::generated::generate(&mut candidate, *request, runtime)?
+            }
             Operation::Library(command) => {
                 commands::apply_library(&mut candidate, command, evaluator)?
             }

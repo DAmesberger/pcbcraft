@@ -11,6 +11,7 @@ workspace = true
 [dependencies]
 sparksmith-core.workspace = true
 sparksmith-io.workspace = true
+sparksmith-generators.workspace = true
 sparksmith-solidcraft.workspace = true
 sparksmith-firmware.workspace = true
 solidcraft-control.workspace = true
