@@ -265,7 +265,7 @@ A linked design is any other SolidCraft design or assembly that links the board,
 2. **A datum's identity never depends on build order, feature numbers, designators or names.**
 3. **Each value has one owner.** The board owns its outline, holes and placements. The linked design owns its walls and openings. A dimension lives in the file whose geometry it drives.
 4. **Updates are reviewed and bound to revisions, in both directions. Never silent.**
-5. **A reference that no longer resolves is reported in the user's words and blocks fabrication output** (founder direction 11 of 9 November).
+5. **A reference that no longer resolves is reported in the user's words and blocks publishing to linked designs until resolved** (founder direction 11 of 9 November, changed in slice P1: it is a warning in Issues and does not block fabrication or Gerber output).
 6. **Solidcraft stays generic.** Nothing Sparksmith-specific goes into Solidcraft (founder, 3 November). Upstream asks are generic.
 
 ### 2.2 Datum kinds and naming
@@ -441,7 +441,7 @@ An opening is never inferred from a part's name or category. That follows the ru
 | Situation | How it is detected | What the user reads |
 | --- | --- | --- |
 | The linked design holds an older board | the SHA-256 on the linked design's link is not the last published file's | "The linked design still uses board revision 13. Run Update Links in SolidCraft, then check again." |
-| Both sides changed | the above, and the linked design's own hash changed | "The board and the linked design both changed since they last agreed. Update the linked design first; nothing was applied." |
+| Both sides changed | the above, and the linked design's own hash changed | "The board and the linked design both changed since they last agreed. Preview the update and choose which side wins where they conflict." The preview shows both sides' changes; `assembly.update` takes a side per conflicting item (slice P1). |
 | A datum the linked design uses is gone | the dry run's failed feature names a digest Sparksmith published | "The linked design's sketch 'USB opening' uses J1's opening. J1 was deleted, so the cutout would fail. Restore J1, or pick another opening in SolidCraft." |
 | A reference is on an unexported face | the dry run finds a link whose digest is not a slot's | "Sketch 'Lid rib' is attached to a face of U1 that is not exported. It may move to another part when the board changes. Export it?" |
 | The board's driven outline was edited locally | the curve is owned by a reference | "This edge follows the linked design's wall. Break the link to edit it here." |
@@ -449,7 +449,7 @@ An opening is never inferred from a part's name or category. That follows the ru
 | The linked design is missing or moved | the path does not resolve | "The linked design file was not found. The board uses the last known geometry." with Relink |
 | The linked design is from a newer SolidCraft | the reader refuses the version | "This linked design was saved by a newer SolidCraft than this Sparksmith can read." |
 
-A lost or inexact reference blocks fabrication output without a waiver.
+A lost reference blocks publishing to the linked design until it is resolved; neither a lost nor an inexact one blocks fabrication output (slice P1). A loop through positions blocks fabrication output without a waiver; a loop through extents only is a warning.
 
 ### 2.6 What is needed
 
@@ -499,7 +499,7 @@ Limits of the prototype: datums are boxes made by hand from the placement, not f
 3. A headless SolidCraft test document (a wall with a cutout projected from the opening, and a boss mated to a mounting hole) re-evaluates after `component.update_links` with the cutout moved 2.000 mm ± 1 µm and no other face of the wall moved.
 4. The same after closing and reopening the project, and on a second machine, with the same face names (compare the sidecars byte for byte).
 5. Deleting an unrelated part, adding a pour and renaming J1 change nothing in the linked design.
-6. Deleting J1: the preview names the cutout that would fail, before anything is written. After publishing anyway, `assembly_link` status reads "broken reference", fabrication output is blocked, and undo restores everything.
+6. Deleting J1: the preview names the cutout that would fail, before anything is written. `assembly_link` status reads "broken reference" at once, publishing is blocked until it is resolved (fabrication output is not), and undo restores everything.
 7. The linked design → board direction: the wall moved 1 mm in the test document; `assembly.preview` lists the outline edge and the parts held to it; `assembly.update` applies one undo step.
 8. Publishing the interface tier takes under 100 ms on the ESP32 board (target; 21–52 ms in the prototype with 5 slots).
 9. A VM run with the real SolidCraft app repeats 3 and 7 by hand.
@@ -642,7 +642,7 @@ Adopted text:
 
 **A new hard rule.**
 
-> An assembly references a board only through its published interface: datums with ids and slots that survive edits, rebuilds and renames. Link updates in either direction go through a preview bound to both files' revisions and are never silent. A reference that no longer resolves is named in the user's words and blocks fabrication output.
+> An assembly references a board only through its published interface: datums with ids and slots that survive edits, rebuilds and renames. Link updates in either direction go through a preview bound to both files' revisions and are never silent. A reference that no longer resolves is named in the user's words and blocks publishing to linked designs until resolved.
 
 **The "Start here" paragraph** gains `cargo xtask board-parity` in the list of enforced boundaries.
 

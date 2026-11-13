@@ -29,8 +29,14 @@
 //! and parts dimensioned to those curves follow, as for any board edit.
 //! A reference that no longer resolves keeps its last geometry and stops
 //! moving; it, and a linked design feature whose datum no longer resolves
-//! on the board, block fabrication output (`assembly.reference_lost`, never
-//! waived).
+//! on the board, are a warning in Issues (`assembly.reference_lost`) that
+//! blocks publishing to the linked design until it is resolved
+//! ([`publish_blockers`]), never fabrication output.
+//!
+//! When the board and the linked design both changed since they last
+//! agreed, an update is not refused: the preview lists both sides'
+//! changes ([`conflicts`], [`board_changes`]) and the update says, per
+//! item both changed, which side wins ([`Resolution`]).
 use super::findings;
 use crate::diagnostics::{Error, Finding, ObjectRef, Result};
 use crate::geometry::Point;
@@ -45,6 +51,7 @@ use crate::model::assembly_link::{
 use crate::model::dimension::{
     BodyName, FaceName, FeatureGeometry, FollowedFaceId, ReferenceStatus,
 };
+use crate::model::interface::{DatumId, PublishedDatum};
 use crate::model::{BoardShape, Project};
 use crate::units::Nm;
 use schemars::JsonSchema;
@@ -168,9 +175,15 @@ pub enum AssemblyCommand {
     /// traces move the fixed geometry they own, bindings set their board
     /// parameters, and the snapshot becomes the read. Refused, changing
     /// nothing, when the board would not solve, or a bound parameter is
-    /// gone.
+    /// gone. When both files changed since they last agreed, every item
+    /// both changed ([`conflicts`]) needs a [`Resolution`] in `resolve`,
+    /// or the update is refused.
     #[serde(rename = "assembly.record_update")]
-    RecordUpdate { read: AssemblyRead },
+    RecordUpdate {
+        read: AssemblyRead,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        resolve: Vec<Resolution>,
+    },
     /// Add a followed face the host traced (`assembly.add_reference`):
     /// its trace enters the board sketch as fixed geometry it owns.
     #[serde(rename = "assembly.record_reference")]
@@ -203,6 +216,49 @@ declare_classes!(AssemblyCommand {
     Unbind "assembly.unbind" Edit "Unbind a board parameter",
     Unlink "assembly.unlink" Edit "Unlink the linked design",
 });
+
+/// An item of the link both the board and the linked design changed since
+/// they last agreed.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum ConflictItem {
+    /// A followed face the linked design moved, built on datums the board
+    /// changed.
+    Reference(FollowedFaceId),
+    /// A bound board parameter the board set and the linked design changed.
+    Binding(ParamName),
+}
+
+/// Which side's change an update keeps for a conflicting item.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Side {
+    /// The board keeps what it has; the linked design follows it after
+    /// the next publish and Update Links.
+    Board,
+    /// The board takes the linked design's change.
+    LinkedDesign,
+}
+
+/// The side that wins for one conflicting item.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Resolution {
+    pub item: ConflictItem,
+    pub wins: Side,
+}
+
+/// One item both sides changed, in the user's words.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+pub struct Conflict {
+    pub item: ConflictItem,
+    /// "Far wall · inner face", "Board parameter width".
+    pub name: String,
+    /// What the board changed: "Board outline changed".
+    pub board: String,
+    /// What the linked design changed: "Far wall · inner face, 1 mm along Y".
+    pub linked_design: String,
+}
 
 fn bad(message: impl Into<String>) -> Error {
     Error::Invalid(message.into())
@@ -270,6 +326,12 @@ fn check_read(read: &AssemblyRead) -> Result<()> {
         }
     }
     check_consumers(&read.consumers)?;
+    // Only a followed face is built on a datum through its extent alone.
+    if read.consumers.iter().any(|c| c.via == UseKind::Extent) {
+        return Err(bad(
+            "assembly.read: a linked design feature uses a datum by a sketch or a joint",
+        ));
+    }
     if read.unexported.len() > MAX_CONSUMERS
         || read
             .unexported
@@ -440,11 +502,13 @@ pub fn apply(
                 board_sha256: read.board_sha256,
                 unexported: sorted(read.unexported),
                 cycles: Vec::new(),
+                agreed: Vec::new(),
                 next_ref: 1,
             }));
+            refresh_agreed(project);
             Ok(())
         }
-        AssemblyCommand::RecordUpdate { read } => update(project, read, board),
+        AssemblyCommand::RecordUpdate { read, resolve } => update(project, read, resolve, board),
         AssemblyCommand::RecordReference { reference } => {
             let link = link_mut(project)?;
             if link.references.len() >= MAX_FOLLOWED_FACES {
@@ -504,6 +568,7 @@ pub fn apply(
                 sketch,
                 built_on: sorted(reference.built_on),
             });
+            refresh_agreed(project);
             Ok(())
         }
         AssemblyCommand::RemoveReference { id } => {
@@ -594,10 +659,210 @@ fn sorted<T: Ord>(mut items: Vec<T>) -> Vec<T> {
     items
 }
 
+/// The datums a link uses: its consumers' and what its followed faces are
+/// built on.
+fn used(link: &AssemblyLink) -> BTreeSet<DatumId> {
+    link.consumers
+        .iter()
+        .chain(link.references.iter().flat_map(|r| r.built_on.iter()))
+        .map(|c| c.datum)
+        .collect()
+}
+
+/// Keep the hashes the used datums had in the last publish, when the
+/// linked design holds that publish (or nothing says it does not): the
+/// point both last agreed on. While the linked design holds an older
+/// board, the earlier point stays.
+fn refresh_agreed(project: &mut Project) {
+    let Some(link) = project.assembly_link.as_deref() else {
+        return;
+    };
+    if matches!(
+        agreement(project, link.board_sha256),
+        Agreement::Older { .. }
+    ) {
+        return;
+    }
+    let used = used(link);
+    let agreed: Vec<PublishedDatum> = project
+        .interface
+        .published
+        .as_ref()
+        .map(|r| {
+            r.datums
+                .iter()
+                .filter(|d| used.contains(&d.id))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    if let Some(link) = project.assembly_link.as_deref_mut() {
+        link.agreed = agreed;
+    }
+}
+
+/// The datums the link uses that the board changed since the two last
+/// agreed: their hash now is not the agreed one, or they are gone.
+fn board_changed(project: &Project, link: &AssemblyLink) -> BTreeSet<DatumId> {
+    let now: std::collections::BTreeMap<DatumId, Option<ContentHash>> =
+        match super::list::table(project) {
+            Ok(table) => super::list::rows(project, &table)
+                .map(|rows| {
+                    rows.iter()
+                        .map(|r| (r.id, super::list::datum_hash(r).ok()))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            Err(_) => Default::default(),
+        };
+    let used = used(link);
+    link.agreed
+        .iter()
+        .filter(|d| used.contains(&d.id))
+        .filter(|d| now.get(&d.id).is_none_or(|h| *h != Some(d.hash)))
+        .map(|d| d.id)
+        .collect()
+}
+
+/// Whether `read` comes from a linked design that changed while it holds an
+/// older board than the last publish: both changed since they last agreed.
+pub fn both_changed(project: &Project, read: &AssemblyRead) -> bool {
+    project
+        .assembly_link
+        .as_deref()
+        .is_some_and(|link| read.file_sha256 != link.file_sha256)
+        && matches!(
+            agreement(project, read.board_sha256),
+            Agreement::Older { .. }
+        )
+}
+
+/// What the board changed since it and the linked design last agreed, in
+/// the user's words: each datum the link uses whose content changed.
+pub fn board_changes(project: &Project) -> Vec<String> {
+    let Some(link) = project.assembly_link.as_deref() else {
+        return Vec::new();
+    };
+    let changed = board_changed(project, link);
+    let names: std::collections::BTreeMap<DatumId, &str> = link
+        .consumers
+        .iter()
+        .chain(link.references.iter().flat_map(|r| r.built_on.iter()))
+        .map(|c| (c.datum, c.name.as_str()))
+        .collect();
+    changed
+        .iter()
+        .map(|id| {
+            let read = names.get(id).copied().unwrap_or("a datum");
+            format!(
+                "{}, changed on the board",
+                capitalised(&datum_words(project, *id, read))
+            )
+        })
+        .collect()
+}
+
+/// The words for how a followed face's trace changes from `before` to
+/// what `r` read; `None` when it did not.
+fn reference_change(name: &str, before: &FeatureGeometry, r: &ReferenceRead) -> Option<String> {
+    match (&r.geometry, r.status) {
+        (_, ReferenceStatus::Lost) | (None, _) => Some(format!("{name}, lost")),
+        (Some(g), _) if !same_shape(g, before) => Some(format!("{name}, reshaped")),
+        (Some(g), _) if moved(before, g) => {
+            let d = match (before, g) {
+                (FeatureGeometry::Point { at: p }, FeatureGeometry::Point { at: q })
+                | (FeatureGeometry::Line { a: p, .. }, FeatureGeometry::Line { a: q, .. }) => {
+                    sub(*q, *p)
+                }
+                _ => [0.0, 0.0],
+            };
+            Some(offset_words(name, d))
+        }
+        _ => None,
+    }
+}
+
+/// The items both the board and the linked design changed since they last
+/// agreed, for an update from `read`; none unless both changed. A followed
+/// face conflicts when the linked design moved it (or lost it) and it is
+/// built on a datum the board changed; a binding when the linked design's
+/// value changed and the board set its parameter to another value.
+pub fn conflicts(project: &Project, read: &AssemblyRead) -> Vec<Conflict> {
+    let Some(link) = project.assembly_link.as_deref() else {
+        return Vec::new();
+    };
+    if !both_changed(project, read) {
+        return Vec::new();
+    }
+    let changed = board_changed(project, link);
+    let mut out = Vec::new();
+    for reference in &link.references {
+        let Some(r) = read.references.iter().find(|r| r.id == reference.id) else {
+            continue;
+        };
+        let Some(linked_design) = reference_change(&reference.name, &reference.geometry, r) else {
+            continue;
+        };
+        let on: BTreeSet<String> = reference
+            .built_on
+            .iter()
+            .filter(|c| changed.contains(&c.datum))
+            .map(|c| datum_words(project, c.datum, &c.name))
+            .collect();
+        if on.is_empty() {
+            continue;
+        }
+        let on: Vec<String> = on.into_iter().collect();
+        out.push(Conflict {
+            item: ConflictItem::Reference(reference.id),
+            name: reference.name.clone(),
+            board: format!("{} changed on the board", capitalised(&on.join(", "))),
+            linked_design,
+        });
+    }
+    let BoardShape::Sketch(sketch) = &project.board_shape else {
+        return out;
+    };
+    for binding in &link.bindings {
+        let Some(value) = read
+            .bindings
+            .iter()
+            .find(|b| b.board_param == binding.board_param)
+            .and_then(|b| b.value_mm)
+            .and_then(|v| Nm::from_mm_f64_rounded(v).ok())
+        else {
+            continue;
+        };
+        let Some(param) = sketch
+            .parameters
+            .iter()
+            .find(|p| p.name == binding.board_param)
+        else {
+            continue;
+        };
+        if value == binding.value || param.expr == bound_expr(binding.value.to_mm_f64()) {
+            continue;
+        }
+        let name = format!("Board parameter {}", binding.board_param.0);
+        out.push(Conflict {
+            item: ConflictItem::Binding(binding.board_param.clone()),
+            board: format!("{name} set to {} on the board", param.expr.0),
+            linked_design: format!(
+                "{} is {} in the linked design",
+                binding.assembly_param,
+                bound_expr(value.to_mm_f64()).0
+            ),
+            name,
+        });
+    }
+    out
+}
+
 /// `assembly.record_update`.
 fn update(
     project: &mut Project,
     read: AssemblyRead,
+    resolve: Vec<Resolution>,
     board: Option<&dyn BoardShapeEvaluator>,
 ) -> Result<()> {
     check_read(&read)?;
@@ -605,20 +870,43 @@ fn update(
         project.assembly_link.as_deref().cloned().ok_or_else(|| {
             Error::Conflict("assembly.unlinked: no linked design is linked".into())
         })?;
-    // The linked design changed while it still holds an older board: the two
-    // no longer agree on the board, so nothing of it is applied.
-    if read.file_sha256 != link.file_sha256
-        && matches!(
-            agreement(project, read.board_sha256),
-            Agreement::Older { .. }
-        )
-    {
+    // Both changed since they last agreed: every item both changed says
+    // which side wins.
+    if resolve.len() > MAX_FOLLOWED_FACES + MAX_ASSEMBLY_BINDINGS {
+        return Err(Error::Limit("assembly.limit: too many resolutions".into()));
+    }
+    let conflicting = conflicts(project, &read);
+    let mut chosen: std::collections::BTreeMap<ConflictItem, Side> =
+        std::collections::BTreeMap::new();
+    for r in &resolve {
+        if !conflicting.iter().any(|c| c.item == r.item) {
+            return Err(bad(format!(
+                "{}: {} is not an item both the board and the linked design changed",
+                findings::ASSEMBLY_BOTH_CHANGED,
+                item_words(&link, &r.item)
+            )));
+        }
+        if chosen.insert(r.item.clone(), r.wins).is_some() {
+            return Err(bad(format!(
+                "{}: {} is resolved twice",
+                findings::ASSEMBLY_BOTH_CHANGED,
+                item_words(&link, &r.item)
+            )));
+        }
+    }
+    let open: Vec<&str> = conflicting
+        .iter()
+        .filter(|c| !chosen.contains_key(&c.item))
+        .map(|c| c.name.as_str())
+        .collect();
+    if !open.is_empty() {
         return Err(Error::Conflict(format!(
-            "{}: {}",
+            "{}: the board and the linked design both changed {}. Choose which side wins for              each; nothing was applied",
             findings::ASSEMBLY_BOTH_CHANGED,
-            findings::assembly_both_changed().message
+            open.join(", ")
         )));
     }
+    let board_wins = |item: ConflictItem| chosen.get(&item) == Some(&Side::Board);
     let ids: BTreeSet<FollowedFaceId> = read.references.iter().map(|r| r.id).collect();
     if ids.len() != read.references.len()
         || read
@@ -633,6 +921,10 @@ fn update(
     let mut next = link.clone();
     let mut moves = Vec::new();
     for reference in &mut next.references {
+        if board_wins(ConflictItem::Reference(reference.id)) {
+            // The board keeps the trace it has.
+            continue;
+        }
         let found = read.references.iter().find(|r| r.id == reference.id);
         match found {
             Some(r) if r.status != ReferenceStatus::Lost => match &r.geometry {
@@ -670,6 +962,10 @@ fn update(
     }
     let mut set = Vec::new();
     for binding in &mut next.bindings {
+        if board_wins(ConflictItem::Binding(binding.board_param.clone())) {
+            // The board keeps its parameter and the value it last took.
+            continue;
+        }
         let value = read
             .bindings
             .iter()
@@ -708,7 +1004,20 @@ fn update(
         resolve_board(project, board)?;
     }
     project.assembly_link = Some(Box::new(next));
+    refresh_agreed(project);
     Ok(())
+}
+
+/// A conflicting item's name, from the link.
+fn item_words(link: &AssemblyLink, item: &ConflictItem) -> String {
+    match item {
+        ConflictItem::Reference(id) => link
+            .references
+            .iter()
+            .find(|r| r.id == *id)
+            .map_or_else(|| format!("reference {}", id.0), |r| r.name.clone()),
+        ConflictItem::Binding(param) => format!("Board parameter {}", param.0),
+    }
 }
 
 /// The words for a reference's owner on the board, from its token: an
@@ -794,9 +1103,14 @@ pub fn agreement(project: &Project, held: Option<ContentHash>) -> Agreement {
     }
 }
 
-/// The part a board body belongs to, in the user's words, from its name in
-/// the published design ("U1 model" is U1), and the objects to locate.
-fn body_words(project: &Project, body: &str) -> (String, Vec<ObjectRef>) {
+/// The part a board body belongs to, in the user's words, and the objects
+/// to locate: the part the published sidecar maps it to (`part`), else
+/// from its name in the published design (a pad's `pad_<instance>_<pad>`,
+/// or a name that starts with the designator).
+fn body_words(project: &Project, body: &str, part: Option<Id>) -> (String, Vec<ObjectRef>) {
+    if let Some(i) = part.and_then(|id| project.instances.iter().find(|i| i.id == id)) {
+        return (i.designator.clone(), vec![ObjectRef::Instance { id: i.id }]);
+    }
     // A pad's body names its instance (`pad_<instance>_<pad>`); a part's
     // body may start with its designator.
     let pad_of = body
@@ -843,6 +1157,15 @@ fn cycle_words(project: &Project, link: &AssemblyLink, cycle: &AssemblyCycle) ->
             "and the linked design places the board by {datum} (‘{}’)",
             cycle.feature
         ),
+        UseKind::Extent => {
+            return format!(
+                "{} follows the linked design's {reference_name}, and the linked design takes the \
+                 extent of ‘{}’ from {datum}, not its position. The loop settles; stop following \
+                 {reference_name} to break it",
+                capitalised(&datum),
+                cycle.feature
+            );
+        }
     };
     format!(
         "{} follows the linked design's {reference_name}, {tail}. Break the loop: stop following \
@@ -861,8 +1184,9 @@ fn capitalised(text: &str) -> String {
 }
 
 /// The assembly link's findings: lost and inexact followed faces, and
-/// linked design features whose datum no longer resolves on the board. Each
-/// blocks fabrication output and is never waived.
+/// linked design features whose datum no longer resolves on the board
+/// (warnings; a lost reference blocks publishing to the linked design), and
+/// the two-way check's.
 pub fn checks(project: &Project) -> Vec<Finding> {
     let Some(link) = project.assembly_link.as_deref() else {
         return Vec::new();
@@ -946,7 +1270,7 @@ fn two_way(project: &Project, link: &AssemblyLink) -> Vec<Finding> {
         out.push(findings::assembly_older_board(revision));
     }
     for u in &link.unexported {
-        let (part, objects) = body_words(project, &u.body);
+        let (part, objects) = body_words(project, &u.body, u.part);
         out.push(findings::assembly_unexported_face(
             &format!("‘{}’", u.feature),
             &part,
@@ -954,12 +1278,25 @@ fn two_way(project: &Project, link: &AssemblyLink) -> Vec<Finding> {
         ));
     }
     for cycle in &link.cycles {
-        out.push(findings::assembly_cycle(
-            &cycle_words(project, link, cycle),
-            vec![ObjectRef::Board],
-        ));
+        let words = cycle_words(project, link, cycle);
+        out.push(if cycle.via == UseKind::Extent {
+            findings::assembly_extent_cycle(&words, vec![ObjectRef::Board])
+        } else {
+            findings::assembly_cycle(&words, vec![ObjectRef::Board])
+        });
     }
     out
+}
+
+/// Why publishing to the linked design waits: every finding that blocks it
+/// (a broken reference, in either direction), in the user's words. Empty
+/// when publishing may go ahead.
+pub fn publish_blockers(project: &Project) -> Vec<String> {
+    checks(project)
+        .into_iter()
+        .filter(|f| findings::blocks_publish(&f.code))
+        .map(|f| f.message)
+        .collect()
 }
 
 /// What `assembly.status` reads, most serious first.
@@ -968,11 +1305,11 @@ fn two_way(project: &Project, link: &AssemblyLink) -> Vec<Finding> {
 pub enum LinkState {
     /// No linked design is linked.
     Unlinked,
-    /// A reference no longer resolves, in either direction: fabrication
-    /// output is blocked.
+    /// A reference no longer resolves, in either direction: publishing to
+    /// the linked design is blocked.
     BrokenReference,
-    /// The board and the linked design follow each other in a loop:
-    /// fabrication output is blocked.
+    /// The board and the linked design follow each other's positions in a
+    /// loop: fabrication output is blocked.
     Cycle,
     /// The linked design file is not where the request said; the board uses
     /// its snapshot.
@@ -1050,7 +1387,7 @@ pub fn status(project: &Project, file: FileCheck) -> AssemblyStatus {
         f.code == findings::ASSEMBLY_REFERENCE_LOST
             || f.code == findings::ASSEMBLY_REFERENCE_INEXACT
     });
-    let cycle = !link.cycles.is_empty();
+    let cycle = link.cycles.iter().any(|c| c.via != UseKind::Extent);
     let older = matches!(
         agreement(project, link.board_sha256),
         Agreement::Older { .. }
@@ -1150,14 +1487,22 @@ pub struct AssemblyPreview {
     /// Linked design features newly using, or no longer using, the board.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub consumers: Vec<String>,
-    /// Why the update would be refused (the board would not solve, or
-    /// both files changed since they last agreed), when it would be; then
-    /// nothing else is listed.
+    /// Both files changed since they last agreed: what the board changed
+    /// (the datums the link uses), shown beside the linked design's
+    /// changes above.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub board_changes: Vec<String>,
+    /// The items both changed; `assembly.update` takes a side for each
+    /// (`resolve`). The rows above show the linked design winning them all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub conflicts: Vec<Conflict>,
+    /// Why the update would be refused (the board would not solve), when
+    /// it would be; then nothing else is listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
     /// The two-way check after the update (slice B5): the linked design holds
-    /// an older board, features on unexported faces, loops; or, refused,
-    /// both changed.
+    /// an older board, features on unexported faces, loops; and, when both
+    /// changed, that.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<Finding>,
 }
@@ -1362,6 +1707,8 @@ pub fn diff(
         references,
         objects,
         consumers,
+        board_changes: Vec::new(),
+        conflicts: Vec::new(),
         refused: None,
         findings,
     }
@@ -1384,13 +1731,46 @@ pub fn refused(
         references: Vec::new(),
         objects: Vec::new(),
         consumers: Vec::new(),
-        findings: if error.rule() == Some(findings::ASSEMBLY_BOTH_CHANGED) {
-            vec![findings::assembly_both_changed()]
-        } else {
-            Vec::new()
-        },
+        board_changes: Vec::new(),
+        conflicts: Vec::new(),
+        findings: Vec::new(),
         refused: Some(error.to_string()),
     }
+}
+
+/// The resolutions an update preview applies: the linked design wins
+/// every item both changed, so the preview shows its changes.
+pub fn linked_design_wins(conflicts: &[Conflict]) -> Vec<Resolution> {
+    conflicts
+        .iter()
+        .map(|c| Resolution {
+            item: c.item.clone(),
+            wins: Side::LinkedDesign,
+        })
+        .collect()
+}
+
+/// `preview` (an applied update's [`diff`]) with both sides' changes when
+/// both files changed since they last agreed (`conflicts` from
+/// [`conflicts`]): what the board changed, the items to choose, and the
+/// both-changed finding in place of the older-board one.
+pub fn with_both_sides(
+    project: &Project,
+    read: &AssemblyRead,
+    conflicts: Vec<Conflict>,
+    mut preview: AssemblyPreview,
+) -> AssemblyPreview {
+    if both_changed(project, read) {
+        preview.board_changes = board_changes(project);
+        preview.conflicts = conflicts;
+        preview
+            .findings
+            .retain(|f| f.code != findings::ASSEMBLY_OLDER_BOARD);
+        preview
+            .findings
+            .insert(0, findings::assembly_both_changed());
+    }
+    preview
 }
 
 /// Validate a stored link (document decode and every edit).
@@ -1736,7 +2116,8 @@ pub struct PreviewParams {
 
 // `assembly.update`: link the linked design at `path` when none is linked;
 // else apply it at `expect_hash` (64 hex digits, from the preview),
-// relinking when `path` is another file.
+// relinking when `path` is another file. When both changed, `resolve`
+// takes a side for each of the preview's conflicts.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateParams {
@@ -1744,6 +2125,8 @@ pub struct UpdateParams {
     pub design: String,
     #[serde(default)]
     pub expect_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resolve: Vec<Resolution>,
     pub expected_revision: u64,
 }
 

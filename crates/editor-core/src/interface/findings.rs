@@ -1,10 +1,11 @@
 //! The interface's and assembly link's findings and refusals, in the
-//! user's words (docs/architecture/board-interface.md, "Conflicts and
-//! broken references"; docs/board-sketch-references.md §7 for the
-//! `assembly.*` codes it already named). Every code is listed once in
-//! [`CODES`] with whether it blocks fabrication output and whether a
-//! waiver may lift that. Slices B1 and B5 raise them and wire the blocking
-//! ones into the production check.
+//! user's words (docs/architecture/board-interface.md, "Findings";
+//! docs/board-sketch-references.md §7 for the `assembly.*` codes it
+//! already named). Every code is listed once in [`CODES`] with whether it
+//! blocks fabrication output, whether a waiver may lift that, and whether
+//! it blocks publishing to the linked design. A broken assembly reference
+//! is a warning in Issues that blocks only publishing (slice P1); a loop
+//! through positions blocks fabrication output.
 use crate::diagnostics::{Error, Finding, ObjectRef};
 
 /// The interface changed since the last publish (advisory).
@@ -25,14 +26,21 @@ pub const ASSEMBLY_REFERENCE_LOST: &str = "assembly.reference_lost";
 pub const ASSEMBLY_REFERENCE_INEXACT: &str = "assembly.reference_inexact";
 /// A linked design feature references a face that is not exported.
 pub const ASSEMBLY_UNEXPORTED_FACE: &str = "assembly.unexported_face";
-/// The board and the linked design depend on each other in a loop.
+/// The board and the linked design depend on each other's positions in a
+/// loop.
 pub const ASSEMBLY_CYCLE: &str = "assembly.cycle";
+/// The board follows linked design geometry whose extent, but not its
+/// position, the linked design takes from the board (advisory).
+pub const ASSEMBLY_EXTENT_CYCLE: &str = "assembly.extent_cycle";
 /// The linked design file was not found; the board uses its snapshot.
 pub const ASSEMBLY_MISSING: &str = "assembly.missing";
 /// The linked design was saved by a newer SolidCraft than this build reads.
 pub const ASSEMBLY_NEWER: &str = "assembly.newer";
 /// Refusal: a board edge driven by the linked design was edited locally.
 pub const ASSEMBLY_DRIVEN_EDGE: &str = "assembly.driven_edge";
+/// Refusal: publishing while a reference between the board and the linked
+/// design is broken.
+pub const ASSEMBLY_PUBLISH_BLOCKED: &str = "assembly.publish_blocked";
 
 /// One finding code's consequences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,35 +48,50 @@ pub struct CodeSpec {
     pub code: &'static str,
     /// Fabrication output is refused while the finding exists.
     pub blocks_fabrication: bool,
-    /// A pre-flight waiver may lift the block. Lost and inexact references
-    /// are never waived, as for part dimensions (`board.reference_lost`):
-    /// they are re-picked or acknowledged in an impact preview.
+    /// A pre-flight waiver may lift the block. A position loop is never
+    /// waived: the board is re-picked or the linked design rebuilt.
     pub waivable: bool,
+    /// Publishing to the linked design is refused while the finding
+    /// exists (`interface.publish`, [`ASSEMBLY_PUBLISH_BLOCKED`]); nothing
+    /// else is.
+    pub blocks_publish: bool,
 }
 
-const fn spec(code: &'static str, blocks_fabrication: bool, waivable: bool) -> CodeSpec {
+const fn spec(
+    code: &'static str,
+    blocks_fabrication: bool,
+    waivable: bool,
+    blocks_publish: bool,
+) -> CodeSpec {
     CodeSpec {
         code,
         blocks_fabrication,
         waivable,
+        blocks_publish,
     }
 }
 
 /// Every finding code of the interface and the assembly link.
-pub const CODES: [CodeSpec; 12] = [
-    spec(UNPUBLISHED, false, true),
-    spec(DATUM_LOST, false, true),
-    spec(DATUM_INEXACT, false, true),
-    spec(ASSEMBLY_STALE, false, true),
-    spec(ASSEMBLY_OLDER_BOARD, false, true),
-    spec(ASSEMBLY_BOTH_CHANGED, false, true),
-    spec(ASSEMBLY_REFERENCE_LOST, true, false),
-    spec(ASSEMBLY_REFERENCE_INEXACT, true, false),
-    spec(ASSEMBLY_UNEXPORTED_FACE, false, true),
-    spec(ASSEMBLY_CYCLE, true, false),
-    spec(ASSEMBLY_MISSING, false, true),
-    spec(ASSEMBLY_NEWER, false, true),
+pub const CODES: [CodeSpec; 13] = [
+    spec(UNPUBLISHED, false, true, false),
+    spec(DATUM_LOST, false, true, false),
+    spec(DATUM_INEXACT, false, true, false),
+    spec(ASSEMBLY_STALE, false, true, false),
+    spec(ASSEMBLY_OLDER_BOARD, false, true, false),
+    spec(ASSEMBLY_BOTH_CHANGED, false, true, false),
+    spec(ASSEMBLY_REFERENCE_LOST, false, true, true),
+    spec(ASSEMBLY_REFERENCE_INEXACT, false, true, false),
+    spec(ASSEMBLY_UNEXPORTED_FACE, false, true, false),
+    spec(ASSEMBLY_CYCLE, true, false, false),
+    spec(ASSEMBLY_EXTENT_CYCLE, false, true, false),
+    spec(ASSEMBLY_MISSING, false, true, false),
+    spec(ASSEMBLY_NEWER, false, true, false),
 ];
+
+/// Whether a finding with `code` blocks publishing to the linked design.
+pub fn blocks_publish(code: &str) -> bool {
+    CODES.iter().any(|s| s.code == code && s.blocks_publish)
+}
 
 /// `interface.unpublished`: "3 datums changed since revision 14", or that
 /// nothing was published yet.
@@ -130,11 +153,25 @@ pub fn assembly_older_board(revision: Option<u32>) -> Finding {
 pub fn assembly_both_changed() -> Finding {
     Finding::new(
         ASSEMBLY_BOTH_CHANGED,
-        "The board and the linked design both changed since they last agreed. Update the linked design \
-         first; nothing was applied"
+        "The board and the linked design both changed since they last agreed. Preview the update \
+         and choose which side wins where they conflict"
             .into(),
         vec![ObjectRef::Board],
     )
+}
+
+/// The refusal of a publish while references are broken: `broken` are the
+/// findings' messages.
+pub fn publish_blocked(broken: &[String]) -> Error {
+    let first = broken.first().map(String::as_str).unwrap_or_default();
+    let more = match broken.len() {
+        0 | 1 => String::new(),
+        n => format!(" ({} more)", n - 1),
+    };
+    Error::Conflict(format!(
+        "{ASSEMBLY_PUBLISH_BLOCKED}: a reference between the board and the linked design is \
+         broken, so publishing to it waits until it is resolved: {first}{more}"
+    ))
 }
 
 /// `assembly.reference_lost`: "The linked design's sketch 'USB opening' uses
@@ -188,6 +225,12 @@ pub fn assembly_unexported_face(feature: &str, part: &str, objects: Vec<ObjectRe
 /// follows boss 'Boss 3', and the linked design places the board by hole H2").
 pub fn assembly_cycle(path: &str, objects: Vec<ObjectRef>) -> Finding {
     Finding::new(ASSEMBLY_CYCLE, path.to_owned(), objects)
+}
+
+/// `assembly.extent_cycle`: `path` names the loop in both files' words, as
+/// for [`assembly_cycle`].
+pub fn assembly_extent_cycle(path: &str, objects: Vec<ObjectRef>) -> Finding {
+    Finding::new(ASSEMBLY_EXTENT_CYCLE, path.to_owned(), objects)
 }
 
 /// `assembly.missing`.

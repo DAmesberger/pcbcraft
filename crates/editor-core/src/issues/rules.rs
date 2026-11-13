@@ -47,8 +47,8 @@ pub(super) fn severity(finding: &Finding) -> Severity {
         | "board.shape_invalid"
         | "board.reference_lost"
         | "board.reference_inexact"
-        | "assembly.reference_lost"
-        | "assembly.reference_inexact"
+        // A loop through positions; a broken assembly reference is a
+        // warning that blocks only publishing to the linked design.
         | "assembly.cycle"
         | CHECK_FAILED => Severity::Error,
         "board.unrouted" | "board.unplaced" | NO_PART => Severity::ToDo,
@@ -112,6 +112,7 @@ pub fn group_title(code: &str) -> String {
         "assembly.older_board" => "Linked design holds an older board",
         "assembly.unexported_face" => "Linked design uses faces not exported",
         "assembly.cycle" => "Board and linked design in a loop",
+        "assembly.extent_cycle" => "Board and linked design in a loop through extents",
         "instance.unit_unplaced" => "Units not placed",
         "instance.terminal_unaccounted" => "Unconnected terminals",
         "instance.required_terminal_no_connect" => "Power inputs marked no-connect",
@@ -249,6 +250,9 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "assembly.unexported_face" => "Export the face, then pick it again in SolidCraft",
         "assembly.cycle" => {
             "Stop following the linked design geometry, or rebuild it without the datum"
+        }
+        "assembly.extent_cycle" => {
+            "Check the extents settle; stop following the geometry to break the loop"
         }
         "instance.unit_unplaced" => "Place the unit or mark it unused",
         "instance.terminal_unaccounted" => "Connect the terminal or mark it no-connect",
@@ -611,6 +615,7 @@ pub const KNOWN_CODES: &[&str] = &[
     "graphic.polygon_self_intersecting",
     "graphic.radius_too_large",
     "assembly.cycle",
+    "assembly.extent_cycle",
     "assembly.older_board",
     "assembly.reference_inexact",
     "assembly.reference_lost",

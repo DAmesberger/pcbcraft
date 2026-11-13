@@ -209,8 +209,8 @@ struct Slab {
     /// other name its body has.
     faces: BTreeMap<String, String>,
     names: BTreeSet<String>,
-    /// Cutout owner curve → the cutout's curve ids.
-    cutouts: BTreeMap<String, Vec<String>>,
+    /// Cutout id → the cutout's curve ids.
+    cutouts: BTreeMap<u32, Vec<String>>,
     /// Hole id → its circle's id.
     holes: BTreeMap<u32, String>,
 }
@@ -242,8 +242,8 @@ fn slab(native: &mut Native, project: &Project, datum: &SidecarDatum) -> Result<
             &format!("c{}e", k + 1),
             &mut taken,
         );
-        if let Some(owner) = pcbcraft_core::interface::cutout_owner(&cutout.curves) {
-            cutouts.insert(owner.0.clone(), ids.clone());
+        if let Some(id) = cutout.id {
+            cutouts.insert(id.0, ids.clone());
         }
         named.push(NamedLoop::Outline {
             outline: &cutout.outline,
@@ -328,12 +328,12 @@ fn own(
             // A cutout without the slab keeps the board sketch's curve ids,
             // and goes through the board.
             let (ids, depth) = match &datum.owner {
-                DatumOwner::Curve { id } => {
+                DatumOwner::Cutout { id } => {
                     let board = project.board();
                     let curves: Vec<String> = board
                         .cutouts
                         .iter()
-                        .find(|c| pcbcraft_core::interface::cutout_owner(&c.curves) == Some(id))
+                        .find(|c| c.id == Some(*id))
                         .map(|c| c.curves.iter().map(|c| c.0.clone()).collect())
                         .unwrap_or_default();
                     let ids = match loops.first() {
@@ -446,7 +446,7 @@ fn slab_faces(datum: &SidecarDatum, slab: &Slab) -> BTreeMap<String, String> {
                 put("wall".into(), format!("F{f}:side:{circle}"));
             }
         }
-        ("board.cutout", DatumOwner::Curve { id }) => {
+        ("board.cutout", DatumOwner::Cutout { id }) => {
             for curve in slab.cutouts.get(&id.0).into_iter().flatten() {
                 put(format!("side:{curve}"), format!("F{f}:side:{curve}"));
             }
@@ -589,6 +589,21 @@ pub fn build_watched(
             _ => faces.remove(&index).unwrap_or_default(),
         };
     }
+    // Section 2, then the sidecar with the part each part body is (a
+    // package's bodies are named by the package), into the design's
+    // metadata.
+    let (mut native, check, board) = match crate::export::section(project, sidecar.tier) {
+        None => (native, None, false),
+        Some(board) => {
+            let model = project::build_onto(native, &board)?;
+            let check = crate::export::check(&board, &model, watch)?;
+            sidecar.parts = model.part_bodies(&board)?;
+            let native = model.into_native().ok_or_else(|| {
+                Error::Verification("the board's model has no native design".into())
+            })?;
+            (native, Some(check), true)
+        }
+    };
     sidecar
         .check()
         .map_err(|e| Error::Verification(e.to_string()))?;
@@ -598,16 +613,10 @@ pub fn build_watched(
     for (key, value) in metadata(&text) {
         native.set_metadata(&key, value)?;
     }
-    let (design, check) = match crate::export::section(project, sidecar.tier) {
-        None => (Design::Slots(Box::new(native)), None),
-        Some(board) => {
-            let model = project::build_onto(native, &board)?;
-            let check = crate::export::check(&board, &model, watch)?;
-            let native = model.into_native().ok_or_else(|| {
-                Error::Verification("the board's model has no native design".into())
-            })?;
-            (Design::Board(Box::new(native)), Some(check))
-        }
+    let design = if board {
+        Design::Board(Box::new(native))
+    } else {
+        Design::Slots(Box::new(native))
     };
     Ok(Exported {
         design,

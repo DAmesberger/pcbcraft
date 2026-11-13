@@ -159,6 +159,7 @@ fn b5_a_linked_design_holding_an_older_board_is_reported() -> Fallible {
         &mut engine,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(LINKED_DESIGN, Some(file(2))),
+            resolve: Vec::new(),
         }),
     )?;
     assert!(codes(&engine).is_empty());
@@ -188,11 +189,14 @@ fn b5_a_linked_design_holding_an_older_board_is_reported() -> Fallible {
 
 /// Conflict row "both changed": the linked design holds an older board and
 /// its own file changed. Its status says so once, instead of "changed"
-/// and "older"; an update from it is refused in the user's words, changing
-/// nothing; once the linked design holds the last publish the same update is
-/// applied.
+/// and "older", and asks for the preview. An update from it is not refused
+/// for that (slice P1): with no item both changed there is nothing to
+/// choose, so it is applied. A choice for an item that is no conflict is
+/// refused, changing nothing. Conflicting items and the choice between
+/// sides are tested where the sketch evaluator runs (`pcbcraft-solidcraft`
+/// `board::fixed_tests`).
 #[test]
-fn b5_both_changed_refuses_the_update() -> Fallible {
+fn b5_both_changed_asks_for_the_preview() -> Fallible {
     let mut engine = agreed()?;
     nudge(&mut engine)?;
     publish(&mut engine, file(2))?;
@@ -203,8 +207,8 @@ fn b5_both_changed_refuses_the_update() -> Fallible {
     assert_eq!(
         status.findings.first().map(|f| f.message.as_str()),
         Some(
-            "The board and the linked design both changed since they last agreed. Update the \
-             linked design first; nothing was applied"
+            "The board and the linked design both changed since they last agreed. Preview the \
+             update and choose which side wins where they conflict"
         )
     );
     // The linked design changed alone: only stale.
@@ -221,27 +225,44 @@ fn b5_both_changed_refuses_the_update() -> Fallible {
 
     let before = engine.project().clone();
     let revision = engine.revision();
-    let refused = engine.apply(
+    let stray = engine.apply(
         revision,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(EDITED, Some(file(1))),
+            resolve: vec![assembly_link::Resolution {
+                item: assembly_link::ConflictItem::Reference(
+                    crate::model::dimension::FollowedFaceId(1),
+                ),
+                wins: assembly_link::Side::Board,
+            }],
         }),
     );
-    let Err(error) = refused else {
-        return Err("an update from a linked design that changed on an older board".into());
+    let Err(error) = stray else {
+        return Err("a choice for an item that is no conflict".into());
     };
     assert_eq!(error.rule(), Some(ASSEMBLY_BOTH_CHANGED));
-    assert!(
-        error.to_string().contains("Update the linked design first"),
-        "{error}"
-    );
     assert_eq!(engine.revision(), revision);
     assert_eq!(*engine.project(), before);
-    // Updated in SolidCraft first: applied.
+    assert!(assembly_link::conflicts(engine.project(), &read(EDITED, Some(file(1)))).is_empty());
+    // Nothing both changed: applied. The linked design still holds the
+    // earlier board.
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: read(EDITED, Some(file(1))),
+            resolve: Vec::new(),
+        }),
+    )?;
+    assert_eq!(
+        assembly_link::status(engine.project(), FileCheck::Found(EDITED)).state,
+        LinkState::OlderBoard
+    );
+    // Updated in SolidCraft: in sync.
     apply(
         &mut engine,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(EDITED, Some(file(2))),
+            resolve: Vec::new(),
         }),
     )?;
     assert_eq!(
@@ -390,10 +411,12 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> Fallible {
         UnexportedUse {
             feature: "Lid rib".into(),
             body: format!("{designator} model"),
+            part: None,
         },
         UnexportedUse {
             feature: "Clip".into(),
             body: "Laminate".into(),
+            part: None,
         },
     ];
     apply(
@@ -434,5 +457,53 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> Fallible {
             .filter(|i| i.code == ASSEMBLY_UNEXPORTED_FACE)
             .all(|i| i.severity == Severity::Warning)
     );
+    Ok(())
+}
+
+/// Slice P1, item 6: a body named by its package (two parts share it)
+/// names the part the published sidecar maps it to, the second part's own
+/// designator, not the first's.
+#[test]
+fn a_body_of_a_shared_package_names_its_own_part() -> Fallible {
+    let mut engine = with_openings()?;
+    publish(&mut engine, file(1))?;
+    let instances: Vec<(crate::ids::Id, String)> = engine
+        .project()
+        .instances
+        .iter()
+        .map(|i| (i.id, i.designator.clone()))
+        .collect();
+    let [(first, first_name), (second, second_name), ..] = instances.as_slice() else {
+        return Err("two parts".into());
+    };
+    let mut linked = read(LINKED_DESIGN, Some(file(1)));
+    linked.unexported = vec![UnexportedUse {
+        feature: "Lid rib".into(),
+        body: "pkg15r1 body (pkg15r1:2)".into(),
+        part: Some(*second),
+    }];
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordLink { read: linked }),
+    )?;
+    let found: Vec<_> = assembly_link::checks(engine.project())
+        .into_iter()
+        .filter(|f| f.code == ASSEMBLY_UNEXPORTED_FACE)
+        .collect();
+    let [rib] = found.as_slice() else {
+        return Err(format!("{found:?}").into());
+    };
+    assert!(
+        rib.message
+            .contains(&format!("attached to a face of {second_name} that")),
+        "{}",
+        rib.message
+    );
+    assert!(!rib.message.contains(&format!(" {first_name} ")) || first_name == second_name);
+    assert_eq!(
+        rib.objects,
+        vec![crate::diagnostics::ObjectRef::Instance { id: *second }]
+    );
+    assert_ne!(first, second);
     Ok(())
 }

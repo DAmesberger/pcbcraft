@@ -3,7 +3,9 @@
 //! "Commands"; slice B3): the preview reads the document and the published
 //! sidecar; the publish builds the design from the core's candidate sidecar
 //! with Solidcraft, puts the design and its sidecar in place atomically and
-//! records the publish with `interface.record_publish`, one undo step.
+//! records the publish with `interface.record_publish`, which, like a save,
+//! is no undo step. A broken reference between the board and the linked
+//! design blocks the publish, writing nothing.
 use super::Session;
 use crate::Result;
 use pcbcraft_core::Operation;
@@ -14,8 +16,32 @@ use serde_json::{Value, json};
 use std::path::Path;
 
 impl Session {
-    /// The diff publishing would make, against the recorded publish and
-    /// the sidecar beside `path` when it is there. Reads only.
+    /// `design` as the project keeps it: relative to the project's folder
+    /// when it lies inside it, else as given.
+    fn relative_to_project(&self, design: &Path) -> String {
+        let folder = self.path.as_deref().and_then(Path::parent);
+        let relative = match (folder, design.is_absolute()) {
+            (Some(folder), true) if !folder.as_os_str().is_empty() => {
+                let folder = folder
+                    .canonicalize()
+                    .unwrap_or_else(|_| folder.to_path_buf());
+                let file = design
+                    .parent()
+                    .and_then(|p| p.canonicalize().ok())
+                    .zip(design.file_name())
+                    .map_or_else(|| design.to_path_buf(), |(p, n)| p.join(n));
+                file.strip_prefix(&folder).ok().map(Path::to_path_buf)
+            }
+            _ => None,
+        };
+        relative
+            .unwrap_or_else(|| design.to_path_buf())
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// The diff publishing would make, against the sidecar beside `path`
+    /// when it is there, else the recorded publish. Reads only.
     pub(super) fn interface_preview(&mut self, params: PublishPreviewParams) -> Result<Value> {
         let previous = match params.path.as_deref() {
             Some(path) => {
@@ -59,14 +85,20 @@ impl Session {
     /// The files of `interface.publish`, without recording it: build the
     /// design from the document's candidate sidecar, put it and the sidecar
     /// in place atomically, and return `interface.record_publish` with what
-    /// was written, for the host to apply as one undo step, and the reply's
-    /// `published` summary. The desktop runs this off the UI thread, on a
-    /// session over a fork of the window's engine, and applies the record
-    /// on its own engine; nothing else differs from the request.
+    /// was written (no undo step, like a save) and the reply's `published`
+    /// summary. The desktop runs this off the UI thread, on a session over
+    /// a fork of the window's engine, and applies the record on its own
+    /// engine; nothing else differs from the request. Refused, writing
+    /// nothing, while a reference between the board and the linked design
+    /// is broken.
     pub fn interface_write(&self, params: &PublishParams) -> Result<(Operation, Value)> {
         let design = Path::new(&params.path);
         files::check_design_path(design)?;
         let project = self.engine.project_arc().clone();
+        let blockers = pcbcraft_core::interface::assembly_link::publish_blockers(&project);
+        if !blockers.is_empty() {
+            return Err(pcbcraft_core::interface::findings::publish_blocked(&blockers).into());
+        }
         let previous = files::read_sidecar(design)?;
         let recorded = project.interface.source_id;
         let source_id = match (recorded, &previous) {
@@ -103,6 +135,9 @@ impl Session {
         files::put_in_place(design, &temporary, &text)?;
         let mut record = publish::record(&project, &exported.sidecar)?;
         record.design_sha256 = Some(written);
+        // Where it was written, kept with the project as the next
+        // publish's default: relative to the project's folder when inside it.
+        record.design_hint = Some(self.relative_to_project(design));
         let mut published = json!({
             "path": params.path,
             "sidecar": files::sidecar_path(design).to_string_lossy(),

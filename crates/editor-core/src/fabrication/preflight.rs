@@ -205,12 +205,13 @@ pub const MAX_SILK_PAIRS: usize = 4_000_000;
 const MAX_LEGEND_NAME: usize = 16;
 
 /// Finding codes that block export and cannot be waived: a lost or
-/// inexact dimension reference (docs/board-sketch-references.md §5.5).
+/// inexact dimension reference (docs/board-sketch-references.md §5.5) and
+/// a loop through positions between the board and its linked design. A
+/// broken assembly reference blocks only publishing to the linked design
+/// (docs/architecture/board-interface.md, "Findings").
 pub const NO_WAIVER: &[&str] = &[
     layout::dimensions::REFERENCE_LOST,
     layout::dimensions::REFERENCE_INEXACT,
-    crate::interface::findings::ASSEMBLY_REFERENCE_LOST,
-    crate::interface::findings::ASSEMBLY_REFERENCE_INEXACT,
     crate::interface::findings::ASSEMBLY_CYCLE,
     "rules.no_fab_profile",
 ];
@@ -243,8 +244,6 @@ fn severity(row: &IssueRow) -> Option<Severity> {
             | layout::outline::SHAPE_INVALID
             | layout::dimensions::REFERENCE_LOST
             | layout::dimensions::REFERENCE_INEXACT
-            | crate::interface::findings::ASSEMBLY_REFERENCE_LOST
-            | crate::interface::findings::ASSEMBLY_REFERENCE_INEXACT
             | crate::interface::findings::ASSEMBLY_CYCLE
     ) {
         return Some(Severity::Error);

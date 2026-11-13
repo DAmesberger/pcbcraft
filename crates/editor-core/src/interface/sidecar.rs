@@ -27,6 +27,26 @@ pub const UNITS: &str = "mm";
 pub const MAX_SIDECAR_BYTES: usize = 16 * 1024 * 1024;
 /// Named faces of one datum's carrier.
 pub const MAX_FACES: usize = 64;
+/// Part bodies a sidecar names.
+pub const MAX_PART_BODIES: usize = 100_000;
+
+/// One part body of the published design and the part it belongs to.
+/// SolidCraft names a body of a package by its package's definition
+/// ("pkg15r1 body", and "pkg15r1 body (pkg15r1:2)" where the package is
+/// placed again), so the body's name alone does not say which part it
+/// is; this does, so findings name the part ("C2"). Built after the
+/// design, from the board's own record of which placement is which part.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PartBody {
+    /// The body's name in the published design, as a linked design's link
+    /// reads it.
+    pub body: String,
+    /// The part's instance.
+    pub instance: crate::ids::Id,
+    /// Its designator when published; a finding names the instance's
+    /// designator now.
+    pub designator: String,
+}
 
 /// One published datum.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -80,6 +100,10 @@ pub struct Sidecar {
     /// to one fails until it resolves again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unresolved_slots: Vec<Slot>,
+    /// The published design's part bodies and their parts, by body name;
+    /// empty for the interface tier, which carries no parts.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<PartBody>,
 }
 
 #[derive(Deserialize)]
@@ -199,7 +223,28 @@ impl Sidecar {
         {
             return bad("a retired or unresolved slot is out of range or listed twice");
         }
+        if self.parts.len() > MAX_PART_BODIES {
+            return Err(Error::Limit(format!(
+                "interface.parts: at most {MAX_PART_BODIES} part bodies"
+            )));
+        }
+        if !self.parts.windows(2).all(|w| w[0].body < w[1].body)
+            || self
+                .parts
+                .iter()
+                .any(|p| !printable(&p.body) || !printable(&p.designator))
+        {
+            return bad("part bodies are listed once each, by name, with printable names");
+        }
         Ok(())
+    }
+
+    /// The part a body of the published design belongs to.
+    pub fn part_of(&self, body: &str) -> Option<&PartBody> {
+        self.parts
+            .binary_search_by(|p| p.body.as_str().cmp(body))
+            .ok()
+            .and_then(|i| self.parts.get(i))
     }
 
     /// The number of slots the exported design lays out: one past the

@@ -381,3 +381,71 @@ fn a_linked_design_follows_a_moved_part() -> Fallible {
     assert!(followed >= 4, "the cutout's faces moved: {followed}");
     Ok(())
 }
+
+/// The bottom side height, published: a part moved to the bottom gives it
+/// a height, and its body in the design lies under the board outline (its
+/// side faces' centroids within the board's x–y box), from the bottom
+/// surface down by the tallest bottom part, never mirrored below the board.
+#[test]
+fn the_published_bottom_side_height_lies_under_the_board() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("board.solidcraft");
+    let mut engine = engine()?;
+    let part = placed(&engine, 0)?;
+    let p = engine
+        .project()
+        .placement_of(part)
+        .ok_or("placement")?
+        .clone();
+    let revision = engine.revision();
+    engine.apply(
+        revision,
+        Op::Layout(LayoutCommand::Move {
+            instance: part,
+            position: p.position,
+            rotation_deg: p.rotation_deg,
+            layer: pcbcraft_core::Layer::Bottom,
+        }),
+    )?;
+    let published = publish(&mut engine, Tier::Interface, &path)?;
+    let datum = published
+        .datums
+        .iter()
+        .find(|d| d.token == "side.bottom")
+        .ok_or("the bottom side height")?;
+    let pcbcraft_core::interface::DatumGeometry::Volume { height, .. } = &datum.geometry else {
+        return Err("a volume".into());
+    };
+    assert!(*height > 0.0, "a part on the bottom");
+    let [width, depth] = engine.project().board_size;
+    let mut linked_design = LinkedDesign::new("Assembly")?;
+    let bodies = linked_design.link(path.to_str().ok_or("path")?, "Board")?;
+    assert!(bodies.iter().any(|b| b == "side.bottom"), "{bodies:?}");
+    let faces = linked_design.faces("side.bottom")?;
+    assert!(!faces.is_empty());
+    let board = engine.project().board().into_owned();
+    let b = pcbcraft_core::model::board::outline_bounds(&board.outer);
+    for f in &faces {
+        let [x, y, z] = f.centroid;
+        assert!(
+            (b.min[0] - 1e-6..=b.max[0] + 1e-6).contains(&x)
+                && (b.min[1] - 1e-6..=b.max[1] + 1e-6).contains(&y),
+            "{}: ({x}, {y}) is not under the {width} × {depth} mm board",
+            f.name
+        );
+        assert!(
+            (-height - 1e-6..=1e-6).contains(&z),
+            "{}: z {z} is not within [-{height}, 0]",
+            f.name
+        );
+    }
+    let caps: Vec<f64> = faces
+        .iter()
+        .filter(|f| f.normal.is_some_and(|n| n[2].abs() > 0.99))
+        .map(|f| f.centroid[2])
+        .collect();
+    assert_eq!(caps.len(), 2, "{faces:?}");
+    assert!(caps.iter().any(|z| z.abs() <= 1e-6));
+    assert!(caps.iter().any(|z| (z + height).abs() <= 1e-6));
+    Ok(())
+}

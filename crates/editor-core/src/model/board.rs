@@ -114,8 +114,9 @@ pub struct SolvedBoard {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct SolvedCutout {
-    /// The [`CutoutRole`] that gave the hole its kind; `None` for a plain
-    /// cutout, which needs no role.
+    /// The [`CutoutRole`] of the hole: its stable id, kept as its curves
+    /// change. `None` only in an evaluator's raw solve, before the board
+    /// commit identifies a new loop (`layout::outline::identify_cutouts`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<BoardFeatureId>,
     pub kind: CutoutKind,

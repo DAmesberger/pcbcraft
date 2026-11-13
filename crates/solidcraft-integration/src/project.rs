@@ -184,9 +184,7 @@ impl NativeModel {
     /// design of the board.
     pub fn native_geometry(&self) -> Result<&[Geometry]> {
         if self.native.is_none() {
-            return Err(Error::Verification(
-                "a meshed model has no design of the board".into(),
-            ));
+            return Err(no_design());
         }
         self.geometry
             .get(..self.native_bodies)
@@ -200,6 +198,59 @@ impl NativeModel {
         let at = *self.world_bodies.get(index)?;
         world.bodies.get(at).map(|b| &b.body)
     }
+
+    /// Each part body of the exact model's design (a part's model or
+    /// envelope; not a pad, nor the board's flat bodies), by its name in
+    /// the design, with the part it belongs to, sorted by name. SolidCraft
+    /// names a package's bodies by the package, so this is what says
+    /// which part a body is ([`PartBody`]). Refused for a meshed model.
+    ///
+    /// [`PartBody`]: pcbcraft_core::interface::sidecar::PartBody
+    pub fn part_bodies(
+        &self,
+        project: &Project,
+    ) -> Result<Vec<pcbcraft_core::interface::sidecar::PartBody>> {
+        let geometry = self.native_geometry()?;
+        let Some(world) = self.world.as_deref() else {
+            return Err(no_design());
+        };
+        let by_pick: BTreeMap<u64, &Source> =
+            self.sources.iter().map(|s| (s.pick_id, s)).rev().collect();
+        // Each geometry entry's body in the design, as the model was built
+        // from them (the same map `native_body` reads).
+        let bodies: Vec<&str> = (0..geometry.len())
+            .map(|i| {
+                self.world_bodies
+                    .get(i)
+                    .and_then(|&at| world.bodies.get(at))
+                    .map(|b| b.name.as_str())
+                    .ok_or_else(|| {
+                        Error::Verification(
+                            "the model's bodies and its design's do not line up".into(),
+                        )
+                    })
+            })
+            .collect::<Result<_>>()?;
+        let mut parts: Vec<_> = bodies
+            .into_iter()
+            .zip(geometry)
+            .filter_map(|(body, g)| {
+                let source = by_pick.get(&g.item?)?;
+                if source.pad.is_some() {
+                    return None;
+                }
+                let instance = project.instance(source.instance?)?;
+                Some(pcbcraft_core::interface::sidecar::PartBody {
+                    body: body.to_owned(),
+                    instance: instance.id,
+                    designator: instance.designator.clone(),
+                })
+            })
+            .collect();
+        parts.sort();
+        parts.dedup_by(|a, b| a.body == b.body);
+        Ok(parts)
+    }
 }
 
 #[cfg(test)]
@@ -211,7 +262,6 @@ impl NativeModel {
 }
 
 /// A meshed model asked for the board's design.
-#[cfg(test)]
 pub(crate) fn no_design() -> Error {
     Error::Verification("a meshed model has no design of the board".into())
 }

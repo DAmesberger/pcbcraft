@@ -481,7 +481,7 @@ pub enum Query {
     #[serde(rename = "interface.list")]
     InterfaceList {},
     /// The assembly link's state from the document: none, a
-    /// broken reference (fabrication output is blocked) or linked, with
+    /// broken reference (publishing is blocked) or linked, with
     /// the findings. `assembly.preview` reads the file.
     #[serde(rename = "assembly.status")]
     AssemblyStatus {},
@@ -1287,6 +1287,41 @@ impl Engine {
         Ok(outcomes)
     }
 
+    /// The preview of an assembly update from `read`, applied on a copy of
+    /// this engine with the linked design winning every item both changed:
+    /// the rows that would change, and, when both files changed since they
+    /// last agreed, both sides' changes and the items to choose
+    /// (`interface::assembly_link`). Changes nothing here.
+    pub fn assembly_preview(
+        &self,
+        read: interface::assembly_link::AssemblyRead,
+        evaluators: Evaluators<'_>,
+    ) -> interface::assembly_link::AssemblyPreview {
+        use interface::assembly_link as link;
+        let project = self.project();
+        let mut fork = self.fork();
+        let revision = fork.revision();
+        let hash = read.file_sha256;
+        let conflicts = link::conflicts(project, &read);
+        let resolve = link::linked_design_wins(&conflicts);
+        match fork.apply_hosted(
+            revision,
+            Operation::Assembly(link::AssemblyCommand::RecordUpdate {
+                read: read.clone(),
+                resolve,
+            }),
+            evaluators,
+        ) {
+            Ok(_) => link::with_both_sides(
+                project,
+                &read,
+                conflicts,
+                link::diff(project, fork.project(), revision, hash),
+            ),
+            Err(error) => link::refused(project, revision, hash, &error),
+        }
+    }
+
     /// A copy of this engine, history included, to try requests on without
     /// touching this one (an MCP `dry_run`). Documents share their sections,
     /// so the copy costs little.
@@ -1320,6 +1355,12 @@ impl Engine {
         // Only the assembly link's own commands move the board-sketch
         // geometry its references own.
         let assembly_command = matches!(operation, Operation::Assembly(_));
+        // Recording a publish is no undo step, like a save: the files it
+        // records stay written (docs/architecture/board-interface.md).
+        let unrecorded = matches!(
+            operation,
+            Operation::Interface(interface::InterfaceCommand::RecordPublish { .. })
+        );
         // Parts the operation moves by hand: their attached copper is
         // carried with them, all at once.
         // Selected loose copper a group drag slides with its parts; the
@@ -1632,7 +1673,11 @@ impl Engine {
         } else {
             validate::drafts_only(&candidate.project, &candidate.drafts)?;
         }
-        self.commit(candidate, step)?;
+        if unrecorded {
+            self.store_unrecorded(candidate)?;
+        } else {
+            self.commit(candidate, step)?;
+        }
         self.rerouted = rerouted;
         Ok(outcome)
     }
@@ -2133,6 +2178,17 @@ impl Engine {
         self.revision
             .checked_add(1)
             .ok_or_else(|| Error::Limit("revision exhausted".into()))
+    }
+
+    /// Store `candidate` as a new revision without an undo step; undo and
+    /// redo keep what it recorded (`interface::auto::carry`), and the
+    /// steps around it stay as they were.
+    fn store_unrecorded(&mut self, candidate: Document) -> Result<()> {
+        let revision = self.next_revision()?;
+        self.document = candidate;
+        self.last_step = None;
+        self.set_revision(revision);
+        Ok(())
     }
 
     fn commit(&mut self, candidate: Document, step: Step) -> Result<()> {

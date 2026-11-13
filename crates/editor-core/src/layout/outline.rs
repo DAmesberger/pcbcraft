@@ -471,8 +471,10 @@ fn next_feature(sketch: &mut BoardSketch) -> Result<BoardFeatureId> {
     Ok(BoardFeatureId(id))
 }
 
-/// Give the inner loop of `curves` its kind: a slot keeps (or gets) a role
-/// keyed by the whole curve set; a plain cutout needs none.
+/// Give the inner loop of `curves` its kind. Every inner loop has a role
+/// with its stable id ([`identify_cutouts`]); this sets its kind, or for a
+/// loop drawn in this edit makes the role (a plain cutout's is made when
+/// the board solves).
 fn set_cutout_kind(
     sketch: &mut BoardSketch,
     kind: CutoutKind,
@@ -481,17 +483,8 @@ fn set_cutout_kind(
     curve_count(&curves)?;
     let set: BTreeSet<&SketchCurveId> = curves.iter().collect();
     let same = |role: &CutoutRole| role.curves.iter().collect::<BTreeSet<_>>() == set;
-    if let Some(at) = sketch.cutouts.iter().position(same) {
-        match kind {
-            CutoutKind::Cutout => {
-                sketch.cutouts.remove(at);
-            }
-            CutoutKind::Slot { .. } => {
-                if let Some(role) = sketch.cutouts.get_mut(at) {
-                    role.kind = kind;
-                }
-            }
-        }
+    if let Some(role) = sketch.cutouts.iter_mut().find(|r| same(r)) {
+        role.kind = kind;
         return Ok(());
     }
     if kind == CutoutKind::Cutout {
@@ -737,15 +730,21 @@ fn add_curve(
     Ok(changes)
 }
 
-/// Roles that name deleted sketch entities: a slot, mounting hole or edge
-/// name goes with its curve or point. Deleting an outline curve opens the
-/// outline, which the evaluation reports ([`SHAPE_OPEN`]).
+/// Roles that name deleted sketch entities: a mounting hole or edge name
+/// goes with its point or curve, and a cutout's role with the last of its
+/// curves. A cutout that keeps any curve keeps its role (and stable id):
+/// the evaluation matches its loop by a curve they share, so a curve
+/// replaced in one edit does not renumber it. Deleting an outline curve
+/// opens the outline, which the evaluation reports ([`SHAPE_OPEN`]).
 fn retire(sketch: &mut BoardSketch, deleted: &BTreeSet<SketchRef>) -> Result<()> {
     if deleted.is_empty() {
         return Ok(());
     }
     let gone = |c: &SketchCurveId| deleted.contains(&SketchRef::Curve(c.clone()));
-    sketch.cutouts.retain(|k| !k.curves.iter().any(gone));
+    for role in &mut sketch.cutouts {
+        role.curves.retain(|c| !gone(c));
+    }
+    sketch.cutouts.retain(|k| !k.curves.is_empty());
     sketch.edges.retain(|e| !gone(&e.curve));
     sketch
         .holes
@@ -753,10 +752,61 @@ fn retire(sketch: &mut BoardSketch, deleted: &BTreeSet<SketchRef>) -> Result<()>
     Ok(())
 }
 
+/// Give every inner loop of a solved board a stable id: a loop the
+/// evaluator matched to a role (by its curves, or by a curve it shares
+/// with the role's loop as the loop's curves change) keeps the role's id
+/// and the role takes the loop's curves now; a new loop gets a new id as
+/// a plain cutout. A role whose loop is gone goes with it. Only a shape
+/// without a fault is identified; a faulty one keeps the last valid shape
+/// and its roles.
+fn identify_cutouts(sketch: &mut BoardSketch) -> Result<()> {
+    if sketch.fault.is_some() {
+        return Ok(());
+    }
+    let mut roles: Vec<CutoutRole> = Vec::with_capacity(sketch.solved.cutouts.len());
+    let mut next = sketch.next_feature;
+    for cutout in &mut sketch.solved.cutouts {
+        let role = cutout
+            .id
+            .and_then(|id| sketch.cutouts.iter().find(|r| r.id == id));
+        let (id, kind) = match role {
+            Some(r) => (r.id, r.kind),
+            None => {
+                let id = BoardFeatureId(next);
+                next = next.checked_add(1).ok_or_else(|| {
+                    Error::Limit("board.feature: identity space exhausted".into())
+                })?;
+                (id, CutoutKind::Cutout)
+            }
+        };
+        if roles.len() >= MAX_CUTOUTS {
+            return Err(Error::Limit(format!(
+                "board.cutout_limit: at most {MAX_CUTOUTS} cutouts and slots"
+            )));
+        }
+        cutout.id = Some(id);
+        cutout.kind = kind;
+        // The loop's curves, each once: a curve behind several segments
+        // (an arc fitted with lines) is one curve of the loop.
+        let mut seen = BTreeSet::new();
+        let curves = cutout
+            .curves
+            .iter()
+            .filter(|c| seen.insert(*c))
+            .cloned()
+            .collect();
+        roles.push(CutoutRole { id, kind, curves });
+    }
+    sketch.cutouts = roles;
+    sketch.next_feature = next;
+    Ok(())
+}
+
 /// Solve a candidate sketch (with its free-form curves fitted within the
 /// project's `board.outline_fit`) and store it with its solve; refuses a
 /// shape that does not solve. Curves that are not a board are stored with their
-/// [`ShapeFault`] and the last valid shape.
+/// [`ShapeFault`] and the last valid shape. Every inner loop keeps (or gets)
+/// its stable id ([`identify_cutouts`]).
 pub(crate) fn commit(
     project: &mut Project,
     mut sketch: BoardSketch,
@@ -785,6 +835,7 @@ pub(crate) fn commit(
     if let Some(blob) = evaluation.sketch_out {
         sketch.sketch = blob;
     }
+    identify_cutouts(&mut sketch)?;
     project.board_size = size;
     project.board_shape = BoardShape::Sketch(Box::new(sketch));
     Ok(())
@@ -961,6 +1012,17 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
             if !loops.insert(curve) {
                 return bad("a curve bounds two loops");
             }
+        }
+    }
+    // Every inner loop of a valid shape has its stable id, a role's.
+    let roles: BTreeSet<BoardFeatureId> = sketch.cutouts.iter().map(|c| c.id).collect();
+    for c in &sketch.solved.cutouts {
+        match c.id {
+            Some(id) if !roles.contains(&id) => {
+                return bad("a cutout's id names no role");
+            }
+            None if sketch.fault.is_none() => return bad("every cutout has its id"),
+            _ => {}
         }
     }
     let mut names = BTreeSet::new();

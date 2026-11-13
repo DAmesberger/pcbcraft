@@ -147,6 +147,11 @@ pub struct PublishPreview {
     pub tier: Tier,
     /// Every live or newly retired datum, in slot order.
     pub changes: Vec<DatumChange>,
+    /// Why the publish would be refused: each broken reference between the
+    /// board and the linked design, in the user's words. Publishing waits
+    /// until they are resolved; nothing else does.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blocked: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dry_run: Option<DryRun>,
 }

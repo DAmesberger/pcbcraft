@@ -155,14 +155,47 @@ fn side_height(project: &Project, layer: Layer) -> DatumGeometry {
         .filter(|p| p.layer == layer)
         .filter_map(|p| body_height(project, p.instance))
         .fold(0.0, f64::max);
-    let frame = match layer {
-        Layer::Top => up_frame(thickness(project)),
-        Layer::Bottom => down_frame(0.0),
+    let outer = project.board().outer.clone();
+    // Loops are in the frame's own x–y. The bottom frame is turned over
+    // (y along −Y), so the outline is mirrored into it, and run the other
+    // way to keep its winding in the frame: it lies exactly under the
+    // board, the volume rising along −z from the bottom surface.
+    let (frame, outline) = match layer {
+        Layer::Top => (up_frame(thickness(project)), outer),
+        Layer::Bottom => (down_frame(0.0), turned_over(&outer)),
     };
     DatumGeometry::Volume {
         frame,
-        loops: vec![project.board().outer.clone()],
+        loops: vec![outline],
         height,
+    }
+}
+
+/// `outline` (board x–y) in [`down_frame`]'s x–y: y mirrored and the loop
+/// run backwards, so it keeps its winding in the frame. Mirroring negates
+/// an arc's bulge and so does running it backwards, so bulges stay.
+fn turned_over(outline: &Outline) -> Outline {
+    let flip = |p: Point| [p[0], -p[1]];
+    // The loop's points: its start, then each segment's end.
+    let mut points = vec![outline.start];
+    points.extend(outline.segments.iter().map(Segment::to));
+    let start = points.last().copied().unwrap_or(outline.start);
+    let segments = outline
+        .segments
+        .iter()
+        .zip(points.iter())
+        .rev()
+        .map(|(segment, from)| match segment {
+            Segment::Line { .. } => Segment::Line { to: flip(*from) },
+            Segment::Arc { bulge, .. } => Segment::Arc {
+                to: flip(*from),
+                bulge: *bulge,
+            },
+        })
+        .collect();
+    Outline {
+        start: flip(start),
+        segments,
     }
 }
 
@@ -340,16 +373,17 @@ pub fn derive(project: &Project, datum: &InterfaceDatum) -> Derived {
                 None => found(kind, None),
             }
         }
-        (DatumOwner::Curve { id }, DatumRole::BoardCutout) => {
+        (DatumOwner::Cutout { id }, DatumRole::BoardCutout) => {
             let board = project.board();
-            let loop_ = board
-                .cutouts
-                .iter()
-                .find(|c| super::cutout_owner(&c.curves) == Some(id))
-                .map(|c| DatumGeometry::Profile {
-                    frame: up_frame(0.0),
-                    loops: vec![c.outline.clone()],
-                });
+            let loop_ =
+                board
+                    .cutouts
+                    .iter()
+                    .find(|c| c.id == Some(*id))
+                    .map(|c| DatumGeometry::Profile {
+                        frame: up_frame(0.0),
+                        loops: vec![c.outline.clone()],
+                    });
             found(kind, loop_)
         }
         (DatumOwner::Hole { id }, DatumRole::Hole) => {
@@ -431,12 +465,9 @@ pub fn display_name(project: &Project, datum: &InterfaceDatum) -> String {
         (_, DatumRole::BoardParameter) => format!("Board parameter {name}"),
         (_, DatumRole::SideHeight) if name == "bottom" => "Bottom side height".into(),
         (_, DatumRole::SideHeight) => "Top side height".into(),
-        (DatumOwner::Curve { id }, DatumRole::BoardCutout) => {
+        (DatumOwner::Cutout { id }, DatumRole::BoardCutout) => {
             let board = project.board();
-            let at = board
-                .cutouts
-                .iter()
-                .position(|c| super::cutout_owner(&c.curves) == Some(id));
+            let at = board.cutouts.iter().position(|c| c.id == Some(*id));
             match (at, at.and_then(|i| board.cutouts.get(i)).map(|c| c.kind)) {
                 (Some(i), Some(crate::model::board::CutoutKind::Slot { .. })) => {
                     format!("Slot {}", i + 1)

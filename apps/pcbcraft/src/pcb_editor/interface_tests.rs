@@ -12,7 +12,8 @@ use egui::{Pos2, Shape};
 use pcbcraft_core::Engine;
 use pcbcraft_core::ids::ContentHash;
 use pcbcraft_core::interface::assembly_link::{
-    AssemblyCommand, AssemblyPreview, AssemblyRead, Motion, ObjectChange, ObjectKind,
+    AssemblyCommand, AssemblyPreview, AssemblyRead, Conflict, ConflictItem, Motion, ObjectChange,
+    ObjectKind, Resolution, Side,
 };
 use pcbcraft_core::interface::{
     AssemblyEffect, ChangeKind, DatumChange, DryRun, EffectKind, ExportTarget, InterfaceCommand,
@@ -364,7 +365,7 @@ fn the_status_reads_published_then_stale_then_broken() -> TestResult {
     )?;
     assert_eq!(
         status_of(&mut editor, &engine, &ctx)?,
-        "Broken reference · fabrication output is blocked"
+        "Broken reference · publishing is blocked"
     );
     Ok(())
 }
@@ -483,6 +484,7 @@ fn preview(engine: &Engine, name: &str) -> PublishPreview {
             },
             summary: format!("{name}, 2 mm along X"),
         }],
+        blocked: Vec::new(),
         dry_run: Some(DryRun {
             linked_design: "/tmp/linked.solidcraft".into(),
             effects: vec![
@@ -503,6 +505,43 @@ fn preview(engine: &Engine, name: &str) -> PublishPreview {
             ],
         }),
     }
+}
+
+/// Slice P1: a broken reference between the board and the linked design
+/// is an error in the publish review that nothing acknowledges, so
+/// Publish stays disabled until it is resolved.
+#[test]
+fn a_broken_reference_holds_the_publish() -> TestResult {
+    let mut engine = demo()?;
+    record_publish(&mut engine)?;
+    let ctx = context();
+    let mut editor = PcbEditor::default();
+    editor.open_publish(&ctx, &engine);
+    let _hold = waiting(&mut editor);
+    let why = "The linked design's ‘USB opening’ uses J1 opening. J1 was deleted, so it would \
+               fail. Restore J1, or pick another reference in SolidCraft";
+    let mut blocked = preview(&engine, "J1 opening");
+    blocked.blocked = vec![why.into()];
+    let lines = interface_card::publish_blockers(&blocked);
+    assert_eq!(
+        lines.first().map(|l| (l.level, l.ack.is_none())),
+        Some((crate::kit::severity::Level::Error, true))
+    );
+    let acked = vec![true; lines.len()];
+    assert!(
+        crate::kit::review::apply_gate(false, &lines, &acked).is_some(),
+        "never acknowledged"
+    );
+    editor.interface_answer(&ctx, Done::PublishPreview(Ok(blocked)));
+    let shown = shows(&mut editor, &engine, &ctx);
+    for text in [why, "Fix the errors above to apply"] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    assert!(
+        click(&mut editor, &engine, &ctx, "Publish")?.is_none() && !editor.interface_publishing(),
+        "Publish is held"
+    );
+    Ok(())
 }
 
 /// The open review, waiting on a request that has not answered.
@@ -683,6 +722,8 @@ fn the_linked_design_preview_lists_what_moves_or_why_it_is_refused() -> TestResu
                 },
             ],
             consumers: Vec::new(),
+            board_changes: Vec::new(),
+            conflicts: Vec::new(),
             refused: None,
             findings: Vec::new(),
         })),
@@ -708,6 +749,8 @@ fn the_linked_design_preview_lists_what_moves_or_why_it_is_refused() -> TestResu
             references: Vec::new(),
             objects: Vec::new(),
             consumers: Vec::new(),
+            board_changes: Vec::new(),
+            conflicts: Vec::new(),
             refused: Some("The board would not solve with the wall moved".into()),
             findings: Vec::new(),
         })),
@@ -720,6 +763,75 @@ fn the_linked_design_preview_lists_what_moves_or_why_it_is_refused() -> TestResu
     ] {
         assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
     }
+
+    // Slice P1: both changed. The board's changes are listed beside the
+    // linked design's, and Update waits until a side is chosen for each
+    // item both changed.
+    let wall = pcbcraft_core::model::dimension::FollowedFaceId(1);
+    let conflict = Conflict {
+        item: ConflictItem::Reference(wall),
+        name: "Far wall · inner face".into(),
+        board: "Board outline changed on the board".into(),
+        linked_design: "Far wall · inner face, 1 mm along Y".into(),
+    };
+    let _hold = waiting(&mut editor);
+    editor.interface_answer(
+        &ctx,
+        Done::AssemblyPreview(Ok(AssemblyPreview {
+            document_revision: engine.revision(),
+            expect_hash: ContentHash([8; 32]),
+            changed: true,
+            references: Vec::new(),
+            objects: Vec::new(),
+            consumers: Vec::new(),
+            board_changes: vec!["Board outline, changed on the board".into()],
+            conflicts: vec![conflict.clone()],
+            refused: None,
+            findings: Vec::new(),
+        })),
+    );
+    let shown = shows(&mut editor, &engine, &ctx);
+    for text in [
+        "Both changed · 1 item to choose which side wins",
+        "Choose which side wins for 1 item both changed",
+        "Far wall · inner face",
+        "Board outline changed on the board",
+        "Far wall · inner face, 1 mm along Y",
+        "CHANGED ON THE BOARD",
+        "Board outline, changed on the board",
+        "Fix the errors above to apply",
+    ] {
+        assert!(shown.iter().any(|t| t == text), "{text} in {shown:?}");
+    }
+    let conflicts = [conflict];
+    let content = |choices: &[Option<Side>]| {
+        let preview = AssemblyPreview {
+            document_revision: 0,
+            expect_hash: ContentHash([8; 32]),
+            changed: true,
+            references: Vec::new(),
+            objects: Vec::new(),
+            consumers: Vec::new(),
+            board_changes: Vec::new(),
+            conflicts: conflicts.to_vec(),
+            refused: None,
+            findings: Vec::new(),
+        };
+        interface_card::assembly_content(&preview, choices).1
+    };
+    assert!(crate::kit::review::apply_gate(false, &content(&[None]), &[]).is_some());
+    assert_eq!(
+        crate::kit::review::apply_gate(false, &content(&[Some(Side::Board)]), &[]),
+        None
+    );
+    assert!(interface_card::resolutions(&conflicts, &[None]).is_empty());
+    assert_eq!(
+        interface_card::resolutions(&conflicts, &[Some(Side::LinkedDesign)]),
+        [Resolution {
+            item: ConflictItem::Reference(wall),
+            wins: Side::LinkedDesign,
+        }]
+    );
     Ok(())
 }
 
@@ -787,6 +899,48 @@ fn publish_writes_the_design_off_the_ui_thread_and_records_it() -> TestResult {
     assert_eq!(
         status_of(&mut editor, &engine, &ctx)?,
         "Published · revision 1"
+    );
+    Ok(())
+}
+
+/// Slice P1: where the project last published its design is kept in the
+/// project, so after a restart (the document saved and opened again, a
+/// new editor) the next publish goes there by default; a relative path is
+/// read against the project's folder.
+#[test]
+fn the_last_publish_path_is_the_default_after_a_restart() -> TestResult {
+    use pcbcraft_core::interface::publish::{candidate, record};
+    let mut engine = demo()?;
+    let dir = tempfile::tempdir()?;
+    let project_path = dir.path().join("demo.pcbcraft");
+    let fresh = |engine: &Engine| {
+        PcbEditor {
+            project_path: Some(project_path.clone()),
+            ..PcbEditor::default()
+        }
+        .design_path(engine.project())
+    };
+    assert_eq!(
+        fresh(&engine),
+        Some(dir.path().join("demo-board.solidcraft")),
+        "never published: beside the project"
+    );
+    let source = pcbcraft_core::ids::InterfaceSourceId(7);
+    let sidecar = candidate(engine.project(), Tier::Mechanical, source)?;
+    let mut published = record(engine.project(), &sidecar)?;
+    published.design_hint = Some("shared/board-v2.solidcraft".into());
+    engine.apply(
+        engine.revision(),
+        Operation::Interface(InterfaceCommand::RecordPublish {
+            source_id: source,
+            record: published,
+        }),
+    )?;
+    let bytes = pcbcraft_core::format::encode(&engine.to_file())?;
+    let reopened = Engine::from_file(pcbcraft_core::format::decode(&bytes)?)?;
+    assert_eq!(
+        fresh(&reopened),
+        Some(dir.path().join("shared").join("board-v2.solidcraft"))
     );
     Ok(())
 }

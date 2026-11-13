@@ -38,8 +38,8 @@ use pcbcraft_core::library::footprint_source::{
 };
 use pcbcraft_core::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
 use pcbcraft_core::model::board::{
-    BoardSketch, CutoutKind, EdgeName, NamedEdge, RECT_EDGES, ShapeFault, ShapeFaultKind,
-    SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
+    BoardSketch, CutoutKind, CutoutRole, EdgeName, NamedEdge, RECT_EDGES, ShapeFault,
+    ShapeFaultKind, SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
 };
 use pcbcraft_core::model::dimension::FeatureGeometry;
 use pcbcraft_core::rules::{DEFAULT_OUTLINE_FIT_MM, OUTLINE_FIT_RANGE_MM};
@@ -987,16 +987,36 @@ fn shape(
         loops.insert(p.curve.clone(), p.clone());
     }
     let mut cutouts = Vec::new();
+    // Each hole keeps the role (and with it the stable id) of its curves:
+    // the role with exactly its curves, else one sharing a curve with it
+    // (the loop gained or lost a curve). One role per hole.
+    let sets: Vec<BTreeSet<&String>> = region.holes.iter().map(|h| h.iter().collect()).collect();
+    let mut roles: Vec<Option<&CutoutRole>> = vec![None; sets.len()];
     let mut matched = BTreeSet::new();
-    for (k, hole) in region.holes.iter().enumerate() {
-        let curves: BTreeSet<&String> = hole.iter().collect();
-        let role = board
+    for (k, curves) in sets.iter().enumerate() {
+        if let Some(r) = board.cutouts.iter().find(|r| {
+            !matched.contains(&r.id)
+                && r.curves.iter().map(|c| &c.0).collect::<BTreeSet<_>>() == *curves
+        }) {
+            matched.insert(r.id);
+            roles[k] = Some(r);
+        }
+    }
+    for (k, curves) in sets.iter().enumerate() {
+        if roles[k].is_some() {
+            continue;
+        }
+        if let Some(r) = board
             .cutouts
             .iter()
-            .find(|r| r.curves.iter().map(|c| &c.0).collect::<BTreeSet<_>>() == curves);
-        if let Some(r) = role {
+            .find(|r| !matched.contains(&r.id) && r.curves.iter().any(|c| curves.contains(&c.0)))
+        {
             matched.insert(r.id);
+            roles[k] = Some(r);
         }
+    }
+    for (k, hole) in region.holes.iter().enumerate() {
+        let role = roles.get(k).copied().flatten();
         let what = format!("cutout {}", k + 1);
         let pieces = oriented(loop_of(sk, hole, &what, fit)?, true);
         let outline = outline_of(&pieces)?;
@@ -1013,7 +1033,13 @@ fn shape(
                 .collect(),
         });
     }
-    if let Some(lost) = board.cutouts.iter().find(|r| !matched.contains(&r.id)) {
+    // A plain cutout's role whose loop is gone goes with it; a slot's is a
+    // fault.
+    if let Some(lost) = board
+        .cutouts
+        .iter()
+        .find(|r| !matched.contains(&r.id) && r.kind != CutoutKind::Cutout)
+    {
         return Ok(Err(fault(
             ShapeFaultKind::Invalid,
             format!(
