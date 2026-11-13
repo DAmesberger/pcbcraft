@@ -96,6 +96,12 @@ fn corrupted_or_newer_records_do_not_hide_other_recoveries() -> Result<()> {
     let entries = list(directory.path())?.entries;
     assert_eq!(entries.len(), 3);
     assert_eq!(entries.iter().filter(|e| e.error.is_some()).count(), 2);
+    // Unreadable sessions are named in the user's words and dated by
+    // their file, so two of them never list as identical rows.
+    for entry in entries.iter().filter(|e| e.error.is_some()) {
+        assert_eq!(entry.project_name, UNREADABLE);
+        assert!(entry.saved_unix_ms > 0);
+    }
     assert!(read(&newer).is_err());
     remove_entry(directory.path(), &broken)?;
     assert_eq!(list(directory.path())?.entries.len(), 2);

@@ -663,6 +663,21 @@ impl Step {
     }
 }
 
+/// The name a project's first save gives it: a project still called
+/// [`UNTITLED`] takes the file's name ("usb-led.pcbcraft" names it
+/// "usb-led"); a name someone chose is kept (`None`). `project` is the
+/// copy being written, cloned only when renamed. Once the write succeeds the caller applies the same
+/// `project.rename` to the engine, its own undo step: undo never takes back
+/// a file, and a failed write leaves the document unchanged.
+pub fn name_by_file(project: &mut Arc<Project>, file: &std::path::Path) -> Option<String> {
+    let stem = file.file_stem()?.to_str()?.trim();
+    if project.name != UNTITLED || stem == UNTITLED {
+        return None;
+    }
+    schematic::sheets::rename_project(Arc::make_mut(project), stem).ok()?;
+    Some(project.name.clone())
+}
+
 /// The document, its revision and one shared undo history.
 ///
 /// Every mutation is staged on a candidate and validated before it replaces

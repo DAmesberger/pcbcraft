@@ -323,6 +323,66 @@ fn quitting_during_a_save_quits_once_it_is_written() -> Fallible {
     Ok(())
 }
 
+/// E2E run 4, finding 7: the first save of an Untitled project names it
+/// after the file the save panel chose. The file holds that name, the
+/// engine takes it as one undo step, and the project is then saved; undo
+/// takes the name back. A later save keeps the name.
+#[test]
+fn a_first_save_names_an_untitled_project_after_its_file() -> Fallible {
+    let mut h = Harness::new()?;
+    assert_eq!(h.engine.project().name, pcbcraft_core::UNTITLED);
+    let path = h.dir.path().join("usb-led-e2e.pcbcraft");
+    // The save panel's answer, as `pick` sends it.
+    let ticket = h.files.begin(Kind::Save, None).ok_or("no save started")?;
+    h.files
+        .event_sender
+        .send(Event::Picked(ticket, Kind::Save, Some(path.clone())))?;
+    h.until("the write", |h| !h.files.busy())?;
+    let renames: Vec<_> = h
+        .effects
+        .drain(..)
+        .filter_map(|e| match e {
+            Effect::Rename { name, saved } => Some((name, saved)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(renames, [("usb-led-e2e".to_owned(), true)]);
+    assert_eq!(
+        pcbcraft_io::read_project(&path)?.project.name,
+        "usb-led-e2e"
+    );
+    // What the app does with the effect.
+    h.engine.apply(
+        h.engine.revision(),
+        Operation::Schematic(SchematicCommand::RenameProject {
+            name: "usb-led-e2e".into(),
+        }),
+    )?;
+    h.files.renamed(&h.engine, true);
+    h.frame(vec![]);
+    assert_eq!(h.engine.project().name, "usb-led-e2e");
+    assert!(!h.files.dirty(), "the renamed project is the saved one");
+    assert_eq!(h.files.path(), Some(path.as_path()));
+    h.engine.undo()?;
+    h.frame(vec![]);
+    assert_eq!(h.engine.project().name, pcbcraft_core::UNTITLED);
+    assert!(h.files.dirty());
+    h.engine.redo()?;
+    h.frame(vec![]);
+    assert!(!h.files.dirty(), "redo returns to the saved content");
+
+    // Saving again under the file's path renames nothing.
+    h.edit("Chosen name")?;
+    h.files.request(Action::Save);
+    h.until("the second write", |h| !h.files.busy())?;
+    assert!(!h.effects.iter().any(|e| matches!(e, Effect::Rename { .. })));
+    assert_eq!(
+        pcbcraft_io::read_project(&path)?.project.name,
+        "Chosen name"
+    );
+    Ok(())
+}
+
 /// R7-4: a save says it runs from the request until its file is written,
 /// so one the system holds (a permission prompt) is not silent.
 #[test]

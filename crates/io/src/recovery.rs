@@ -62,6 +62,10 @@ impl RecoveryMeta {
     }
 }
 
+/// The name an entry that cannot be read is listed under: a session saved
+/// by another version (never migrated) or a damaged file.
+pub const UNREADABLE: &str = "Older or damaged recovery";
+
 #[derive(Clone, Debug)]
 pub struct RecoveryEntry {
     pub path: PathBuf,
@@ -241,7 +245,7 @@ pub fn list(directory: &Path) -> Result<Listing> {
     let mut listing = Listing::default();
     let mut result = Vec::new();
     let mut bytes = 0u64;
-    for (_, path) in candidates {
+    for (modified, path) in candidates {
         if result.len() == MAX_ENTRIES || bytes > MAX_SCAN_BYTES {
             listing.older.push(path);
             continue;
@@ -262,11 +266,14 @@ pub fn list(directory: &Path) -> Result<Listing> {
                     error: None,
                 })
             }
+            // Dated by the file, so unreadable sessions tell apart by age.
             Err(error) => result.push(RecoveryEntry {
                 path,
                 original_path: None,
-                saved_unix_ms: 0,
-                project_name: "Unreadable recovery".into(),
+                saved_unix_ms: modified
+                    .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+                    .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+                project_name: UNREADABLE.into(),
                 instances: 0,
                 error: Some(error.to_string()),
             }),

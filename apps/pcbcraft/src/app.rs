@@ -1004,6 +1004,15 @@ impl App {
                     path,
                     recovered,
                 } => self.replace(*document, path, recovered),
+                Effect::Rename { name, saved } => {
+                    let rename = Operation::Schematic(
+                        pcbcraft_core::schematic::SchematicCommand::RenameProject { name },
+                    );
+                    match self.engine.apply(self.engine.revision(), rename) {
+                        Ok(_) => self.files.renamed(&self.engine, saved),
+                        Err(error) => self.say(Level::Error, format!("Rename failed: {error}")),
+                    }
+                }
                 Effect::Close => {
                     self.closing = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
