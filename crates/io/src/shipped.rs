@@ -195,6 +195,52 @@ impl ShippedLibrary {
     }
 }
 
+/// The extension of a built generator module on the Generators shelf.
+pub const GENERATOR_EXTENSION: &str = ".wasm";
+
+impl ShippedLibrary {
+    /// The names of the shipped generator modules (`generators/<name>.wasm`),
+    /// sorted.
+    pub fn generators(&self) -> Result<Vec<String>> {
+        Ok(self
+            .list(Shelf::Generators, GENERATOR_EXTENSION)?
+            .into_iter()
+            .filter_map(|file| file.strip_suffix(GENERATOR_EXTENSION).map(str::to_string))
+            .collect())
+    }
+
+    /// The bytes of shipped generator module `name`, at most the host's
+    /// module limit. A missing module names the folder it was looked for in.
+    pub fn generator(&self, name: &str) -> Result<Vec<u8>> {
+        let valid = !name.is_empty()
+            && name.len() <= 64
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+        if !valid {
+            return Err(Error::Invalid(format!(
+                "{name:?} is not a generator name: lower-case letters, digits, - and _."
+            )));
+        }
+        let file = format!("{name}{GENERATOR_EXTENSION}");
+        if !self.shelf(Shelf::Generators).join(&file).is_file() {
+            let shipped = self.generators().unwrap_or_default();
+            return Err(Error::Invalid(format!(
+                "No generator module {name} is shipped in {}; shipped: {}.",
+                self.shelf(Shelf::Generators).display(),
+                if shipped.is_empty() {
+                    "none".to_string()
+                } else {
+                    shipped.join(", ")
+                }
+            )));
+        }
+        let limit = u64::try_from(sparksmith_core::library::generated::MAX_MODULE_BYTES)
+            .unwrap_or(u64::MAX);
+        self.read(Shelf::Generators, &file, limit)
+    }
+}
+
 /// Where an executable at `exe` may find the library, in search order.
 fn candidates(exe: &Path) -> Vec<PathBuf> {
     let Some(bin) = exe.parent() else {
@@ -291,6 +337,25 @@ mod tests {
             vec!["a.json".to_string()]
         );
         assert!(shipped.list(Shelf::Materials, ".json")?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn generator_modules_are_read_by_name_within_the_shelf() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let root = library(temp.path())?;
+        std::fs::create_dir_all(root.join("generators"))?;
+        std::fs::write(root.join("generators/chip.wasm"), b"\0asm")?;
+        let shipped = ShippedLibrary::at(&root)?;
+        assert_eq!(shipped.generators()?, vec!["chip".to_string()]);
+        assert_eq!(shipped.generator("chip")?, b"\0asm");
+        assert!(matches!(
+            shipped.generator("../chip"),
+            Err(Error::Invalid(_))
+        ));
+        assert!(
+            matches!(shipped.generator("gone"), Err(Error::Invalid(m)) if m.contains("shipped: chip"))
+        );
         Ok(())
     }
 

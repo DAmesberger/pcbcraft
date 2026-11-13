@@ -20,5 +20,5 @@ pub mod params;
 pub mod runtime;
 pub mod v1;
 
-pub use codec::{CodecError, decode, encode, hex, result_hash, sha256};
+pub use codec::{CodecError, decode, encode, hex, params_hash, result_hash, sha256};
 pub use runtime::{Failure, Generated, GeneratorRuntime};

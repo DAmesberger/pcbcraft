@@ -10,6 +10,9 @@ workspace = true
 
 [dependencies]
 sparksmith-core.workspace = true
+# Runs a project's embedded generator modules on load, to check its
+# generated parts against them (GP1).
+sparksmith-generators.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

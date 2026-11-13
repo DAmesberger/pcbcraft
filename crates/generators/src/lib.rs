@@ -14,6 +14,8 @@
 
 pub mod params;
 pub mod validate;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod worker;
 
 use sparksmith_generator_abi::v1::{self, Description, ErrorBody, Generation, Request};
 use sparksmith_generator_abi::{CodecError, Failure, Generated, GeneratorRuntime, codec};

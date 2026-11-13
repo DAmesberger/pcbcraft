@@ -7,11 +7,15 @@
 //!   the workspace and Cargo home remapped out of any embedded path. It
 //!   prints each module's size and SHA-256; `--update-lock` records the
 //!   hashes for this build host in `generators/modules.lock`, the only way
-//!   that file changes. Bytes are reproducible per build host (see
-//!   [`host_triple`]), so the lock keeps one hash per host.
+//!   that file changes, and copies each module to the shipped library
+//!   (`library/generators/<name>.wasm`, committed). Bytes are reproducible
+//!   per build host (see [`host_triple`]), so the lock keeps one hash per
+//!   host, and every host ships the one committed copy, so a part's key is
+//!   the same wherever it is made (docs/generator-plugins.md).
 //! - `check` (part of `cargo xtask ci`) builds, fails when a module's hash
 //!   differs from the hash `modules.lock` records for this host (a host
-//!   with none recorded gets a note), and runs the golden cases natively, under
+//!   with none recorded gets a note) or a shipped module is not a locked
+//!   build of its generator, and runs the golden cases natively, under
 //!   wasmi natively, and under wasmi built for wasm32 (the probe module).
 //! - `reproduce` builds everything twice from empty target directories and
 //!   compares the bytes with each other and with the lock.
@@ -26,6 +30,8 @@ use std::process::Command;
 const TARGET: &str = "wasm32-unknown-unknown";
 const PROFILE: &str = "generator";
 const LOCK: &str = "generators/modules.lock";
+/// Where the built modules ship (`sparksmith_io::shipped::Shelf::Generators`).
+const SHIPPED: &str = "library/generators";
 /// The probe: the generator host itself built for wasm32 (a test module,
 /// not locked: it only has to agree with the native host).
 const PROBE: &str = "sparksmith-generators-probe";
@@ -356,6 +362,57 @@ fn update_lock(built: &[Built], host: &str) -> Result<()> {
     Ok(())
 }
 
+/// Copy each built module from `target_dir` to the shipped library.
+fn ship(target_dir: &Path) -> Result<()> {
+    let shelf = root()?.join(SHIPPED);
+    std::fs::create_dir_all(&shelf)?;
+    for generator in generators()? {
+        let to = shelf.join(format!("{}.wasm", generator.name));
+        std::fs::copy(generator.artifact(target_dir), &to)?;
+        eprintln!("shipped {}", to.display());
+    }
+    Ok(())
+}
+
+/// Each shipped module is a build of its generator that the lock records
+/// (on any host), and nothing else ships.
+fn review_shipped() -> Result<Vec<String>> {
+    let lock = read_lock()?;
+    let shelf = root()?.join(SHIPPED);
+    let generators = generators()?;
+    let mut failures = Vec::new();
+    for generator in &generators {
+        let path = shelf.join(format!("{}.wasm", generator.name));
+        let Ok(bytes) = std::fs::read(&path) else {
+            failures.push(format!("{SHIPPED}/{}.wasm is missing", generator.name));
+            continue;
+        };
+        let hash = hex(&Sha256::digest(&bytes));
+        let locked = recorded(&lock, &generator.name)
+            .is_some_and(|hosts| hosts.values().any(|h| h.as_str() == Some(hash.as_str())));
+        if !locked {
+            failures.push(format!(
+                "{SHIPPED}/{}.wasm is sha256 {hash}, which {LOCK} does not record for {}",
+                generator.name, generator.name
+            ));
+        }
+    }
+    if shelf.is_dir() {
+        for entry in std::fs::read_dir(&shelf)? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            let known = name
+                .strip_suffix(".wasm")
+                .is_some_and(|stem| generators.iter().any(|g| g.name == stem));
+            if !known {
+                failures.push(format!(
+                    "{SHIPPED}/{name} is not the module of a generator crate"
+                ));
+            }
+        }
+    }
+    Ok(failures)
+}
+
 fn report(built: &[Built]) {
     for b in built {
         eprintln!("  {:<12} {:>9} bytes  sha256 {}", b.name, b.bytes, b.sha256);
@@ -367,7 +424,8 @@ fn build_and_report(update: bool) -> Result<()> {
     report(&built);
     let host = host_triple()?;
     if update {
-        update_lock(&built, &host)
+        update_lock(&built, &host)?;
+        ship(&target_dir()?)
     } else {
         let (failures, notes) = review_lock(&built, &host)?;
         for line in failures.iter().chain(&notes) {
@@ -382,13 +440,14 @@ fn check() -> Result<()> {
     let built = build_all(&dir, true)?;
     report(&built);
     let host = host_triple()?;
-    let (failures, notes) = review_lock(&built, &host)?;
+    let (mut failures, notes) = review_lock(&built, &host)?;
+    failures.extend(review_shipped()?);
     for note in &notes {
         eprintln!("note: {note}");
     }
     if !failures.is_empty() {
         return Err(format!(
-            "generator modules do not match {LOCK}:\n  {}\nA module's hash is its identity. If the change is intended, run `cargo xtask generators build --update-lock` and commit {LOCK}.",
+            "generator modules do not match {LOCK}:\n  {}\nA module's hash is its identity. If the change is intended, run `cargo xtask generators build --update-lock` and commit {LOCK} and {SHIPPED}.",
             failures.join("\n  ")
         )
         .into());

@@ -13,6 +13,9 @@ test-fixtures = []
 
 [dependencies]
 sparksmith-units-derive.workspace = true
+# Generator modules' wire types, codec and runtime interface (no
+# interpreter): generated parts' provenance and expansion (GP1).
+sparksmith-generator-abi = { workspace = true, features = ["nfc"] }
 serde.workspace = true
 serde_json.workspace = true
 schemars.workspace = true

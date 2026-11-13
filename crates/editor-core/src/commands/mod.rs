@@ -2,6 +2,7 @@
 //! stage on the candidate document and call domain functions; they hold no
 //! domain rules. The engine reconciles nets and validates afterwards.
 mod assets;
+pub(crate) mod generated;
 mod instance;
 mod library;
 pub(crate) mod marking;
@@ -9,6 +10,7 @@ pub(crate) mod model3d;
 pub(crate) mod pinout;
 pub(crate) mod templates;
 
+pub use generated::{Generate, GenerateReport, ModuleSource};
 pub use instance::InstanceCommand;
 pub(crate) use instance::apply_instance;
 pub use library::{LibraryCommand, parts_to_republish};
@@ -222,6 +224,10 @@ pub enum Outcome {
     /// The group `length_group.add` created.
     LengthGroupAdded {
         group: crate::rules::signal::LengthGroupId,
+    },
+    /// GP1 `library.generate`: the part made or found.
+    Generated {
+        report: GenerateReport,
     },
 }
 

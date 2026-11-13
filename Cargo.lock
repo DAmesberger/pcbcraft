@@ -5071,6 +5071,7 @@ dependencies = [
  "solidcraft-control",
  "sparksmith-core",
  "sparksmith-firmware",
+ "sparksmith-generators",
  "sparksmith-io",
  "sparksmith-solidcraft",
  "tempfile",
@@ -5104,6 +5105,7 @@ dependencies = [
  "serde_json",
  "sha2 0.10.9",
  "sparksmith-fabcheck",
+ "sparksmith-generator-abi",
  "sparksmith-units-derive",
  "thiserror 2.0.21",
  "wasm-bindgen-test",
@@ -5183,6 +5185,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sparksmith-core",
+ "sparksmith-generators",
  "tempfile",
  "thiserror 2.0.21",
  "zip",
@@ -6950,6 +6953,7 @@ dependencies = [
  "sparksmith-kicad",
  "sparksmith-solidcraft",
  "syn 2.0.119",
+ "tempfile",
  "zip",
 ]
 

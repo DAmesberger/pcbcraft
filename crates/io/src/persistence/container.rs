@@ -113,6 +113,9 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
     let mut recovery = None;
     let mut assets: BTreeMap<ContentHash, AssetBytes> = BTreeMap::new();
     let mut declared: BTreeMap<ContentHash, u64> = BTreeMap::new();
+    // The first asset whose bytes do not hash to its name: refused once
+    // the document says what it is (a generator module is named as one).
+    let mut mismatch: Option<(String, ContentHash, ContentHash)> = None;
     let mut total: u64 = 0;
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).map_err(malformed)?;
@@ -168,7 +171,8 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
                 // file's validation does not hash them again.
                 let bytes = AssetBytes::new(bytes);
                 if bytes.hash() != hash {
-                    return Err(entry_error(&name, "does not match its content hash"));
+                    mismatch.get_or_insert((name.clone(), hash, bytes.hash()));
+                    continue;
                 }
                 declared.insert(hash, bytes.len() as u64);
                 assets.insert(hash, bytes);
@@ -188,7 +192,16 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
     let read_bytes = (document.len() as u64)
         .saturating_add(recovery.as_ref().map_or(0, |r| r.len() as u64))
         .saturating_add(assets.values().map(|a| a.len() as u64).sum());
-    let mut file = format::decode_container_document(&document)?;
+    let decoded = format::decode_container_document(&document);
+    if let Some((name, recorded, actual)) = mismatch {
+        return Err(changed_asset(
+            decoded.ok().as_ref(),
+            &name,
+            recorded,
+            actual,
+        ));
+    }
+    let mut file = decoded?;
     for asset in &mut file.project.library.assets {
         if declared.remove(&asset.hash).is_none() {
             return Err(Error::Invalid(format!(
@@ -209,6 +222,7 @@ pub(crate) fn read(path: &Path, role: Role, load: Load) -> Result<Contents> {
     }
     if load == Load::Everything {
         file.validate()?;
+        crate::generated::verify(&file)?;
     }
     Ok(Contents {
         file,
@@ -319,6 +333,35 @@ fn add_total(total: u64, bytes: u64) -> Result<u64> {
                 CONTAINER_MAX_BYTES / (1024 * 1024)
             ))
         })
+}
+
+/// The refusal of an asset entry whose bytes hash to `actual`, not to the
+/// `recorded` hash its name carries: in the words of a generator module
+/// when the document records one under that hash, else as an entry.
+fn changed_asset(
+    file: Option<&EditorFile>,
+    name: &str,
+    recorded: ContentHash,
+    actual: ContentHash,
+) -> Error {
+    use sparksmith_core::library::generated;
+    let part = file.and_then(|f| {
+        let library = &f.project.library;
+        library
+            .generated
+            .iter()
+            .find(|g| g.from.module == recorded)
+            .map(|g| generated::describe(library, g))
+    });
+    match part {
+        Some(part) => Error::Document(generated::module_changed(&part, recorded, actual)),
+        None => entry_error(
+            name,
+            &format!(
+                "does not match its content hash: its name records sha256 {recorded}, but its bytes hash to sha256 {actual}"
+            ),
+        ),
+    }
 }
 
 fn entry_error(name: &str, problem: &str) -> Error {

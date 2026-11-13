@@ -298,6 +298,19 @@ pub enum LibraryCommand {
         edits: Vec<DraftEdit>,
         artwork: Vec<library::PackedAsset>,
     },
+    /// GP1: make a part with a generator module, as one undo step. The
+    /// module runs through the host's generator runtime with its limits;
+    /// its parameters are completed (given values, then project settings
+    /// for parameters a setting decides, then the module's defaults) and,
+    /// with the module's hash, form the part key. A project that already
+    /// holds the part with that key returns it and changes nothing.
+    /// Otherwise the expansion is published as new lineages (component,
+    /// symbol, package, footprint and binding, or package and footprint),
+    /// the module is embedded once by hash and the part records its module,
+    /// complete parameters and result hash. Any refusal, the module's own
+    /// included, changes nothing. Needs the host's generator runtime.
+    #[serde(rename = "library.generate")]
+    Generate(Box<super::generated::Generate>),
 }
 
 // A new command chooses its permission class here.
@@ -334,6 +347,7 @@ declare_classes!(LibraryCommand {
     PinoutApply "library.pinout_apply" Edit "Apply a pinout import",
     ImportModel "library.import_model" Edit "Import a 3D model",
     PackArtwork "library.pack_artwork" Edit "Pack marking artwork",
+    Generate "library.generate" Edit "Generate a part",
 });
 
 fn close_by_default() -> bool {
@@ -953,6 +967,9 @@ pub(crate) fn apply_library(
         LibraryCommand::PackArtwork { edits, artwork } => {
             super::marking::pack_artwork(document, edits, artwork)
         }
+        // The engine passes its generator runtime (`Engine::apply_inner`);
+        // reached here, the host has none.
+        LibraryCommand::Generate(request) => super::generated::generate(document, *request, None),
         LibraryCommand::DiscardDraft { id } => {
             let before = super::assets::named_by_drafts(&document.drafts, [id]);
             drafts::discard(Arc::make_mut(&mut document.drafts), id)?;

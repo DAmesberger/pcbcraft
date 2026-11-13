@@ -1,6 +1,7 @@
 //! Parameters checked against a description: the one check both the host
 //! (before it calls and hashes) and the module (before it generates) run.
-use crate::v1::{Description, Param, ParamType, ParamValue, Params, Problem};
+use crate::Failure;
+use crate::v1::{self, Description, Param, ParamType, ParamValue, Params, Problem, Request, Scope};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -25,6 +26,41 @@ pub fn mm_text(nm: i64) -> String {
         digits.pop();
     }
     format!("{sign}{whole}.{digits} mm")
+}
+
+/// The request for `given` parameters in `scope`, with every default
+/// filled from the description. Refuses a scope the generator does not
+/// offer, unknown parameters and values of the wrong type or out of range,
+/// all at once. The host fills defaults before it calls and before it
+/// hashes, so a default that changes in a later module revision can never
+/// silently change a part's identity.
+pub fn complete(
+    description: &Description,
+    scope: Scope,
+    given: &Params,
+) -> Result<Request, Failure> {
+    if !description.scopes.contains(&scope) {
+        let what = match scope {
+            Scope::Component => "complete parts",
+            Scope::Package => "packages on their own",
+        };
+        return Err(Failure::one(
+            "param.scope",
+            format!("The {} generator does not make {what}.", description.name),
+        ));
+    }
+    let mut params = given.clone();
+    for param in &description.params {
+        params
+            .entry(param.key.clone())
+            .or_insert_with(|| param.default.clone());
+    }
+    check(description, &params).map_err(|problems| Failure { problems })?;
+    Ok(Request {
+        abi: v1::ABI,
+        scope,
+        params,
+    })
 }
 
 /// Every declared parameter present, of its type and in its range, and
