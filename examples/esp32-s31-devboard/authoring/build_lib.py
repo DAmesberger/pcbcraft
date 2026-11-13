@@ -75,6 +75,34 @@ def set_graphics(s, fp, keep_text=True, extra=(), silk_text_at=None):
     edit(s, [{"id": fp, "meta": d["meta"], "definition": d["definition"]}], f"graphics of {fp}")
 
 
+def fit_pin_numbers(s, comp, sym, numbers):
+    """Give each side of a pinout symbol stubs long enough for its longest
+    pin number at full height (`numbers` in the component's terminal order).
+    The need and the module rounding are library::graphics::pin_number_need
+    and the template generator's: 0.9 cap heights a character plus 0.4 mm
+    clearance at each end, rounded up to the 2.5 mm module. The body stays;
+    the pin ends move out."""
+    module, advance, clearance = 2_500_000, 0.9, 400_000
+    all_drafts = drafts(s)
+    terminals = all_drafts[comp]["definition"]["body"]["terminals"]
+    number = {t["id"]: n for t, n in zip(terminals, numbers)}
+    d = all_drafts[sym]
+    body = d["definition"]["body"]
+    height = body["pin_text_height_nm"]
+    pins = [p for u in body["units"] for p in u["pins"]]
+    longest = {}
+    for p in pins:
+        need = len(number[p["terminal"]]) * advance * height + 2 * clearance
+        stub = max(p["length_nm"], -(-int(need) // module) * module)
+        longest[p["direction"]] = max(longest.get(p["direction"], 0), stub)
+    for p in pins:
+        by = longest[p["direction"]] - p["length_nm"]
+        dx, dy = {"right": (-by, 0), "left": (by, 0), "up": (0, -by), "down": (0, by)}[p["direction"]]
+        p["position"] = {"x_nm": p["position"]["x_nm"] + dx, "y_nm": p["position"]["y_nm"] + dy}
+        p["length_nm"] = longest[p["direction"]]
+    edit(s, [{"id": sym, "meta": d["meta"], "definition": d["definition"]}], f"pin stubs of {sym}")
+
+
 def publish_and_close(s, ids, note):
     """Publish; library.publish closes the drafts it published by default,
     so they do not count against the project's 64-draft limit."""
@@ -191,6 +219,9 @@ def build(s):
     ids = pinout(s, "USB4105-GF-A", "usb4105", V, 13,
                  [pin(r, n, name, "passive", V, "unspecified", page=1, table="Pin/Signal table") for r, n, name in rows])
     comp, sym, pkg, bind = ids
+    # The stacked numbers ("A1B12", "B4A9") need 7.5 mm stubs at full
+    # height; the pinout's 2.5 mm stubs shrank them to less than half of it.
+    fit_pin_numbers(s, comp, sym, [n for _, n, _ in rows])
     # The USB-C receptacle row is this drawing's (GCT USB4105 rev B4 sheet 1):
     # its form gives the package the generated receptacle model, and its
     # lands the footprint (12 SMD lands, four plated shell slots, two NPTH
