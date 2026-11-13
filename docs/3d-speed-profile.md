@@ -358,7 +358,7 @@ The rest is one board model (~0.9 GB of solidcore B-rep) for the current board a
 
 Same host (18 cores), `ci` profile, load average 5–9 (other agents' builds). Settings › 3D view › "Mesh the board directly" (`Flat::Meshed`) draws the board's flat bodies from the board plan with the soldermask's mesher (`project::mesh`) instead of building them in the kernel; the native design then holds the parts alone. Off by default: the exact build stays the live path and the fallback until stage A4.
 
-**The mesher on the ESP32 board** (`example_boards_mesh_as_their_plan`): 916 flat bodies, 358 distinct meshes (every via of a size and every track of a length and width share one, placed), meshed in **6.4–7.2 ms** on all cores (target: under 100 ms). 296,000 triangles drawn, 175,000 held. The laminate is one body, not five slabs. Parity with the plan holds on every example board (`mesh::parity`). A track width edit meshes one body again: 0.7–0.9 ms.
+**The mesher on the ESP32 board** (`example_boards_mesh_as_their_plan`): 916 flat bodies, 358 distinct meshes (every via of a size and every track of a length and width share one, placed), meshed in **6.4–7.2 ms** on all cores (target: under 100 ms). 296,000 triangles drawn, 175,000 held. The laminate was one body, not five slabs (one body per slab again since L1, below). Parity with the plan holds on every example board (`mesh::parity`). A track width edit meshes one body again: 0.7–0.9 ms.
 
 **What an edit costs now.** The plan itself was the larger cost: 66–77 ms, almost all of it simplifying and tiling the fills' copper. Fill plans are now kept by a digest of each fill's copper (`plan::Memo`; the exact build uses it too), and the display layers that read the fills (films, bare laminate, legend) are drawn on cores of their own. A meshed model's update for a width edit, headless: 142–169 ms before, **39–45 ms** after.
 
@@ -411,3 +411,18 @@ Each update from the last model takes 40–60 ms (the edit's board, then the ref
 | Full | 24.2 s | 12.76 s | 3.83 s | 7.57 s | 3,243 | 1,414 | 920 / 920 | 0 | 717 KB |
 
 The check measures each copper body's volume (the kernel meshes it finely), which is most of its time; laminate slabs are compared by box only, as in `cargo xtask board-parity`. One run each; these are measurements of this board on this machine, not targets.
+
+## Update, 13 November 2026: the live laminate per slab (L1)
+
+The live view meshes the laminate as the exact build makes it, one body per slab (the merged `BoardPlan::whole_laminate` is gone), so the 3D view peels the stack one dielectric at a time and each slab shows its own dielectric's weave. `example_boards_mesh_as_their_plan` now also meshes the laminate alone, cold: all its slabs, and one dielectric slab (same loops as the former merged body, which differed from it only in height). Same host (18 cores), `ci` profile, load average 16–18 (other agents' builds); four runs:
+
+| ESP32-S31 board | Value |
+| --- | --- |
+| Flat bodies, distinct meshes | 920, 362 (was 916, 358: four more slabs) |
+| The laminate alone: 5 slabs | 8.4–8.9 ms, 95,064 triangles |
+| …one dielectric slab (the merged body's cost) | 2.6–2.8 ms, 25,212 triangles |
+| So the slabs cost, cold | **+5.7–6.2 ms** and +70,000 triangles (about +19 % of the 365,560 drawn) |
+| Every flat body, cold, on all cores | 12.4–14.3 ms (target: under 100 ms) |
+| A track width edit (an outer track): plan / mesh | 32–33 ms / 0.9–1.0 ms |
+
+The A2 agent's estimate of about +7 ms holds. The two inner foil levels are the costly slabs (their holes are that layer's tracks, rings and fill copper); the three dielectric slabs share the drills' loops. In the whole board the slabs are meshed on their own cores beside the fills, so the whole-board time grows by less than the laminate's own; the whole-board figure above was taken at about twice the load of A2's 6.4–7.2 ms and is not comparable to it. An edit to an inner track now also meshes its foil level's slab again. The packing for the GPU carries the extra triangles; it was not measured separately.

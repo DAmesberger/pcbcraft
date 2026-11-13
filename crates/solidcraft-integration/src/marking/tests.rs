@@ -602,6 +602,7 @@ fn bottom_faces_are_marked_from_below() -> TestResult {
         item: Some(9),
         kind: BodyKind::PackageBody,
         layer: None,
+        dielectric: None,
         surface: finish_surface(Finish::LaserEtch)?,
         detail: Detail::NONE,
         mesh: Arc::new(mesh),

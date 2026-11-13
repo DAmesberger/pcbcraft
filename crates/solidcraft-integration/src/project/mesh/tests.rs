@@ -16,17 +16,57 @@ fn meshed(project: &Project) -> Result<(BoardPlan, Vec<Meshed>, Stats)> {
 /// turned) and of the showcase (tracks, vias, fills on outer and inner
 /// layers, foil levels) is meshed as planned: one mesh per plan body,
 /// of its kind, source and layer, its box and volume the plan body's
-/// within what flattening explains, and the laminate whole.
+/// within what flattening explains, and each laminate slab as its own
+/// body, one to one with the exact build's.
 #[test]
 fn meshed_bodies_are_the_plans() -> Result<()> {
     for project in [shaped()?, showcase()?] {
         let (plan, bodies, stats) = meshed(&project)?;
         let differences = parity(&plan, &bodies)?;
         assert!(differences.is_empty(), "{differences:#?}");
-        let slabs = plan.laminate.len();
-        assert_eq!(stats.bodies, plan.bodies().count() - slabs + 1);
+        assert_eq!(stats.bodies, plan.bodies().count());
         assert_eq!(bodies.len(), stats.bodies);
+        let slabs = bodies
+            .iter()
+            .filter(|m| m.geometry.kind == BodyKind::Substrate)
+            .count();
+        assert_eq!(slabs, plan.laminate.len());
     }
+    Ok(())
+}
+
+/// The parity check sees a slab merged into its neighbour, as the view
+/// once drew the laminate, and a slab filed under another dielectric.
+#[test]
+fn the_parity_check_finds_a_merged_or_misfiled_slab() -> Result<()> {
+    let (plan, bodies, _) = meshed(&showcase()?)?;
+    let slabs: Vec<usize> = bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| matches!(m.source, Origin::Laminate(_)))
+        .map(|(i, _)| i)
+        .collect();
+    assert!(slabs.len() > 2, "the showcase has slabs to merge");
+    let (first, second) = (slabs[0], slabs[1]);
+    let mut merged = bodies.clone();
+    merged[first].geometry.min[2] = merged[second].geometry.min[2];
+    merged.remove(second);
+    let differences = parity(&plan, &merged)?;
+    assert!(
+        differences
+            .iter()
+            .any(|d| d.starts_with("planned, not meshed")),
+        "{differences:#?}"
+    );
+    assert!(
+        differences.iter().any(|d| d.contains("box")),
+        "{differences:#?}"
+    );
+    let mut misfiled = bodies.clone();
+    misfiled[second].geometry.dielectric = Some(99);
+    let differences = parity(&plan, &misfiled)?;
+    assert_eq!(differences.len(), 1, "{differences:#?}");
+    assert!(differences[0].contains("dielectric"), "{differences:#?}");
     Ok(())
 }
 
@@ -36,7 +76,7 @@ fn the_parity_check_finds_a_dropped_added_or_reshaped_mesh() -> Result<()> {
     let (plan, bodies, _) = meshed(&showcase()?)?;
     let track = bodies
         .iter()
-        .position(|m| matches!(m.source, Some(Origin::Track(_))))
+        .position(|m| matches!(m.source, Origin::Track(_)))
         .ok_or_else(|| Error::Verification("no track".into()))?;
     let mut dropped = bodies.clone();
     dropped.remove(track);
@@ -72,34 +112,73 @@ fn the_parity_check_finds_a_dropped_added_or_reshaped_mesh() -> Result<()> {
     Ok(())
 }
 
-/// The laminate is one body from the bottom face to the top: the board
-/// outline less every drill, as every slab but a foil level holds it.
+/// The laminate is its slabs, each a body of its own in its dielectric:
+/// they stack from the bottom face to the top without a gap, every slab
+/// of a dielectric is filed under it, each is drilled through at a via,
+/// and an inner foil's level leaves room for that layer's copper.
 #[test]
-fn the_laminate_is_one_body_through_the_board() -> Result<()> {
+fn the_laminate_is_one_body_per_slab() -> Result<()> {
     let project = showcase()?;
     let (plan, bodies, _) = meshed(&project)?;
+    let slabs: Vec<&Meshed> = bodies
+        .iter()
+        .filter(|m| m.geometry.kind == BodyKind::Substrate)
+        .collect();
+    assert_eq!(slabs.len(), plan.laminate.len());
     assert!(
-        plan.laminate
+        slabs
             .iter()
             .any(|s| matches!(s.source, Origin::Laminate(Level::Foil { .. }))),
         "the showcase has foil levels"
     );
-    let laminate: Vec<&Meshed> = bodies
+    let mut spans: Vec<[f64; 2]> = Vec::new();
+    for slab in &slabs {
+        let Origin::Laminate(level) = slab.source else {
+            return Err(Error::Verification("a substrate body is not a slab".into()));
+        };
+        let g = &slab.geometry;
+        assert!(g.item.is_none(), "a slab picks as the board");
+        assert_eq!(g.dielectric, Some(level.dielectric()));
+        let (low, high) = project
+            .stackup
+            .dielectric_span(level.dielectric())
+            .ok_or_else(|| Error::Verification("no dielectric".into()))?;
+        assert!(g.min[2] >= low - 1e-9 && g.max[2] <= high + 1e-9);
+        spans.push([g.min[2], g.max[2]]);
+        let via = &project.vias[0];
+        let hit = g.raycast(
+            Vec3::new(via.position[0], via.position[1], 10.0),
+            Vec3::new(0.0, 0.0, -1.0),
+        );
+        assert!(hit.is_none(), "{:?} is drilled at a via", slab.source);
+    }
+    spans.sort_by(|a, b| a[0].total_cmp(&b[0]));
+    assert!(spans[0][0].abs() < 1e-9);
+    for pair in spans.windows(2) {
+        assert!((pair[0][1] - pair[1][0]).abs() < 1e-9, "{pair:?}");
+    }
+    let top = spans.last().map_or(0.0, |s| s[1]);
+    assert!((top - project.stackup.dielectric_mm()).abs() < 1e-9);
+    // An inner track lies in a hole of its foil level's slab.
+    let inner = project
+        .tracks
         .iter()
-        .filter(|m| m.geometry.kind == BodyKind::Substrate)
-        .collect();
-    assert_eq!(laminate.len(), 1);
-    let g = &laminate[0].geometry;
-    assert!(laminate[0].source.is_none() && g.item.is_none());
-    assert!(g.min[2].abs() < 1e-9);
-    assert!((g.max[2] - project.stackup.dielectric_mm()).abs() < 1e-9);
-    // Drilled through: a via's drill is open from top to bottom.
-    let via = &project.vias[0];
-    let hit = g.raycast(
-        Vec3::new(via.position[0], via.position[1], 10.0),
-        Vec3::new(0.0, 0.0, -1.0),
-    );
-    assert!(hit.is_none(), "the laminate is drilled at a via");
+        .find(|t| t.layer.side().is_none())
+        .ok_or_else(|| Error::Verification("the showcase has an inner track".into()))?;
+    let level = slabs
+        .iter()
+        .find(|s| {
+            matches!(s.source, Origin::Laminate(Level::Foil { layer, .. }) if layer == inner.layer)
+        })
+        .ok_or_else(|| Error::Verification("no foil level".into()))?;
+    let mid = [
+        (inner.start[0] + inner.end[0]) / 2.0,
+        (inner.start[1] + inner.end[1]) / 2.0,
+    ];
+    let g = &level.geometry;
+    let z = (g.min[2] + g.max[2]) / 2.0;
+    let up = g.raycast(Vec3::new(mid[0], mid[1], z), Vec3::new(0.0, 0.0, 1.0));
+    assert!(up.is_none(), "the foil level is open over its copper");
     Ok(())
 }
 
@@ -114,10 +193,10 @@ fn bodies_alike_share_one_mesh() -> Result<()> {
         .filter(|m| {
             matches!(
                 m.source,
-                Some(Origin::Via {
+                Origin::Via {
                     part: plan::ViaPart::Barrel,
                     ..
-                })
+                }
             )
         })
         .collect();
@@ -320,27 +399,32 @@ fn a_plan_from_the_memo_is_the_plan_made_anew() -> Result<()> {
 }
 
 /// The meshed laminate carries the edges the exact model's laminate has
-/// along the board outline: its top and bottom outlines as pickable edges,
-/// each bounding faces the mesh has, and the upright edges at the
-/// outline's corners; a round hole's outline is one closed edge, not one
-/// per flattened chord. The 3D dimension tool reaches the board's edges
-/// by them.
+/// along the board outline: the top slab its top outline, the bottom slab
+/// its bottom outline, each as pickable edges bounding faces the mesh has,
+/// and every slab the upright edges at the outline's corners; a round
+/// hole's outline is one closed edge, not one per flattened chord. The 3D
+/// dimension tool reaches the board's edges by them.
 #[test]
 fn the_meshed_laminate_has_the_board_outlines_edges() -> Result<()> {
     let project = showcase()?;
     let [width, depth] = project.board_size;
     let (_, bodies, _) = meshed(&project)?;
-    let laminate = bodies
+    let slabs: Vec<&Meshed> = bodies
         .iter()
-        .find(|m| m.source.is_none())
+        .filter(|m| matches!(m.source, Origin::Laminate(_)))
+        .collect();
+    let top = slabs
+        .iter()
+        .max_by(|a, b| a.geometry.max[2].total_cmp(&b.geometry.max[2]))
         .ok_or_else(|| Error::Verification("no laminate".into()))?;
-    let mesh = &laminate.geometry.mesh;
-    assert_eq!(mesh.edges.len(), mesh.edge_faces.len());
-    let (lo, hi) = (laminate.geometry.min, laminate.geometry.max);
+    let bottom = slabs
+        .iter()
+        .min_by(|a, b| a.geometry.min[2].total_cmp(&b.geometry.min[2]))
+        .ok_or_else(|| Error::Verification("no laminate".into()))?;
     let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
-    // A pickable edge along the board's bottom side (y = 0), corner to
-    // corner, at height `z`.
-    let along_bottom = |z: f64| {
+    // A pickable edge of `mesh` along the board's bottom side (y = 0),
+    // corner to corner, at height `z`.
+    let along_bottom = |mesh: &crate::geom::Mesh, z: f64| {
         mesh.edges.iter().enumerate().any(|(i, e)| {
             mesh.edge_pickable(i)
                 && e.iter().all(|p| near(p.y, 0.0) && near(p.z, z))
@@ -348,28 +432,93 @@ fn the_meshed_laminate_has_the_board_outlines_edges() -> Result<()> {
                 && e.iter().any(|p| near(p.x, width))
         })
     };
-    assert!(along_bottom(hi[2]), "the top outline along the bottom side");
     assert!(
-        along_bottom(lo[2]),
+        along_bottom(&top.geometry.mesh, project.stackup.dielectric_mm()),
+        "the top outline along the bottom side"
+    );
+    assert!(
+        along_bottom(&bottom.geometry.mesh, 0.0),
         "the bottom outline along the bottom side"
     );
-    for corner in [[0.0, 0.0], [width, 0.0], [width, depth], [0.0, depth]] {
+    for slab in &slabs {
+        let mesh = &slab.geometry.mesh;
+        assert_eq!(mesh.edges.len(), mesh.edge_faces.len());
+        for corner in [[0.0, 0.0], [width, 0.0], [width, depth], [0.0, depth]] {
+            assert!(
+                mesh.edges.iter().any(|e| e.len() == 2
+                    && e.iter()
+                        .all(|p| near(p.x, corner[0]) && near(p.y, corner[1]))),
+                "an upright edge at {corner:?}"
+            );
+        }
+        let faces: std::collections::BTreeSet<u32> = mesh.tri_face.iter().copied().collect();
+        for bounds in &mesh.edge_faces {
+            assert!(bounds.iter().all(|f| faces.contains(f)), "{bounds:?}");
+        }
+        let closed = mesh
+            .edges
+            .iter()
+            .filter(|e| e.len() > 4 && e.first() == e.last())
+            .count();
+        assert!(closed >= 2, "round holes as closed edges");
+    }
+    Ok(())
+}
+
+/// In the realistic view each slab is FR-4 laminate showing its own
+/// dielectric's glass weave, as that dielectric's band at the routed edge
+/// shows it: a core of coarse 7628 strongly, a prepreg of fine 106
+/// faintly. The material graph of each look follows the weave, so
+/// dielectrics of different glass are drawn with different graphs.
+#[test]
+fn each_slab_carries_its_dielectrics_realistic_material() -> Result<()> {
+    use crate::look_graph::look_key;
+    use pcbcraft_core::GlassStyle;
+    let mut project = showcase()?;
+    let styles = [
+        GlassStyle::Style7628,
+        GlassStyle::Style106,
+        GlassStyle::Style2116,
+        GlassStyle::Style1080,
+    ];
+    for (index, d) in project.stackup.dielectrics.iter_mut().enumerate() {
+        d.glass = styles[index % styles.len()];
+    }
+    assert!(project.stackup.dielectrics.len() >= 2);
+    let live = build_flat(&project, &SourceCache::default(), None, Flat::Meshed)?;
+    let laminate = crate::material::material(
+        BodyKind::Substrate,
+        &pcbcraft_core::Fabrication::default(),
+        &crate::stack::Stack::default(),
+    )
+    .surface()?;
+    let mut keys = std::collections::HashSet::new();
+    for (index, d) in project.stackup.dielectrics.iter().enumerate() {
+        let weave = crate::stackup_edge::laminate_detail(d.kind, d.glass);
+        let of = |kind: BodyKind| -> Vec<&Geometry> {
+            live.geometry
+                .iter()
+                .filter(|g| g.kind == kind && g.dielectric == Some(index))
+                .collect()
+        };
+        let slabs = of(BodyKind::Substrate);
+        assert!(!slabs.is_empty(), "dielectric {index} has a slab");
+        for slab in slabs {
+            assert_eq!(slab.surface, laminate, "dielectric {index}");
+            assert_eq!(slab.detail, weave, "dielectric {index}");
+            keys.insert(format!("{:?}", look_key(slab.surface, slab.detail)));
+        }
+        let bands = of(BodyKind::EdgeDielectric);
+        assert!(!bands.is_empty(), "dielectric {index} has an edge band");
         assert!(
-            mesh.edges.iter().any(|e| e.len() == 2
-                && e.iter()
-                    .all(|p| near(p.x, corner[0]) && near(p.y, corner[1]))),
-            "an upright edge at {corner:?}"
+            bands.iter().all(|b| b.detail == weave),
+            "dielectric {index}"
         );
     }
-    let faces: std::collections::BTreeSet<u32> = mesh.tri_face.iter().copied().collect();
-    for bounds in &mesh.edge_faces {
-        assert!(bounds.iter().all(|f| faces.contains(f)), "{bounds:?}");
-    }
-    let closed = mesh
-        .edges
-        .iter()
-        .filter(|e| e.len() > 4 && e.first() == e.last())
-        .count();
-    assert!(closed >= 2, "round holes as closed edges");
+    assert_eq!(
+        keys.len(),
+        project.stackup.dielectrics.len().min(styles.len()),
+        "one material graph per weave"
+    );
     Ok(())
 }

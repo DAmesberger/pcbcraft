@@ -391,6 +391,7 @@ pub fn decal_geometry(
             item,
             kind: DECAL_KIND,
             layer: None,
+            dielectric: None,
             surface,
             detail,
             mesh: Arc::new(display),

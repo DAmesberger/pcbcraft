@@ -68,8 +68,8 @@ const AO_SAMPLES: [u32; 2] = [32, 8];
 /// and which shadows the layers allow ([`ShadowLayers`]).
 type ShadowView = (bool, bool, ShadowLayers);
 
-/// The shadows the shown layers leave: the ground shadow with the laminate,
-/// and the contact shadows of each side's packages with the bodies and a
+/// The shadows the shown layers leave: the ground shadow while any of the
+/// laminate shows (a package preview, with none, always), and the contact shadows of each side's packages with the bodies and a
 /// surface under them on that side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ShadowLayers {
@@ -79,9 +79,13 @@ struct ShadowLayers {
 }
 
 impl ShadowLayers {
-    fn of(view: &LayerView) -> Self {
+    fn of(view: &LayerView, stack: &pcbcraft_solidcraft::stack::Stack) -> Self {
         use pcbcraft_core::Layer;
-        let board = view.visible(ViewLayer::Substrate);
+        let board = if stack.dielectrics().is_empty() {
+            view.visible(ViewLayer::Substrate)
+        } else {
+            view.shows_laminate(stack)
+        };
         let bodies = view.visible(ViewLayer::Bodies);
         let side = |side| bodies && (board || view.visible(ViewLayer::Mask(side)));
         Self {
@@ -449,6 +453,19 @@ impl Viewport {
     }
 
     #[cfg(test)]
+    /// Show or hide the whole laminate: every dielectric of the model's
+    /// stack ([`LayerView::set_laminate`]).
+    pub fn set_laminate(&mut self, visible: bool) {
+        let stack = self
+            .model
+            .as_ref()
+            .map_or_else(pcbcraft_solidcraft::stack::Stack::none, |m| m.stack.clone());
+        let mut layers = self.layers.clone();
+        layers.set_laminate(&stack, visible);
+        self.set_layers(layers);
+    }
+
+    #[cfg(test)]
     /// Show or hide one layer ([`Viewport::set_layers`]).
     pub fn set_layer(&mut self, layer: ViewLayer, visible: bool) {
         if self.layers.visible(layer) != visible {
@@ -616,10 +633,12 @@ impl Viewport {
     }
 
     fn current_shadow_view(&self) -> ShadowView {
+        let none = pcbcraft_solidcraft::stack::Stack::none();
+        let stack = self.model.as_ref().map_or(&none, |m| &m.stack);
         (
             theme::is_dark(),
             self.camera.pitch < 0.0,
-            ShadowLayers::of(&self.layers).following(self.fade.is_some()),
+            ShadowLayers::of(&self.layers, stack).following(self.fade.is_some()),
         )
     }
 
@@ -1846,7 +1865,10 @@ mod tests {
             blocks(&viewport.hl_slot),
             pbr_len(&viewport.slot),
         );
-        viewport.set_layers(LayerView::substrate_hidden(true));
+        viewport.set_layers(LayerView::substrate_hidden(
+            true,
+            &viewport.model.as_ref().ok_or("no model")?.stack,
+        ));
         settle(&mut viewport)?;
         let after = (
             viewport.key,
@@ -1868,7 +1890,14 @@ mod tests {
         let mut viewport = demo()?;
         let dark = theme::is_dark();
         let before = (viewport.key, viewport.hl_key, viewport.sketch_key);
-        viewport.shadow_view = Some((!dark, false, ShadowLayers::of(&LayerView::default())));
+        viewport.shadow_view = Some((
+            !dark,
+            false,
+            ShadowLayers::of(
+                &LayerView::default(),
+                &pcbcraft_solidcraft::stack::Stack::default(),
+            ),
+        ));
         viewport.publish_shadows();
         let after = (viewport.key, viewport.hl_key, viewport.sketch_key);
         assert_eq!((before.0, before.1), (after.0, after.1));
@@ -1995,7 +2024,7 @@ mod tests {
         let model = pcbcraft_solidcraft::project::build(&project)?;
         let scene = crate::model_scene::build(model.geometry, &model.stack)?;
         let mut view = LayerView::default();
-        view.set(ViewLayer::Substrate, false);
+        view.set_laminate(&scene.stack, false);
         view.set(ViewLayer::Silkscreen(Layer::Top), false);
         let (expected, _) = model_scene::pack(&scene.geometry, &[], &view, &scene.stack)?;
         let mut viewport = Viewport::detached();
@@ -2156,7 +2185,10 @@ mod tests {
             .ok_or("behind the eye")?;
         assert_eq!(viewport.pick(x, y, w, h), None, "laminate has no item");
         assert!(viewport.hit(x, y, w, h).is_some(), "the board is hit");
-        viewport.set_layers(LayerView::substrate_hidden(true));
+        viewport.set_layers(LayerView::substrate_hidden(
+            true,
+            &viewport.model.as_ref().ok_or("no model")?.stack,
+        ));
         assert!(
             viewport.hit(x, y, w, h).is_none(),
             "hidden board is not hit"

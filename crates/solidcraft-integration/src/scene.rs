@@ -60,6 +60,13 @@ pub struct Geometry {
     /// spanning the board (substrate, through barrels) and component
     /// bodies. Layer visibility in 3D reads it.
     pub layer: Option<pcbcraft_core::CopperLayer>,
+    /// The dielectric (counted from the top, [`crate::stack::Stack::dielectrics`])
+    /// a laminate body lies in: each slab of the laminate, the laminate in a
+    /// mask opening, and the board edge's band of that dielectric and the
+    /// foil line in it. `None` for every other body, and for a laminate
+    /// body not divided by dielectric. Layer visibility in 3D reads it, so
+    /// the stack peels one dielectric at a time.
+    pub dielectric: Option<usize>,
     /// The physical look stored in the native file for this body.
     pub surface: OpaqueSurface,
     /// Procedural detail the 3D view draws over the surface (display only).

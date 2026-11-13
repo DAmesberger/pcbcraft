@@ -278,9 +278,11 @@ fn example_boards_match_their_record_and_plan() {
 /// Every example board's flat bodies meshed straight from its plan (the
 /// live view's path, [`mesh`]) are the plan's bodies ([`mesh::parity`]):
 /// one mesh per plan body, of its kind, source and layer, its box and
-/// volume within what flattening explains, and the laminate whole. Prints
-/// the meshing times (targets: the ESP32 board's bodies in under 100 ms;
-/// one track's width edit meshed again in a few ms).
+/// volume within what flattening explains, each laminate slab its own
+/// body as the exact build makes it. Prints the meshing times (targets:
+/// the ESP32 board's bodies in under 100 ms; one track's width edit meshed
+/// again in a few ms) and the laminate's share: its slabs, against one
+/// dielectric slab alone (what one merged laminate body cost).
 #[test]
 fn example_boards_mesh_as_their_plan() {
     let mut failures = Vec::new();
@@ -313,24 +315,55 @@ fn example_boards_mesh_as_their_plan() {
                     .join("\n  ")
             ));
         }
-        // One track made wider: that track alone is meshed again.
+        // The laminate alone, cold: its slabs, and one slab through the
+        // board's drills (a dielectric's, as one merged body was).
+        let laminate_ms = |slabs: Vec<plan::PlanBody>| {
+            let only = plan::BoardPlan {
+                fills: Vec::new(),
+                pads: Vec::new(),
+                tracks: Vec::new(),
+                vias: Vec::new(),
+                laminate: slabs,
+            };
+            let start = Instant::now();
+            let (bodies, _) = mesh::bodies(&only, &[], &mut mesh::Memo::default()).unwrap();
+            let ms = start.elapsed().as_secs_f64() * 1e3;
+            let triangles: usize = bodies.iter().map(|m| m.geometry.mesh.triangles.len()).sum();
+            (ms, triangles)
+        };
+        let slabs = laminate_ms(plan.laminate.clone());
+        let one = plan
+            .laminate
+            .iter()
+            .find(|s| !matches!(s.source, plan::Origin::Laminate(plan::Level::Foil { .. })))
+            .cloned()
+            .map(|s| laminate_ms(vec![s]));
+        // One track made wider: that track alone is meshed again, and on an
+        // inner layer its foil level's slab, whose holes are its copper.
         let mut edited = project.clone();
         let mut width_ms = None;
         if let Some(track) = edited.tracks.first_mut() {
             track.width += 0.05;
+            let inner = usize::from(track.layer.side().is_none());
             let start = Instant::now();
             let plan = plan::of(&edited).unwrap();
             let plan_ms = start.elapsed().as_secs_f64() * 1e3;
             let start = Instant::now();
             let (_, stats) = mesh::bodies(&plan, &sources, &mut memo).unwrap();
             width_ms = Some((plan_ms, start.elapsed().as_secs_f64() * 1e3));
-            assert_eq!(stats.meshed, 1, "{name}: {stats:?}");
+            assert_eq!(stats.meshed, 1 + inner, "{name}: {stats:?}");
         }
         eprintln!(
             "{name}: {} flat bodies ({} meshes) meshed in {cold_ms:.1} ms, {triangles} triangles drawn \
-             ({held} held); a track width edit: plan {:.1} ms, mesh {:.1} ms",
+             ({held} held); laminate alone: {} slabs {:.1} ms ({} triangles), one slab {:.1} ms ({} \
+             triangles); a track width edit: plan {:.1} ms, mesh {:.1} ms",
             cold.bodies,
             cold.meshed,
+            plan.laminate.len(),
+            slabs.0,
+            slabs.1,
+            one.map_or(f64::NAN, |o| o.0),
+            one.map_or(0, |o| o.1),
             width_ms.map_or(f64::NAN, |w| w.0),
             width_ms.map_or(f64::NAN, |w| w.1),
         );
