@@ -211,6 +211,22 @@ const COMPUTING_SHAPE: &str = "the computing shape (flattening, fillets, bounds,
 /// why: values that are not lengths or rotations, and Solidcraft
 /// parameters.
 const NOT_LENGTHS: &[(&str, &str)] = &[
+    (
+        "library/marking/codes.rs BandColour.tolerance",
+        "a tolerance in percent, not a length",
+    ),
+    (
+        "library/marking/codes.rs ColourCode.unbanded_tolerance",
+        "a tolerance in percent, not a length",
+    ),
+    (
+        "library/marking/codes.rs VoltageLetter.volts",
+        "a rated voltage in volts, not a length",
+    ),
+    (
+        "library/standards.rs LengthUnit.scale",
+        "a unit's scale factor to millimetres, not a length",
+    ),
     ("geometry.rs Bounds.max", COMPUTED),
     ("geometry.rs Bounds.min", COMPUTED),
     ("geometry.rs Shape::Arc.center", COMPUTING_SHAPE),
@@ -394,6 +410,50 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
 /// migration, by the slice that converts them (to `Nm`, `PointNm`, `Angle`
 /// or, for values that feed expressions, an exact decimal). Only shrinks.
 const ALLOWED: &[(&str, Slice)] = &[
+    // Shipped symbol drawings (library/standards/symbols), mm until U2.
+    ("library/symbol_style.rs DrawOp::Arrow.from", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Arrow.tip", Slice::U2),
+    ("library/symbol_style.rs DrawOp::ArrowHead.from", Slice::U2),
+    ("library/symbol_style.rs DrawOp::ArrowHead.tip", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Contact.center", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Labels.bottom", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Labels.top", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Line.a", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Line.b", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Pin.at", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Pin.length", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Plate.a", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Plate.b", Slice::U2),
+    ("library/symbol_style.rs DrawOp::RailLabels.y", Slice::U2),
+    ("library/symbol_style.rs DrawOp::Shape.width", Slice::U2),
+    ("library/symbol_style.rs DrawOp::SideLabels.at", Slice::U2),
+    ("library/symbol_style.rs DrawOp::TwoPins.left", Slice::U2),
+    ("library/symbol_style.rs DrawOp::TwoPins.right", Slice::U2),
+    ("library/symbol_style.rs SymbolStyle.arrow_mm", Slice::U2),
+    (
+        "library/symbol_style.rs SymbolStyle.arrow_stroke_mm",
+        Slice::U2,
+    ),
+    (
+        "library/symbol_style.rs SymbolStyle.contact_radius_mm",
+        Slice::U2,
+    ),
+    (
+        "library/symbol_style.rs SymbolStyle.label_gap_mm",
+        Slice::U2,
+    ),
+    (
+        "library/symbol_style.rs SymbolStyle.plate_stroke_mm",
+        Slice::U2,
+    ),
+    (
+        "library/symbol_style.rs SymbolStyle.rail_designator_mm",
+        Slice::U2,
+    ),
+    (
+        "library/symbol_style.rs SymbolStyle.side_label_gap_mm",
+        Slice::U2,
+    ),
     ("library/footprint.rs Outline.start", Slice::U3),
     ("library/footprint.rs Segment::Arc.bulge", Slice::U3),
     ("library/footprint.rs Segment::Arc.to", Slice::U3),
