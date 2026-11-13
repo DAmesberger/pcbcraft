@@ -156,7 +156,7 @@ impl Prepared {
 /// inside those (islands) added back, and so on. For rings that do not
 /// cross it is their even-odd region.
 fn nested(rings: &[Ring]) -> Vec<Vec<Ring>> {
-    let boxes: Vec<_> = rings.iter().map(|r| ring_box(r)).collect();
+    let boxes: Vec<_> = rings.iter().map(ring_box).collect();
     let mut levels: Vec<Vec<Ring>> = Vec::new();
     for (i, ring) in rings.iter().enumerate() {
         let depth = rings
@@ -360,7 +360,7 @@ pub fn face_rings(body: &solidcraft_engine::kernel::Body, z: f64) -> Result<Ring
             u[0] * v[1] - u[1] * v[0],
         ];
         let length = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
-        if !(length > 0.0) || (n[2] / length).abs() < 1.0 - 1e-9 {
+        if length.is_nan() || length <= 0.0 || (n[2] / length).abs() < 1.0 - 1e-9 {
             continue;
         }
         if (origin[2] - z).abs() > super::plan::PARITY_MM {
