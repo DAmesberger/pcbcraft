@@ -260,6 +260,9 @@ impl App {
         } = parts;
         let mut pcb = pcb_editor::PcbEditor::default();
         *pcb.filter_mut() = sources.selection_filter();
+        // The starting document's first page, framed like an opened one.
+        let mut schematic = schematic_editor::SchematicEditor::default();
+        schematic.document_opened(engine.project());
         Self {
             scene: SceneController::new(ctx.clone(), viewport),
             fills: crate::fill_worker::FillWorker::start(ctx.clone()),
@@ -268,7 +271,7 @@ impl App {
             engine,
             workspace: Workspace::Pcb,
             part: Default::default(),
-            schematic: Default::default(),
+            schematic,
             pcb,
             toasts: Toasts::default(),
             messages,
