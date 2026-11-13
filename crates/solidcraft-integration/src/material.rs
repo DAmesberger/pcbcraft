@@ -386,7 +386,12 @@ fn base_material(
         BodyKind::Substrate | BodyKind::OpenLaminate => plain(&board.laminate),
         BodyKind::MaskTop | BodyKind::MaskBottom => mask(
             &mask_look.over_laminate_name,
-            mask_body(mask_look, pigment, board.laminate.base_linear, over_laminate),
+            mask_body(
+                mask_look,
+                pigment,
+                board.laminate.base_linear,
+                over_laminate,
+            ),
         ),
         BodyKind::MaskCap => mask(
             &mask_look.over_copper_name,
@@ -415,7 +420,9 @@ fn base_material(
                 detail: Detail::NONE,
             }
         }
-        BodyKind::PadFinish => plain(&of_pad_finish(&looks.finishes.pad, fabrication.pad_finish).look),
+        BodyKind::PadFinish => {
+            plain(&of_pad_finish(&looks.finishes.pad, fabrication.pad_finish).look)
+        }
         // Generated bodies take their recorded material's look; these are
         // only the family defaults' stand-ins.
         BodyKind::Termination | BodyKind::ModelLead => plain(&board.termination),

@@ -42,7 +42,8 @@ mod viewport;
 /// Tests: the shipped material library, loaded once for the test process
 /// as `main` loads it for the program.
 #[cfg(test)]
-pub(crate) fn test_materials() -> Result<&'static sparksmith_core::materials::MaterialLibrary, String> {
+pub(crate) fn test_materials()
+-> Result<&'static sparksmith_core::materials::MaterialLibrary, String> {
     sparksmith_solidcraft::looks::ensure(sparksmith_io::materials::load_shipped)
         .map_err(|e| e.to_string())
 }

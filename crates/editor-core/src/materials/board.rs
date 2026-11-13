@@ -229,9 +229,7 @@ impl BoardLooks {
                         && p.scatter.iter().all(|c| unit(*c))
                         && unit(p.weave_show_through)
                 })
-                && finishes
-                    .iter()
-                    .all(|f| f.all().iter().all(|r| rough(**r)))
+                && finishes.iter().all(|f| f.all().iter().all(|r| rough(**r)))
                 && !m.over_laminate_name.trim().is_empty()
                 && !m.over_copper_name.trim().is_empty(),
             "the soldermask",
@@ -386,10 +384,9 @@ impl AppearanceSizes {
             &sizes.tent_sag_mm,
             &sizes.tent_skirt_mm,
         ];
-        if all
-            .iter()
-            .all(|s| s.value.is_finite() && s.value > 0.0 && s.value <= 10.0 && !s.note.trim().is_empty())
-        {
+        if all.iter().all(|s| {
+            s.value.is_finite() && s.value > 0.0 && s.value <= 10.0 && !s.note.trim().is_empty()
+        }) {
             Ok(sizes)
         } else {
             Err(Error::Invalid(

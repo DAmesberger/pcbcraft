@@ -925,7 +925,8 @@ pub fn author_usb4105() -> Vec<u8> {
 fn author_parts() {
     // The repository's shipped material library (the program loads it
     // through sparksmith-io at start-up).
-    let materials = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
+    let materials =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
     sparksmith_solidcraft::looks::ensure(|| {
         sparksmith_core::materials::MaterialLibrary::load(|name| {
             std::fs::read_to_string(materials.join(name))

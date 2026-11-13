@@ -514,7 +514,10 @@ mod tests {
             sparksmith_core::MASK_UM / 1000.0,
         );
         assert!(finish[1] > top + 0.070 && silk[1] > top + 0.030);
-        near(finish[1], top + 0.070 + finish_um(stack.looks(), PadFinish::Enig) / 1000.0);
+        near(
+            finish[1],
+            top + 0.070 + finish_um(stack.looks(), PadFinish::Enig) / 1000.0,
+        );
         // Each finish has its own thickness.
         let hasl = Stack::of(&stackup, PadFinish::Hasl).map_err(|e| e.to_string())?;
         near(hasl.finish_mm(), 0.021);

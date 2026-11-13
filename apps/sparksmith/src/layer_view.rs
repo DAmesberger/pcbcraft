@@ -554,15 +554,17 @@ mod tests {
         assert_eq!(laminate, ["Substrate"]);
         // Only the films the stackup has: no bottom mask or top legend
         // toggle on a board without them.
-        let bare = ViewLayer::stack(&Stack::of(
-            &sparksmith_core::Stackup {
-                mask_bottom: false,
-                silkscreen_top: false,
-                ..sparksmith_core::Stackup::default()
-            },
-            sparksmith_core::PadFinish::default(),
-        )
-        .map_err(|e| e.to_string())?);
+        let bare = ViewLayer::stack(
+            &Stack::of(
+                &sparksmith_core::Stackup {
+                    mask_bottom: false,
+                    silkscreen_top: false,
+                    ..sparksmith_core::Stackup::default()
+                },
+                sparksmith_core::PadFinish::default(),
+            )
+            .map_err(|e| e.to_string())?,
+        );
         assert_eq!(bare.len(), two.len() - 2);
         assert!(!bare.contains(&ViewLayer::Mask(Layer::Bottom)));
         assert!(!bare.contains(&ViewLayer::Silkscreen(Layer::Top)));

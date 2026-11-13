@@ -14,10 +14,10 @@ use crate::stack::{PROUD_MM, Stack};
 use crate::{Error, Result};
 use sparksmith_core::geometry::{cos_sin, is_quarter_turn};
 use sparksmith_core::library::offset_polygon;
-use sparksmith_core::materials::AppearanceSizes;
 use sparksmith_core::library::{
     ChipKind, FootprintDefinition, PackageDefinition, PackageForm, PadKind, PadSide,
 };
+use sparksmith_core::materials::AppearanceSizes;
 use sparksmith_core::{CopperLayer, Fabrication, Layer, Placement, Point, Project, layout};
 use std::sync::Arc;
 
@@ -826,7 +826,9 @@ fn package(out: &mut Vec<Geometry>, board: Option<&Board>, part: &Part<'_>) -> R
             return Ok(());
         };
         for pad in &footprint.pads {
-            let Some((min, max)) = lead_band(package, footprint, pad, sizes.termination_growth_mm.value) else {
+            let Some((min, max)) =
+                lead_band(package, footprint, pad, sizes.termination_growth_mm.value)
+            else {
                 continue;
             };
             let top = offset[2] + sizes.lead_band_height_share.value * height;
@@ -1108,7 +1110,8 @@ fn pins(
         if ring <= half * std::f64::consts::SQRT_2 * 1.05 {
             continue;
         }
-        let rise = (sizes.pin_rise_share.value * (ring - half) + half).min(sizes.pin_rise_max_mm.value);
+        let rise =
+            (sizes.pin_rise_share.value * (ring - half) + half).min(sizes.pin_rise_max_mm.value);
         let base = board.copper(far) + board.stack.finish_mm() + PROUD_MM;
         let mesh = cone(
             |p: Point| frame.xy([lead[0] + p[0], lead[1] + p[1]]),
@@ -1246,18 +1249,8 @@ fn lead_band(
             return None;
         }
         let on = |a: f64, b: f64| (a - b).abs() < 1e-9;
-        min[axis] = lo
-            - if on(lo, body_min[axis]) {
-                growth
-            } else {
-                0.0
-            };
-        max[axis] = hi
-            + if on(hi, body_max[axis]) {
-                growth
-            } else {
-                0.0
-            };
+        min[axis] = lo - if on(lo, body_min[axis]) { growth } else { 0.0 };
+        max[axis] = hi + if on(hi, body_max[axis]) { growth } else { 0.0 };
     }
     Some((min, max))
 }

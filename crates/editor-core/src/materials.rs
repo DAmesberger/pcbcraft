@@ -209,7 +209,6 @@ pub struct MaterialDef {
     pub estimated: bool,
 }
 
-
 /// The material table revision this build reads: the shipped
 /// `materials/package-materials.json` must state it, and a project records
 /// it. Bumped together with the data whenever a value changes.
@@ -347,9 +346,8 @@ impl MaterialLibrary {
     /// does. An error names the file it is about.
     pub fn load(mut read: impl FnMut(&str) -> Result<String>) -> Result<Self> {
         let [packages, board, finishes, appearance] = Self::FILES;
-        let within = |name: &str, error: Error| {
-            Error::Invalid(format!("materials/{name}: {error}"))
-        };
+        let within =
+            |name: &str, error: Error| Error::Invalid(format!("materials/{name}: {error}"));
         let mut text = |name: &str| read(name).map_err(|e| within(name, e));
         let packages_text = text(packages)?;
         let board_text = text(board)?;
@@ -412,7 +410,6 @@ impl MaterialDef {
         r * r
     }
 }
-
 
 #[cfg(test)]
 mod tests {

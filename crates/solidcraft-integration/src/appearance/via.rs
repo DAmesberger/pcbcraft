@@ -91,7 +91,10 @@ pub(super) fn via_layers(out: &mut Vec<Geometry>, board: &Board, via: &ViaMark) 
 fn tent_height(board: &Board, via: &ViaMark, side: Layer, r: f64) -> f64 {
     let crown = board.crown(side);
     let sizes = &board.stack.looks().appearance;
-    let sag = sizes.tent_sag_mm.value.min(board.stack.mask_mm() - PROUD_MM);
+    let sag = sizes
+        .tent_sag_mm
+        .value
+        .min(board.stack.mask_mm() - PROUD_MM);
     let ring = via.diameter / 2.0;
     let bore = via.bore().max(0.0);
     if r < bore && bore > 0.0 {
