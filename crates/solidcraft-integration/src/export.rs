@@ -1,6 +1,6 @@
 //! The board's exact export (slice A5 of docs/architecture/
 //! board-plan-and-interface.md): the tiers, progress and cancel, and the
-//! per-export volume check.
+//! per-export geometry-fit check.
 //!
 //! **Tiers** ([`Tier`]). The *interface* is the slots alone and is only
 //! published (`interface.publish`, [`crate::interface`]). *Mechanical*, the
@@ -15,14 +15,20 @@
 //! nothing: one command (the board's evaluation, the save) runs to its end
 //! first, and a save that ends after the cancel is removed.
 //!
-//! **The volume check** ([`check`]). After every mechanical or full build,
-//! before anything is written, the built flat bodies are compared with the
-//! board plan they were built from ([`plan::check`]): each planned body
-//! built once, of its kind, source and layer, its box within
-//! [`plan::PARITY_MM`] and its volume within [`plan::PARITY_VOLUME`], and no
-//! flat body built that the plan lacks. The report names every body that
-//! differs ([`Report::lines`]); the file is written all the same, so the
-//! user has the model and knows where it is wrong.
+//! **The geometry-fit check** ([`check`], slice G1). After every
+//! mechanical or full build, before anything is written, the built flat
+//! bodies are compared with the board plan they were built from
+//! ([`plan::check`]): each planned body built once, of its kind, source and
+//! layer; its top and bottom faces, read from the exact model, on the
+//! plan's loops (the area between them exact, every point within
+//! [`plan::PARITY_MM`]), with the plan's holes and between the plan's
+//! heights; and no flat body built that the plan lacks. Laminate slabs are
+//! checked by outline like copper; a copper body's volume is one more sign
+//! (within [`plan::PARITY_VOLUME`]). A model that does not fit is refused
+//! by default ([`Error::Unfit`], naming every body that differs in the
+//! user's words, [`Report::lines`]) and nothing is written; asked to
+//! ([`Unfit::Write`]), the export writes it all the same and its report
+//! says where it is wrong.
 use crate::project::{self, NativeModel, plan};
 use crate::{Error, Result};
 use pcbcraft_core::model::Project;
@@ -36,6 +42,19 @@ pub use pcbcraft_core::model::interface::Tier;
 
 /// Differences a report keeps whole; the rest are counted.
 pub const MAX_REPORTED: usize = 200;
+
+/// Differing bodies a refusal's message names; the rest are counted.
+pub const NAMED_IN_REFUSAL: usize = 5;
+
+/// What an export does with a model that does not fit the board plan.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Unfit {
+    /// Write nothing; the export fails with [`Error::Unfit`].
+    #[default]
+    Refuse,
+    /// Write it all the same; the report lists every body that differs.
+    Write,
+}
 
 /// Where an export is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -201,7 +220,11 @@ pub fn section(project: &Project, tier: Tier) -> Option<Project> {
 /// `watch` and stopping when it is cancelled.
 pub fn check(board: &Project, model: &NativeModel, watch: &Watch) -> Result<Check> {
     watch.enter(Stage::Checking)?;
-    let plan = plan::of(board)?;
+    check_against(&plan::of(board)?, model, watch)
+}
+
+/// Check `model` against `plan`, counting on `watch`.
+fn check_against(plan: &plan::BoardPlan, model: &NativeModel, watch: &Watch) -> Result<Check> {
     let to_check = model
         .native_geometry()?
         .iter()
@@ -217,7 +240,7 @@ pub fn check(board: &Project, model: &NativeModel, watch: &Watch) -> Result<Chec
         watch.checked.fetch_add(1, Ordering::Relaxed);
         Ok(())
     };
-    plan::check(&plan, model, &mut step)
+    plan::check(plan, model, &mut step)
 }
 
 /// What an export wrote and found.
@@ -227,8 +250,8 @@ pub struct Report {
     /// Bodies in the written design (the board's; an interface's
     /// reference bodies not counted).
     pub bodies: usize,
-    /// The volume check; `None` for the interface tier, which builds no
-    /// board.
+    /// The geometry-fit check; `None` for the interface tier, which
+    /// builds no board.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub check: Option<Check>,
     /// Differences past [`MAX_REPORTED`], left out of `check`.
@@ -283,10 +306,87 @@ impl Report {
     }
 }
 
+/// The message of an export refused because `report`'s bodies do not
+/// fit `project`'s board: how many, the first few named.
+pub fn refusal(project: &Project, report: &Report) -> String {
+    let count = report.difference_count();
+    let mut named: Vec<String> = report
+        .lines(project)
+        .into_iter()
+        .take(NAMED_IN_REFUSAL)
+        .collect();
+    if count > named.len() {
+        named.push(format!("and {} more", count - named.len()));
+    }
+    format!(
+        "export.unfit: {count} {} the board, so nothing was written: {}. \
+         Export again with write_anyway to write the model all the same",
+        if count == 1 {
+            "body of the model does not fit"
+        } else {
+            "bodies of the model do not fit"
+        },
+        named.join("; ")
+    )
+}
+
+/// How a built body misses its plan body, in the user's words: its
+/// holes, its outline, its heights and its volume, each only where it
+/// differs.
+fn misfit(fit: &plan::Fit) -> String {
+    let mut parts = Vec::new();
+    if !fit.holes_fit() {
+        let [top, bottom] = fit.built_holes;
+        let built = if top == bottom {
+            format!("{top}")
+        } else {
+            format!("{top} on top and {bottom} below")
+        };
+        parts.push(format!(
+            "it has {built} {} where the board has {}",
+            if top == 1 && bottom == 1 {
+                "hole"
+            } else {
+                "holes"
+            },
+            fit.planned_holes
+        ));
+    }
+    if !fit.outline_fits() {
+        let off = if fit.deviation_mm >= project::fit::SEARCH_MM {
+            format!("{:.0} mm or more", project::fit::SEARCH_MM)
+        } else {
+            format!("{:.4} mm", fit.deviation_mm)
+        };
+        parts.push(format!(
+            "its outline is off by up to {off} ({:.4} mm² differs)",
+            fit.area_mm2
+        ));
+    }
+    if !fit.heights_fit() {
+        let [low, high] = fit.built_z;
+        let [plow, phigh] = fit.planned_z;
+        parts.push(format!(
+            "it is {:.4} mm thick from z {low:.4} mm where the board has {:.4} mm from z {plow:.4} mm",
+            high - low,
+            phigh - plow
+        ));
+    }
+    if !fit.volume_fits()
+        && let Some(change) = fit.volume_change
+    {
+        parts.push(format!("its volume is {:+.3} %", change * 100.0));
+    }
+    parts.join(", ")
+}
+
 /// One difference in the user's words.
 pub fn describe(project: &Project, difference: &Difference) -> String {
     let object = match difference.source {
-        Source::Board => "The laminate".to_owned(),
+        Source::Board => format!(
+            "The laminate from z {:.3} to {:.3} mm",
+            difference.measure.min[2], difference.measure.max[2]
+        ),
         Source::Pad { instance, pad } => match project.instance(instance) {
             Some(i) => format!("Pad {pad} of {}", i.designator),
             None => format!("Pad {pad} of part {instance}"),
@@ -302,23 +402,9 @@ pub fn describe(project: &Project, difference: &Difference) -> String {
         None => String::new(),
     };
     let what = kind_name(difference.kind);
-    let how = match (difference.problem, difference.instead.first()) {
-        (Problem::PlannedNotBuilt, Some(built)) => {
-            let planned = &difference.measure;
-            let off = planned
-                .min
-                .iter()
-                .chain(&planned.max)
-                .zip(built.min.iter().chain(&built.max))
-                .map(|(a, b)| (a - b).abs())
-                .fold(0.0, f64::max);
-            let volume = match (planned.volume, built.volume) {
-                (Some(a), Some(b)) if a.abs() > 0.0 => {
-                    format!(", volume {:+.3} %", (b - a) / a * 100.0)
-                }
-                _ => String::new(),
-            };
-            format!("its {what} was built in another shape (box off by up to {off:.4} mm{volume})")
+    let how = match (difference.problem, &difference.fit) {
+        (Problem::PlannedNotBuilt, Some(fit)) => {
+            format!("its {what} was built in another shape: {}", misfit(fit))
         }
         (Problem::PlannedNotBuilt, None) => format!("its {what} is missing from the model"),
         (Problem::BuiltNotPlanned, _) => format!("the model has a {what} the board does not"),
@@ -368,15 +454,29 @@ fn since(_: Option<Clock>) -> Option<f64> {
 /// `path`: build the exact model, check it against the board plan, then
 /// write it (to a hidden file beside `path`, moved into place when it is
 /// whole). Refuses an existing file before building, and the interface
-/// tier, which is published with `interface.publish`. Stops with
-/// [`Error::Cancelled`], writing nothing, once `watch` is cancelled.
-pub fn board(project: &Project, tier: Tier, path: &str, watch: &Arc<Watch>) -> Result<Report> {
-    let result = board_inner(project, tier, path, watch);
+/// tier, which is published with `interface.publish`. A model that does
+/// not fit the plan is refused ([`Error::Unfit`], writing nothing) unless
+/// `unfit` is [`Unfit::Write`]. Stops with [`Error::Cancelled`], writing
+/// nothing, once `watch` is cancelled.
+pub fn board(
+    project: &Project,
+    tier: Tier,
+    path: &str,
+    watch: &Arc<Watch>,
+    unfit: Unfit,
+) -> Result<Report> {
+    let result = board_inner(project, tier, path, watch, unfit);
     watch.finish();
     result
 }
 
-fn board_inner(project: &Project, tier: Tier, path: &str, watch: &Arc<Watch>) -> Result<Report> {
+fn board_inner(
+    project: &Project,
+    tier: Tier,
+    path: &str,
+    watch: &Arc<Watch>,
+    unfit: Unfit,
+) -> Result<Report> {
     crate::native::validate_path(path)?;
     if Path::new(path).try_exists()? {
         return Err(Error::Invalid(
@@ -394,22 +494,42 @@ fn board_inner(project: &Project, tier: Tier, path: &str, watch: &Arc<Watch>) ->
     let started = clock();
     let model = project::build_watched(&board, Arc::clone(watch))?;
     let build = since(started);
-    write(&board, &model, tier, path, watch, build)
+    watch.enter(Stage::Checking)?;
+    let plan = plan::of(&board)?;
+    write(&board, &plan, &model, tier, path, watch, (build, unfit))
 }
 
-/// Check `model` against the plan of `board` (the board it was built
-/// from), then save it whole at `path`; the report says both.
+/// Check `model` against `plan`, the plan of `board` (the board it was
+/// built from), then save it whole at `path`, unless it does not fit and
+/// `unfit` refuses it; the report says both.
 fn write(
     board: &Project,
+    plan: &plan::BoardPlan,
     model: &NativeModel,
     tier: Tier,
     path: &str,
     watch: &Watch,
-    build: Option<f64>,
+    (build, unfit): (Option<f64>, Unfit),
 ) -> Result<Report> {
     let started = clock();
-    let checked = check(board, model, watch)?;
+    let checked = check_against(plan, model, watch)?;
     let check_ms = since(started);
+    if !checked.differences.is_empty() && unfit == Unfit::Refuse {
+        let report = report(
+            tier,
+            0,
+            Some(checked),
+            Timings {
+                build,
+                check: check_ms,
+                save: None,
+            },
+        );
+        return Err(Error::Unfit {
+            message: refusal(board, &report),
+            report: Box::new(report),
+        });
+    }
     watch.enter(Stage::Saving)?;
     let started = clock();
     save_whole(model, path, watch)?;

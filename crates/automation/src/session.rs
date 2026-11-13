@@ -119,6 +119,9 @@ pub struct ExportNativeParams {
     /// too); the interface tier goes through `interface.publish`.
     #[serde(default)]
     pub tier: pcbcraft_core::model::interface::Tier,
+    /// Write even if bodies do not fit the plan.
+    #[serde(default)]
+    pub write_anyway: bool,
 }
 
 /// Where `schematic.export_pdf` writes and which sheets it prints.
@@ -785,7 +788,7 @@ impl Request {
             info::<ExportNativeParams>(
                 "project.export_native",
                 "Export the board as a native parametric .solidcraft 3D model to a new file.",
-                "Write the board plan as a native parametric .solidcraft model to a new file (refused if it exists): tier mechanical (default: laminate, pads, parts) or full (adds every track, via and fill). Each flat body is checked against the plan by kind, source, layer, box and volume before writing; check lists each differing body (planned, not built, or built, not planned) with a sentence naming its object, and the file is still written. Returns the tier, bodies, check and build/check/save ms. Not a document change.",
+                "Write the board plan as a native parametric .solidcraft model to a new file (refused if it exists): tier mechanical (default: laminate, pads, parts) or full (adds every track, via and fill). Each flat body's faces are checked against the plan's outline, holes and heights first; an unfit model is refused (export_unfit, naming each body, nothing written) unless write_anyway. Returns the tier, bodies, check and build/check/save ms. Not a document change.",
             ),
             info::<FabricationParams>(
                 "project.export_fabrication",
@@ -1203,6 +1206,11 @@ impl Session {
                     params.tier,
                     &params.path,
                     &watch,
+                    if params.write_anyway {
+                        pcbcraft_solidcraft::export::Unfit::Write
+                    } else {
+                        pcbcraft_solidcraft::export::Unfit::Refuse
+                    },
                 )?;
                 return Ok(export_reply(
                     self.engine.project(),
@@ -1725,6 +1733,8 @@ pub(crate) fn export_reply(
         reply["check"] = json!({
             "planned": check.planned,
             "built": check.built,
+            "max_deviation_mm": check.max_deviation_mm,
+            "max_area_mm2": check.max_area_mm2,
             "differs": report.differs(),
             "difference_count": report.difference_count(),
             "differences": check.differences,

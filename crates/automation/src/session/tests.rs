@@ -192,8 +192,12 @@ fn native_export_reports_its_tier_and_the_check_against_the_plan() -> TestResult
     assert_eq!(mechanical["tier"], "mechanical");
     assert_eq!(mechanical["check"]["differs"], false, "{mechanical}");
     assert_eq!(mechanical["check"]["differences"], json!([]));
+    // Every face on its plan outline to the check's tolerance (1 µm).
+    let deviation = mechanical["check"]["max_deviation_mm"].as_f64();
+    assert!(deviation.is_some_and(|d| d < 1e-3), "{mechanical}");
+    // Writing anyway is a typed choice; a board that fits is written the same.
     let full = session.dispatch(json!({"command": "project.export_native",
-        "params": {"path": at("full.solidcraft"), "tier": "full"}}));
+        "params": {"path": at("full.solidcraft"), "tier": "full", "write_anyway": true}}));
     assert_eq!(full["ok"], true, "{full}");
     let full = &full["result"];
     assert_eq!(full["tier"], "full");
@@ -210,6 +214,28 @@ fn native_export_reports_its_tier_and_the_check_against_the_plan() -> TestResult
     assert_eq!(interface["ok"], false, "{interface}");
     assert!(!dir.path().join("interface.solidcraft").exists());
     Ok(())
+}
+
+/// A refused export (its bodies do not fit the board plan) reaches every
+/// transport as `export_unfit`, its message the one naming the bodies.
+#[test]
+fn an_unfit_export_is_reported_as_export_unfit() {
+    let report = pcbcraft_solidcraft::export::report(
+        pcbcraft_core::model::interface::Tier::Full,
+        0,
+        None,
+        Default::default(),
+    );
+    let error = crate::Error::from(pcbcraft_solidcraft::Error::Unfit {
+        message: "export.unfit: 1 body of the model does not fit the board".into(),
+        report: Box::new(report),
+    });
+    let diagnostic = error.diagnostic();
+    assert_eq!(diagnostic.code, "export_unfit");
+    assert_eq!(
+        diagnostic.message,
+        "export.unfit: 1 body of the model does not fit the board"
+    );
 }
 
 #[test]

@@ -205,6 +205,7 @@ fn a_differing_body_is_named_in_the_message() -> Fallible {
             volume: Some(1.0),
         },
         instead: Vec::new(),
+        fit: None,
     };
     let report = export::report(
         Tier::Full,
@@ -213,6 +214,7 @@ fn a_differing_body_is_named_in_the_message() -> Fallible {
             planned: 9,
             built: 10,
             differences: vec![difference],
+            ..Default::default()
         }),
         Default::default(),
     );
@@ -231,6 +233,95 @@ fn a_differing_body_is_named_in_the_message() -> Fallible {
         format!(
             "Exported /x/board.solidcraft, but 1 body differs from the board: \
              Track {} on the top layer: the model has a track copper the board does not",
+            track.id
+        )
+    );
+    Ok(())
+}
+
+/// The window offers to write a model whose bodies do not fit, off each
+/// time it opens; ticked, the export is asked to write anyway.
+#[test]
+fn the_window_offers_to_write_anyway_off_by_default() -> Fallible {
+    let mut h = Harness::new()?;
+    h.export.open();
+    let painted = h.shown();
+    assert!(shows(&painted, ANYWAY), "{painted:?}");
+    assert!(!h.export.write_anyway);
+    h.click(ANYWAY)?;
+    assert!(h.export.write_anyway);
+    h.click(EXPORT)?;
+    assert_eq!(h.answers, vec![Answer::Pick]);
+    assert!(h.export.write_anyway, "kept for the export that follows");
+    h.export.open();
+    assert!(!h.export.write_anyway, "off again when the window opens");
+    Ok(())
+}
+
+/// A refused export says nothing was written, names the body that does
+/// not fit in the user's words, and how to write it anyway.
+#[test]
+fn a_refused_export_names_the_body_and_the_option() -> Fallible {
+    let h = Harness::new()?;
+    let track = h.project.tracks.first().ok_or("a track")?;
+    let fit = pcbcraft_solidcraft::project::plan::Fit {
+        area_mm2: 0.05,
+        allowed_area_mm2: 1e-4,
+        deviation_mm: 0.05,
+        planned_holes: 0,
+        built_holes: [0, 0],
+        planned_z: [1.6, 1.635],
+        built_z: [1.6, 1.635],
+        volume_change: Some(0.1),
+    };
+    let difference = export::Difference {
+        problem: export::Problem::PlannedNotBuilt,
+        kind: pcbcraft_solidcraft::material::BodyKind::CopperTrack,
+        source: export::Source::Track { track: track.id },
+        layer: Some(pcbcraft_core::CopperLayer::Top),
+        body: Some("track".into()),
+        measure: pcbcraft_solidcraft::project::plan::Measure {
+            min: [0.0; 3],
+            max: [1.0; 3],
+            volume: Some(1.0),
+        },
+        instead: Vec::new(),
+        fit: Some(fit),
+    };
+    let report = export::report(
+        Tier::Full,
+        0,
+        Some(export::Check {
+            planned: 9,
+            built: 9,
+            differences: vec![difference],
+            ..Default::default()
+        }),
+        Default::default(),
+    );
+    let (_, receiver) = mpsc::channel();
+    let running = Running {
+        watch: Watch::new(),
+        receiver,
+        path: PathBuf::from("/x/board.solidcraft"),
+        project: Arc::clone(&h.project),
+        started: 0.0,
+    };
+    let (level, message) = outcome(
+        &running,
+        Err(Failure::Unfit(Box::new(report))),
+        false,
+        false,
+    );
+    assert_eq!(level, Level::Error);
+    assert_eq!(
+        message,
+        format!(
+            "Nothing was written: 1 body of the model does not fit the board: \
+             Track {} on the top layer: its track copper was built in another shape: \
+             its outline is off by up to 0.0500 mm (0.0500 mm² differs), \
+             its volume is +10.000 %. To write the model all the same, export again with \
+             \u{201c}{ANYWAY}\u{201d} on",
             track.id
         )
     );

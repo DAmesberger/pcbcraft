@@ -118,6 +118,9 @@ pub struct NativeModel {
     /// native design's bodies (the display-only layers follow); 0 for a
     /// meshed model.
     native_bodies: usize,
+    /// The evaluated body of each of the first [`Self::native_bodies`]
+    /// entries of [`Self::geometry`]: its index in [`Self::world`].
+    world_bodies: Vec<usize>,
 }
 
 /// How [`update`] made its model.
@@ -188,6 +191,14 @@ impl NativeModel {
         self.geometry
             .get(..self.native_bodies)
             .ok_or_else(|| Error::Verification("the model has fewer bodies than its design".into()))
+    }
+
+    /// The evaluated body of [`Self::native_geometry`]'s entry `index`
+    /// (its exact B-rep); `None` for a meshed model or past its bodies.
+    pub fn native_body(&self, index: usize) -> Option<&solidcraft_engine::kernel::Body> {
+        let world = self.world.as_deref()?;
+        let at = *self.world_bodies.get(index)?;
+        world.bodies.get(at).map(|b| &b.body)
     }
 }
 
@@ -558,6 +569,7 @@ fn finish_with(
     // each definition body is measured once, at its first placement.
     let mut measured: BTreeMap<(u64, String), Measured> = BTreeMap::new();
     let mut geometry = vec![];
+    let mut world_bodies = vec![];
     // Every display mesh at once, on all cores (each the mesh it makes
     // alone). A placement of a definition shares the definition's mesh, so
     // only that is made, never a moved copy.
@@ -680,6 +692,7 @@ fn finish_with(
                 (volume, min, max)
             }
         };
+        world_bodies.push(index);
         geometry.push(Geometry {
             item,
             kind,
@@ -719,6 +732,7 @@ fn finish_with(
         models,
         display: appearance::Memo::default(),
         native_bodies: geometry_len,
+        world_bodies,
         world: Some(world),
     })
 }
@@ -1621,6 +1635,7 @@ fn build_meshed(
         display: memo,
         world: None,
         native_bodies: 0,
+        world_bodies: Vec::new(),
     })
 }
 
@@ -2628,6 +2643,7 @@ fn preview_model(package: &PackageDefinition) -> Result<NativeModel> {
 
 pub mod designs;
 mod fill;
+pub mod fit;
 mod identity;
 pub mod mesh;
 pub mod plan;

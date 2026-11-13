@@ -13,9 +13,14 @@
 //! at its next command and writes nothing. The result says where the
 //! model was written and whether every body was built as the board plans
 //! it; a body that differs is named.
+//!
+//! A model whose bodies do not fit the board (the geometry-fit check,
+//! slice G1) is refused and nothing is written: the message names the
+//! bodies. The window's [`ANYWAY`] option, off each time it opens, writes
+//! such a model all the same (`write_anyway` of `project.export_native`).
 use crate::kit::severity::Level;
 use pcbcraft_core::Project;
-use pcbcraft_solidcraft::export::{self, Report, Tier, Watch};
+use pcbcraft_solidcraft::export::{self, Report, Tier, Unfit, Watch};
 use pcbcraft_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,6 +34,16 @@ pub(crate) const TITLE: &str = "Export to SolidCraft";
 /// The choice's and the running export's buttons.
 pub(crate) const EXPORT: &str = "Export…";
 pub(crate) const STOP: &str = "Stop";
+/// The option that writes a model whose bodies do not fit the board.
+pub(crate) const ANYWAY: &str = "Write the file even if bodies do not fit the board";
+
+/// How an export thread ended without a report.
+#[derive(Debug)]
+enum Failure {
+    /// Refused: its bodies do not fit the board; nothing was written.
+    Unfit(Box<Report>),
+    Other(String),
+}
 
 /// The tiers the window offers, as it names them.
 const TIERS: [(Tier, &str, &str); 2] = [
@@ -46,7 +61,7 @@ const TIERS: [(Tier, &str, &str); 2] = [
 
 struct Running {
     watch: Arc<Watch>,
-    receiver: Receiver<Result<Report, String>>,
+    receiver: Receiver<Result<Report, Failure>>,
     path: PathBuf,
     /// The document exported.
     project: Arc<Project>,
@@ -61,6 +76,9 @@ pub(crate) struct ModelExport {
     choosing: Option<Tier>,
     /// The tier of the export whose file is being chosen.
     pub(crate) chosen: Tier,
+    /// Whether that export writes a model whose bodies do not fit the
+    /// board; off each time the window opens.
+    pub(crate) write_anyway: bool,
     running: Option<Running>,
     status: Option<(Level, String)>,
     now: f64,
@@ -79,6 +97,7 @@ impl ModelExport {
             ctx: ctx.clone(),
             choosing: None,
             chosen: Tier::Mechanical,
+            write_anyway: false,
             running: None,
             status: None,
             now: 0.0,
@@ -95,6 +114,7 @@ impl ModelExport {
             return;
         }
         self.choosing = Some(self.chosen);
+        self.write_anyway = false;
     }
 
     /// Whether an export is running.
@@ -133,6 +153,11 @@ impl ModelExport {
         let watch = Watch::new();
         let (sender, receiver) = mpsc::channel();
         let tier = self.chosen;
+        let unfit = if self.write_anyway {
+            Unfit::Write
+        } else {
+            Unfit::Refuse
+        };
         let thread_watch = Arc::clone(&watch);
         let thread_project = Arc::clone(&project);
         let thread_path = path.clone();
@@ -142,10 +167,16 @@ impl ModelExport {
             .spawn(move || {
                 let result = thread_path
                     .to_str()
-                    .ok_or_else(|| "The export path must be UTF-8".to_owned())
+                    .ok_or_else(|| Failure::Other("The export path must be UTF-8".to_owned()))
                     .and_then(|path| {
-                        export::board(&thread_project, tier, path, &thread_watch)
-                            .map_err(|e| e.to_string())
+                        export::board(&thread_project, tier, path, &thread_watch, unfit).map_err(
+                            |e| match e {
+                                pcbcraft_solidcraft::Error::Unfit { report, .. } => {
+                                    Failure::Unfit(report)
+                                }
+                                other => Failure::Other(other.to_string()),
+                            },
+                        )
                     });
                 let _ = sender.send(result);
                 repaint.request_repaint();
@@ -180,7 +211,9 @@ impl ModelExport {
                     .request_repaint_after(std::time::Duration::from_millis(100));
                 return;
             }
-            Err(TryRecvError::Disconnected) => Err("The export stopped unexpectedly".into()),
+            Err(TryRecvError::Disconnected) => {
+                Err(Failure::Other("The export stopped unexpectedly".into()))
+            }
         };
         let Some(running) = self.running.take() else {
             return;
@@ -208,6 +241,9 @@ impl ModelExport {
                     super::file_ui::dialog_body(ui, |ui| {
                         crate::kit::value_row(ui, "File", &file);
                         crate::kit::value_row(ui, "Tier", tier_name(self.chosen));
+                        if self.write_anyway {
+                            crate::kit::value_row(ui, "Bodies that do not fit", "Written anyway");
+                        }
                         crate::kit::status(
                             ui,
                             &format!("{} · {seconds:.0} s", progress.text()),
@@ -237,6 +273,7 @@ impl ModelExport {
             return None;
         }
         let mut tier = self.choosing?;
+        let mut anyway = self.write_anyway;
         let mut answer = None;
         let mut cancel = false;
         let closed = ui_kit::Window::new(egui::Id::unique("model-export"), "export", TITLE)
@@ -251,7 +288,13 @@ impl ModelExport {
                     }
                     crate::kit::note(
                         ui,
-                        "Every body is checked against the board before the file is written.",
+                        "Every body is checked against the board before the file is written: \
+                         its outline, holes and thickness. A model that does not fit is not written.",
+                    );
+                    crate::kit::check_row(ui, ANYWAY, &mut anyway);
+                    crate::kit::note(
+                        ui,
+                        "Writes the model all the same and names every body that differs.",
                     );
                     crate::kit::actions(ui, |ui| {
                         if crate::kit::primary(ui, EXPORT, true).clicked() {
@@ -264,6 +307,7 @@ impl ModelExport {
                 });
             });
         self.chosen = tier;
+        self.write_anyway = anyway;
         if answer.is_some() || cancel || closed {
             self.choosing = None;
         } else {
@@ -285,6 +329,17 @@ impl ModelExport {
     }
 }
 
+/// The first [`NAMED`] differing bodies in the user's words, and how many
+/// more.
+fn named(report: &Report, project: &Project) -> Vec<String> {
+    let mut named: Vec<String> = report.lines(project).into_iter().take(NAMED).collect();
+    let count = report.difference_count();
+    if count > named.len() {
+        named.push(format!("and {} more", count - named.len()));
+    }
+    named
+}
+
 fn tier_name(tier: Tier) -> &'static str {
     match tier {
         Tier::Interface => "Interface",
@@ -296,11 +351,16 @@ fn tier_name(tier: Tier) -> &'static str {
 /// The message a finished export leaves.
 fn outcome(
     running: &Running,
-    result: Result<Report, String>,
+    result: Result<Report, Failure>,
     stopped: bool,
     changed: bool,
 ) -> (Level, String) {
     let path = running.path.display();
+    let captured = if changed {
+        "; the board has changed since it started"
+    } else {
+        ""
+    };
     let report = match result {
         Ok(report) => report,
         Err(_) if stopped => {
@@ -309,20 +369,27 @@ fn outcome(
                 "Export to SolidCraft stopped; nothing was written".into(),
             );
         }
-        Err(error) => return (Level::Error, format!("Export failed: {error}")),
-    };
-    let captured = if changed {
-        "; the board has changed since it started"
-    } else {
-        ""
+        Err(Failure::Unfit(report)) => {
+            let count = report.difference_count();
+            return (
+                Level::Error,
+                format!(
+                    "Nothing was written: {count} {} the board: {}{captured}. \
+                     To write the model all the same, export again with \u{201c}{ANYWAY}\u{201d} on",
+                    if count == 1 {
+                        "body of the model does not fit"
+                    } else {
+                        "bodies of the model do not fit"
+                    },
+                    named(&report, &running.project).join("; ")
+                ),
+            );
+        }
+        Err(Failure::Other(error)) => return (Level::Error, format!("Export failed: {error}")),
     };
     if report.differs() {
-        let lines = report.lines(&running.project);
-        let mut named: Vec<String> = lines.iter().take(NAMED).cloned().collect();
         let count = report.difference_count();
-        if count > named.len() {
-            named.push(format!("and {} more", count - named.len()));
-        }
+        let named = named(&report, &running.project);
         return (
             Level::Warning,
             format!(

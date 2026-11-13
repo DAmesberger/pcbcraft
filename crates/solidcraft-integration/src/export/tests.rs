@@ -28,12 +28,13 @@ fn kinds(model: &NativeModel) -> Result<Vec<BodyKind>> {
     Ok(model.native_geometry()?.iter().map(|g| g.kind).collect())
 }
 
-/// The gate of slice A5: a full export whose built bodies differ from the
-/// board plan reports each of them, in the user's words, and still writes
-/// the model. Here the plan read is the board with one track 0.1 mm
-/// wider than the one built: the track's copper is named, nothing else.
+/// The gate of slice G1: an export whose built bodies do not fit the
+/// board plan is refused, naming each of them in the user's words, and
+/// writes nothing; asked to write anyway, it writes the model and reports
+/// them. Here the plan read is the board with one track 0.1 mm wider than
+/// the one built: the track's copper is named, nothing else.
 #[test]
-fn a_full_export_reports_a_body_that_differs_from_the_plan() -> Result<()> {
+fn an_export_that_does_not_fit_is_refused_unless_written_anyway() -> Result<()> {
     let project = showcase()?;
     let watch = Watch::new();
     let model = project::build_watched(&project, Arc::clone(&watch))?;
@@ -45,9 +46,51 @@ fn a_full_export_reports_a_body_that_differs_from_the_plan() -> Result<()> {
         .ok_or_else(|| Error::Verification("the showcase has no track".into()))?;
     track.width += 0.1;
     let id = track.id;
+    let plan = plan::of(&planned)?;
     let dir = tempfile::tempdir()?;
     let path = path_in(&dir, "board.solidcraft");
-    let report = write(&planned, &model, Tier::Full, &path, &watch, None)?;
+    let refused = write(
+        &planned,
+        &plan,
+        &model,
+        Tier::Full,
+        &path,
+        &watch,
+        (None, Unfit::Refuse),
+    );
+    let Err(Error::Unfit { message, report }) = refused else {
+        return Err(Error::Verification(format!(
+            "a model that does not fit was not refused: {refused:?}"
+        )));
+    };
+    assert!(
+        message.starts_with("export.unfit: 2 bodies of the model do not fit the board"),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!(
+            "Track {id} on the top layer: its track copper was built in another shape: \
+             its outline is off by up to 0.0500 mm"
+        )),
+        "{message}"
+    );
+    assert!(message.contains("write_anyway"), "{message}");
+    assert_eq!(report.difference_count(), 2);
+    assert!(
+        files(&dir)?.is_empty(),
+        "nothing written: {:?}",
+        files(&dir)?
+    );
+
+    let report = write(
+        &planned,
+        &plan,
+        &model,
+        Tier::Full,
+        &path,
+        &watch,
+        (None, Unfit::Write),
+    )?;
     assert!(report.differs(), "{report:#?}");
     let check = report
         .check
@@ -77,8 +120,113 @@ fn a_full_export_reports_a_body_that_differs_from_the_plan() -> Result<()> {
             )),
         "{lines:#?}"
     );
-    // Reported, and written all the same.
+    // Written all the same.
     assert_eq!(files(&dir)?, vec!["board.solidcraft".to_owned()]);
+    Ok(())
+}
+
+/// A kernel deviation the box and volume did not see: the laminate built
+/// without a hole the plan drills (injected here as a hole the plan holds
+/// and the model lacks), and a hole built 20 µm from where the plan has
+/// it. Each is caught by the slab's outline, named as the laminate, and
+/// the export refused.
+#[test]
+fn a_dropped_or_moved_laminate_hole_is_caught() -> Result<()> {
+    let project = showcase()?;
+    let watch = Watch::new();
+    let model = project::build_watched(&project, Arc::clone(&watch))?;
+    let plan = plan::of(&project)?;
+    let dir = tempfile::tempdir()?;
+    let path = path_in(&dir, "board.solidcraft");
+    let slab = plan
+        .laminate
+        .first()
+        .ok_or_else(|| Error::Verification("the showcase has no laminate".into()))?;
+    let (low, high) = slab.bounds()?;
+    // A spot of the slab 1 mm clear of every hole and of the edge.
+    let clear = |p: [f64; 2]| -> Result<bool> {
+        for hole in slab.loops.iter().skip(1) {
+            let (lo, hi) = hole.bounds(0.01)?;
+            if p[0] > lo[0] - 1.0 && p[0] < hi[0] + 1.0 && p[1] > lo[1] - 1.0 && p[1] < hi[1] + 1.0
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    };
+    let mut spot = None;
+    'search: for i in 1..40 {
+        for j in 1..40 {
+            let p = [
+                low[0] + (high[0] - low[0]) * f64::from(i) / 40.0,
+                low[1] + (high[1] - low[1]) * f64::from(j) / 40.0,
+            ];
+            if clear(p)? {
+                spot = Some(p);
+                break 'search;
+            }
+        }
+    }
+    let spot = spot.ok_or_else(|| Error::Verification("no clear spot".into()))?;
+
+    let mut dropped = plan.clone();
+    dropped.laminate[0]
+        .loops
+        .push(crate::pad_outline::Contour::Circle {
+            center: spot,
+            radius: 0.15,
+        });
+    let mut moved = plan.clone();
+    let hole = moved.laminate[0]
+        .loops
+        .iter_mut()
+        .skip(1)
+        .find(|c| matches!(c, crate::pad_outline::Contour::Circle { .. }))
+        .ok_or_else(|| Error::Verification("the slab has no round hole".into()))?;
+    if let crate::pad_outline::Contour::Circle { center, .. } = hole {
+        center[0] += 0.02;
+    }
+    for (doctored, holes_differ) in [(dropped, true), (moved, false)] {
+        let checked = plan::check(&doctored, &model, &mut || Ok(()))?;
+        assert_eq!(checked.differences.len(), 2, "{:#?}", checked.differences);
+        let planned = checked
+            .differences
+            .iter()
+            .find(|d| d.problem == Problem::PlannedNotBuilt)
+            .ok_or_else(|| Error::Verification("no planned slab missed".into()))?;
+        assert_eq!(planned.kind, BodyKind::Substrate);
+        let fit = planned
+            .fit
+            .as_ref()
+            .ok_or_else(|| Error::Verification("the slab's fit is reported".into()))?;
+        assert_eq!(!fit.holes_fit(), holes_differ, "{fit:?}");
+        assert!(!fit.outline_fits(), "{fit:?}");
+        assert!(fit.heights_fit(), "{fit:?}");
+        if !holes_differ {
+            assert!((fit.deviation_mm - 0.02).abs() < 1e-3, "{fit:?}");
+        }
+        let refused = write(
+            &project,
+            &doctored,
+            &model,
+            Tier::Full,
+            &path,
+            &watch,
+            (None, Unfit::Refuse),
+        );
+        let Err(Error::Unfit { message, .. }) = refused else {
+            return Err(Error::Verification(format!("not refused: {refused:?}")));
+        };
+        assert!(
+            message.contains("The laminate from z")
+                && message.contains("its laminate slab was built in another shape"),
+            "{message}"
+        );
+        if holes_differ {
+            assert!(message.contains("holes where the board has"), "{message}");
+        }
+        assert!(files(&dir)?.is_empty());
+    }
     Ok(())
 }
 
@@ -91,7 +239,7 @@ fn a_full_export_matches_its_plan_and_writes_the_file() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = path_in(&dir, "board.solidcraft");
     let watch = Watch::new();
-    let report = board(&project, Tier::Full, &path, &watch)?;
+    let report = board(&project, Tier::Full, &path, &watch, Unfit::Refuse)?;
     let check = report
         .check
         .as_ref()
@@ -164,14 +312,17 @@ fn the_export_refuses_the_interface_tier_and_an_existing_file() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let path = path_in(&dir, "board.solidcraft");
     let watch = Watch::new();
-    let Err(Error::Invalid(message)) = board(&project, Tier::Interface, &path, &watch) else {
+    let Err(Error::Invalid(message)) =
+        board(&project, Tier::Interface, &path, &watch, Unfit::Refuse)
+    else {
         return Err(Error::Verification(
             "the interface tier was exported".into(),
         ));
     };
     assert!(message.contains("interface.publish"), "{message}");
     std::fs::write(&path, b"kept")?;
-    let Err(Error::Invalid(message)) = board(&project, Tier::Full, &path, &watch) else {
+    let Err(Error::Invalid(message)) = board(&project, Tier::Full, &path, &watch, Unfit::Refuse)
+    else {
         return Err(Error::Verification("an existing file was replaced".into()));
     };
     assert!(message.contains("output exists"), "{message}");
@@ -191,7 +342,7 @@ fn a_cancelled_export_writes_nothing() -> Result<()> {
     let watch = Watch::new();
     watch.cancel();
     assert!(matches!(
-        board(&project, Tier::Full, &path, &watch),
+        board(&project, Tier::Full, &path, &watch, Unfit::Refuse),
         Err(Error::Cancelled)
     ));
     assert_eq!(watch.progress().commands, 0);
@@ -205,7 +356,7 @@ fn a_cancelled_export_writes_nothing() -> Result<()> {
         }
         cancelling.cancel();
     });
-    let result = board(&project, Tier::Full, &path, &watch);
+    let result = board(&project, Tier::Full, &path, &watch, Unfit::Refuse);
     canceller
         .join()
         .map_err(|_| Error::Verification("the cancelling thread failed".into()))?;

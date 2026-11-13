@@ -5,9 +5,10 @@
 //!    (`tests/board_parity/<board>.jsonl`), so extracting the plan changed
 //!    no body; and
 //! 2. the board plan the build was made from ([`plan::parity`]): each
-//!    flat body the plan describes is built once, of its kind, source,
-//!    layer, box and volume, and nothing flat is built that the plan does
-//!    not describe; and
+//!    flat body the plan describes is built once, of its kind, source and
+//!    layer, fitting it (its top and bottom faces on the plan's loops, its
+//!    holes and heights the plan's, a copper body's volume too), and
+//!    nothing flat is built that the plan does not describe; and
 //! 3. the live view's model of the board ([`designs::parity`]): each part,
 //!    its package revision's own design placed by the document's
 //!    transform, lies where the exact build's solved joints hold it, every
