@@ -942,7 +942,7 @@ impl Request {
             info::<pcbcraft_core::interface::PublishParams>(
                 "interface.publish",
                 "Publish the board interface: write the .solidcraft design an assembly links and its sidecar, atomically.",
-                "Write the board interface at path: a .solidcraft design whose slots carry every exported datum as named reference bodies with stable face names (then the laminate, pads and parts for tier mechanical, the default, or every copper body for full), and its sidecar <name>.interface.json beside it; both replace what was there atomically. Then records the publish (revision, hash, per-datum hashes) in one undo step at expected_revision; a stale revision writes nothing. Refused when the files there are another board's interface. The revision grows only when the datums changed. For mechanical and full, published.check is project.export_native's check against the board plan.",
+                "Write the board interface at path: a .solidcraft design whose slots carry every exported datum as named reference bodies with stable face names (plus laminate, pads and parts for tier mechanical, the default, or all copper for full) and its sidecar <name>.interface.json, both replaced atomically. Records the publish (revision, hash, per-datum hashes) at expected_revision; no undo step, like a save. A stale revision, another board's files there or a broken reference writes nothing. The revision grows only when the datums changed. For mechanical and full, published.check is project.export_native's check against the board plan.",
             ),
             info::<pcbcraft_core::interface::assembly_link::FollowParams>(
                 "assembly.follow",
