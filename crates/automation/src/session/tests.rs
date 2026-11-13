@@ -241,7 +241,7 @@ fn an_unfit_export_is_reported_as_export_unfit() {
 #[test]
 fn catalog_matches_the_request_type() -> TestResult {
     let catalog = Request::catalog();
-    assert_eq!(catalog.len(), 47);
+    assert_eq!(catalog.len(), 49);
     let schema = serde_json::to_string(&schemas())?;
     for command in &catalog {
         assert!(

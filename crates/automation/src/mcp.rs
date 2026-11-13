@@ -200,6 +200,7 @@ impl Server {
                     .ok_or((INVALID_PARAMS, "missing tool name".to_string()))?;
                 let command = Request::catalog_shared()
                     .iter()
+                    .filter(|c| listed(c))
                     .find(|c| tool_name(c.id) == name)
                     .ok_or((INVALID_PARAMS, format!("unknown tool {name}")))?;
                 let arguments = match params.get("arguments") {
@@ -239,9 +240,23 @@ pub fn tool_name(command: &str) -> String {
     command.replace('.', "_")
 }
 
+/// Requests the session serves (CLI `stdio`, the engine) that MCP does not
+/// list or call yet: the generator requests wait for their compact tools,
+/// which arrive with GP7 (docs/generator-plugins.md).
+pub const NOT_TOOLS: &[&str] = &["library.generators", "library.generate_part"];
+
+/// Whether `command` is an MCP tool.
+fn listed(command: &CommandInfo) -> bool {
+    !NOT_TOOLS.contains(&command.id)
+}
+
 /// Tool definitions generated from the request catalog.
 pub fn tools() -> Vec<Value> {
-    Request::catalog_shared().iter().map(tool).collect()
+    Request::catalog_shared()
+        .iter()
+        .filter(|command| listed(command))
+        .map(tool)
+        .collect()
 }
 
 /// One tool: its catalog title and, where its class gives them, the
@@ -263,7 +278,7 @@ fn tool(command: &CommandInfo) -> Value {
 pub fn live_tools() -> Vec<Value> {
     Request::catalog_shared()
         .iter()
-        .filter(|command| !live::WINDOW_ONLY.contains(&command.id))
+        .filter(|command| listed(command) && !live::WINDOW_ONLY.contains(&command.id))
         .map(tool)
         .collect()
 }

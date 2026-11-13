@@ -52,7 +52,22 @@ fn initialize_negotiates_versions_and_lists_generated_tools() {
     assert!(names.contains(&"project_apply"));
     assert!(names.contains(&"project_export_native"));
     assert!(names.contains(&"project_query"));
-    assert_eq!(names.len(), Request::catalog().len());
+    assert_eq!(
+        names.len(),
+        Request::catalog().len() - crate::mcp::NOT_TOOLS.len()
+    );
+    // The generator requests stay session requests until GP7's tools.
+    assert!(!names.contains(&"library_generate_part"));
+    let refused = call(
+        &mut server,
+        4,
+        "tools/call",
+        json!({"name": "library_generators", "arguments": {}}),
+    );
+    assert_eq!(
+        refused["error"]["message"],
+        "unknown tool library_generators"
+    );
 }
 
 #[test]
@@ -395,13 +410,17 @@ fn the_tool_list_is_small_and_self_contained() {
     let mut server = Server::new(Session::default(), Policy::default());
     let list = call(&mut server, 1, "tools/list", json!({}));
     let bytes = list.to_string().len();
-    // 45 KB measured; the whole-schema list was 625 KB.
+    // 64,583 bytes measured with the generator requests left to GP7
+    // (mcp::NOT_TOOLS); the whole-schema list was 625 KB.
     assert!(bytes < 64 * 1024, "tools/list is {bytes} bytes");
     let tools = list["result"]["tools"]
         .as_array()
         .cloned()
         .unwrap_or_default();
-    assert_eq!(tools.len(), Request::catalog().len());
+    assert_eq!(
+        tools.len(),
+        Request::catalog().len() - crate::mcp::NOT_TOOLS.len()
+    );
     for tool in &tools {
         let schema = &tool["inputSchema"];
         assert_eq!(schema["type"], "object", "{}", tool["name"]);
