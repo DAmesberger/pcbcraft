@@ -74,7 +74,8 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     let sources = SourceCache::default();
     let mut cache = pcbcraft_core::layout::fill::FillCache::default();
     let t = Instant::now();
-    let mut model = project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
+    let mut model =
+        project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
     let held = |base: f64| live().map_or(f64::NAN, |now| now - base);
     println!(
         "build {:.1} s: +{:.0} MB",
@@ -107,7 +108,8 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     drop(model);
     let base = live().unwrap_or(base);
     let t = Instant::now();
-    let built = project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
+    let built =
+        project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
     let fresh = held(base);
     println!(
         "fresh build {:.1} s: +{fresh:.0} MB",

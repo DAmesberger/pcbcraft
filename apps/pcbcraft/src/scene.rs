@@ -895,10 +895,9 @@ mod tests {
             "not an earlier model shown again"
         );
         assert!(
-            kept.board
-                .as_ref()
-                .is_some_and(|(board, model)| Arc::ptr_eq(board, &project)
-                    && model.native().is_none()),
+            kept.board.as_ref().is_some_and(
+                |(board, model)| Arc::ptr_eq(board, &project) && model.native().is_none()
+            ),
             "one board model kept, with no native design of the board"
         );
         Ok(())
@@ -1008,11 +1007,7 @@ mod tests {
         };
         let (edited, refilled) = (board(1.0)?, board(2.0)?);
         let made = |project: &Arc<Project>| -> Result<Built, Box<dyn std::error::Error>> {
-            let job = Job::Project(
-                0,
-                Arc::clone(project),
-                Arc::new(AtomicBool::new(false)),
-            );
+            let job = Job::Project(0, Arc::clone(project), Arc::new(AtomicBool::new(false)));
             let (_, built) = build(job, &mut Kept::default());
             let (geometry, sources, stack) = built?;
             Ok(Built {
@@ -1068,11 +1063,9 @@ mod tests {
         assert_eq!(failed.ticket, 1);
         assert!(failed.result.is_err());
         let project = Arc::new(Engine::demo()?.project().clone());
-        worker.sender.send(Job::Project(
-            2,
-            project,
-            Arc::new(AtomicBool::new(false)),
-        ))?;
+        worker
+            .sender
+            .send(Job::Project(2, project, Arc::new(AtomicBool::new(false))))?;
         let built = worker.receiver.recv_timeout(wait)?;
         assert_eq!(built.ticket, 2);
         assert!(built.result.is_ok());
@@ -1089,11 +1082,9 @@ mod tests {
         let flag = || Arc::new(AtomicBool::new(false));
         for ticket in 1..=4u64 {
             board.placements[0].position[0] += 1.0;
-            worker.sender.send(Job::Project(
-                ticket,
-                Arc::new(board.clone()),
-                flag(),
-            ))?;
+            worker
+                .sender
+                .send(Job::Project(ticket, Arc::new(board.clone()), flag()))?;
         }
         let mut answered = Vec::new();
         while let Ok(built) = worker
