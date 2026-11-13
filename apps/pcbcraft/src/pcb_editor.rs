@@ -1991,6 +1991,18 @@ impl PcbEditor {
         if operation.is_none() {
             operation = self.delete_key(ui, project);
         }
+        // ⌘R rotates the selected part as its card's Rotate 90° does.
+        if operation.is_none()
+            && self.tool == Tool::Select
+            && let Inspected::Placement(id) = self.inspected(project)
+            && project
+                .placements
+                .iter()
+                .any(|p| p.instance == id && !p.locked)
+            && crate::keys::pressed(ui.ctx(), "pcb.rotate")
+        {
+            operation = self.menu_act(engine, menu::Act::Rotate(id));
+        }
         self.pills(ui, rect, project);
         if let Some(menu) = self.show_menu(ui.ctx(), engine) {
             operation = Some(menu);
