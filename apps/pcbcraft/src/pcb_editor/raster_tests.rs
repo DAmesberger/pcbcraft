@@ -613,3 +613,111 @@ fn the_route_card_stays_inside_its_slot() -> TestResult {
     );
     Ok(())
 }
+
+/// Finding 17 of the fourth end-to-end run: the board's mounting holes
+/// show at every zoom, from the fitted board out to the zoom range's end.
+/// The drill's fill is close to the bare board's colour, so each hole must
+/// carry its edge. No pour surrounds them and a track is selected, so
+/// neither a clearance ring nor the Board card's datums draw them instead.
+#[test]
+fn mounting_holes_show_at_every_zoom() -> TestResult {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples/esp32-s31-devboard/esp32-s31-devboard.pcbcraft");
+    let engine = Engine::from_file(pcbcraft_io::read_project(&path)?)?;
+    let mut bare = engine.project().clone();
+    bare.fills.clear();
+    let engine = with_project(&engine, bare)?;
+    let holes = engine.project().board().holes.clone();
+    assert_eq!(holes.len(), 4);
+    assert!(holes.iter().all(|h| !h.plated));
+    let track = engine.project().tracks.first().ok_or("no track")?.id;
+    // The unplated edge is light: every channel well above the dark board
+    // (copper is not, having almost no blue).
+    let board = BoardInk::get().board;
+    let near = |c: Color32| {
+        [(c.r(), board.r()), (c.g(), board.g()), (c.b(), board.b())]
+            .iter()
+            .all(|(a, b)| *a > b.saturating_add(50))
+    };
+    for zoom in [1.0, 0.6, 0.4, 0.25, *ZOOM_RANGE.start()] {
+        let mut editor = PcbEditor::default();
+        editor.set_selection(None, Some(track), None);
+        editor.zoom = zoom;
+        let picture = picture(&mut editor, &engine);
+        let view = view_of(&editor, &engine);
+        for hole in &holes {
+            let centre = view.screen(hole.at);
+            let r = (hole.drill as f32 * view.view.scale / 2.0).max(1.5);
+            let edged = (0..72)
+                .map(|i| (i as f32 * 5.0).to_radians())
+                .filter(|a| {
+                    [r - 0.5, r, r + 0.5].iter().any(|d| {
+                        picture
+                            .at(centre + egui::vec2(a.cos(), a.sin()) * *d)
+                            .is_some_and(near)
+                    })
+                })
+                .count();
+            assert!(
+                edged >= 36,
+                "zoom {zoom}: the hole at {:?} shows its edge at {edged} of 72 angles",
+                hole.at
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Finding 5 of the fourth end-to-end run: Fit view frames every part,
+/// on the board or staged beside it, above the navigation bar's band.
+#[test]
+fn fit_view_shows_parts_staged_beside_the_board() -> TestResult {
+    let engine = Engine::demo()?;
+    let mut project = engine.project().clone();
+    project.placements = project.placements.iter().step_by(2).cloned().collect();
+    let mut staged = with_project(&engine, project)?;
+    staged.apply(
+        staged.revision(),
+        pcbcraft_core::Operation::Layout(layout::LayoutCommand::Sync),
+    )?;
+    let board = staged.project().board_size;
+    let boxes = layout::staging::part_boxes(staged.project());
+    assert!(
+        boxes.values().any(|b| b.min[0] > board[0]),
+        "some parts are staged right of the board"
+    );
+    let mut editor = PcbEditor {
+        zoom: 2.0,
+        ..Default::default()
+    };
+    editor.fit(&staged);
+    picture(&mut editor, &staged);
+    let canvas = fit_area(Rect::from_min_size(
+        Pos2::ZERO,
+        egui::vec2(SCREEN[0], SCREEN[1]),
+    ));
+    let view = view_of(&editor, &staged);
+    let corners = |b: &pcbcraft_core::geometry::Bounds| {
+        [b.min, [b.min[0], b.max[1]], b.max, [b.max[0], b.min[1]]]
+    };
+    let whole = pcbcraft_core::geometry::Bounds::point([0.0, 0.0]).including(board);
+    for b in boxes.values().chain([&whole]) {
+        for p in corners(b) {
+            assert!(canvas.contains(view.screen(p)), "{p:?} is out of view");
+        }
+    }
+    // A board with every part on it keeps its plain fitted view.
+    let mut editor = PcbEditor {
+        zoom: 2.0,
+        ..Default::default()
+    };
+    let empty = {
+        let mut project = staged.project().clone();
+        project.placements = std::iter::empty().collect();
+        with_project(&staged, project)?
+    };
+    editor.fit(&empty);
+    picture(&mut editor, &empty);
+    assert_eq!((editor.zoom, editor.pan), (1.0, Vec2::ZERO));
+    Ok(())
+}

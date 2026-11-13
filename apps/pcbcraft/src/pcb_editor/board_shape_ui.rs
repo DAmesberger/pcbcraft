@@ -1812,6 +1812,14 @@ pub(super) fn paint_solved(
         if let Some(pad) = hole.pad_diameter {
             painter.circle_filled(at, pad as f32 * view.view.scale / 2.0, ink.plated);
         }
-        painter.circle_filled(at, hole.drill as f32 * view.view.scale / 2.0, ink.drill);
+        // Outlined like a pad's hole: the drill's fill is close to the
+        // bare board's colour, so the edge is what shows it at every zoom.
+        let edge = if hole.plated {
+            ink.plated
+        } else {
+            ink.unplated
+        };
+        let radius = (hole.drill as f32 * view.view.scale / 2.0).max(1.5);
+        painter.circle(at, radius, ink.drill, Stroke::new(1.0, edge));
     }
 }
