@@ -1106,6 +1106,98 @@ fn generated_chips_get_solder_fillets_against_their_terminations() -> Result<()>
     Ok(())
 }
 
+/// The showcase's generated SOIC-8 gets a solder fillet at the toe of
+/// every foot, each on that foot's land; its generated pin header gets a
+/// solder cone round every pin on the far side, centred on the pin's land.
+#[test]
+fn generated_feet_and_header_pins_get_solder_joints() -> Result<()> {
+    let project = showcase()?;
+    let model = build(&project)?;
+    let part = |designator: &str| {
+        model
+            .sources
+            .iter()
+            .find(|s| s.pad.is_none() && s.label == format!("{designator} model"))
+            .ok_or_else(|| Error::Verification(format!("no {designator}")))
+    };
+    let lands = |part: &Source| -> Vec<&Geometry> {
+        model
+            .sources
+            .iter()
+            .filter(|s| s.instance == part.instance && s.pad.is_some())
+            .filter_map(|s| {
+                // A plated-through land has copper on every layer: any.
+                model
+                    .geometry
+                    .iter()
+                    .find(|g| g.item == Some(s.pick_id) && g.kind == BodyKind::PadCopper)
+            })
+            .collect()
+    };
+    let solder = |part: &Source| -> Vec<&Geometry> {
+        model
+            .geometry
+            .iter()
+            .filter(|g| g.kind == BodyKind::Solder && g.item == Some(part.pick_id))
+            .collect()
+    };
+    let soic = part("U1")?;
+    let soic_lands = lands(soic);
+    assert_eq!(soic_lands.len(), 8);
+    let fillets = solder(soic);
+    assert!(
+        fillets.len() >= 8,
+        "a toe fillet per foot: {}",
+        fillets.len()
+    );
+    for land in &soic_lands {
+        let on = fillets.iter().filter(|s| {
+            (0..2).all(|a| s.min[a] >= land.min[a] - 1e-6 && s.max[a] <= land.max[a] + 1e-6)
+        });
+        assert!(on.count() >= 1, "a land of U1 without solder");
+    }
+    for fillet in &fillets {
+        assert!(fillet.volume() > 0.0);
+        assert!(fillet.min[2] > land_top(&soic_lands) - 1e-3, "on the land");
+    }
+    let header = part("J1")?;
+    let header_lands = lands(header);
+    let cones = solder(header);
+    assert_eq!(cones.len(), 10, "a cone per pin");
+    let top = header.layer == Some(CopperLayer::Top);
+    for cone in &cones {
+        assert!(cone.volume() > 0.0);
+        // On the far side of the board.
+        assert!(if top {
+            cone.max[2] < 0.0
+        } else {
+            cone.min[2] > 1.6
+        });
+        let mid = [
+            (cone.min[0] + cone.max[0]) / 2.0,
+            (cone.min[1] + cone.max[1]) / 2.0,
+        ];
+        let centred = header_lands
+            .iter()
+            .any(|land| (0..2).all(|a| (mid[a] - (land.min[a] + land.max[a]) / 2.0).abs() < 1e-6));
+        let nearest = header_lands
+            .iter()
+            .map(|land| {
+                (0..2)
+                    .map(|a| (mid[a] - (land.min[a] + land.max[a]) / 2.0).abs())
+                    .fold(0.0, f64::max)
+            })
+            .fold(f64::MAX, f64::min);
+        assert!(centred, "a cone off its pin's land by {nearest} at {mid:?}");
+    }
+    Ok(())
+}
+
+/// The highest land top among `lands`.
+fn land_top(lands: &[&Geometry]) -> f64 {
+    lands.iter().map(|l| l.max[2]).fold(f64::MIN, f64::max)
+}
+
 fn check_chip_parts(model: &NativeModel) -> Result<()> {
     let envelopes = model
         .sources

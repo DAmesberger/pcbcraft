@@ -1083,8 +1083,9 @@ impl<'a> PlacedPart<'a> {
     /// The display-only layers drawn for the part (terminations, overcoat
     /// and solder fillets), picked as `pick`: drawn in the package frame,
     /// so only while the model frame is that frame; of a generated model
-    /// only a chip's fillets.
+    /// only the solder joints of a chip, gull-wing feet or header pins.
     fn display(&self, pick: u64) -> Option<Part<'a>> {
+        use sparksmith_core::library::PackageForm;
         if !package_frame(&datum_frame(self.package)) {
             return None;
         }
@@ -1093,7 +1094,14 @@ impl<'a> PlacedPart<'a> {
             PartModel::Envelope => false,
             PartModel::Library(_) | PartModel::PartFile(..) => return None,
         };
-        if generated && self.package.chip_kind().is_none() {
+        let joints = matches!(
+            self.package.form,
+            PackageForm::Chip(_)
+                | PackageForm::GullWing(_)
+                | PackageForm::Tabbed(_)
+                | PackageForm::Header(_)
+        );
+        if generated && !joints {
             return None;
         }
         Some(Part {

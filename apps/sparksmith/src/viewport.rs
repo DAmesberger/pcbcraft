@@ -60,6 +60,10 @@ const RING_RADIUS_PT: f64 = 9.0;
 const RING_STROKE_PT: f32 = 2.0;
 /// Peak shadow opacity on light and dark backgrounds (Solidcraft's values).
 const SHADOW_ALPHA: [f32; 2] = [80.0, 150.0];
+/// Peak opacity of the contact shadows under parts, on light and dark
+/// backgrounds: darker than the ground shadow, so a part reads as standing
+/// on the board rather than above it.
+const CONTACT_ALPHA: [f32; 2] = [140.0, 190.0];
 /// Ambient occlusion samples per pixel for a still and a moving view
 /// (Solidcraft's `AO_SAMPLES` and `AO_SAMPLES_MOVING`).
 const AO_SAMPLES: [u32; 2] = [32, 8];
@@ -679,10 +683,11 @@ impl Viewport {
         self.shadow_view = Some(view);
         let (dark, below, shown) = view;
         let peak = SHADOW_ALPHA[usize::from(dark)];
+        let contact = CONTACT_ALPHA[usize::from(dark)];
         let display = self.display;
         let mut scene = GpuScene::default();
         if let Some(model) = self.model.as_ref() {
-            let mut add = |vertices: &[ShadowVertex]| {
+            let mut add = |vertices: &[ShadowVertex], peak: f32| {
                 for (p, weight) in vertices {
                     let alpha = (peak * weight.clamp(0.0, 1.0)).round() as u8;
                     let color = scene.color([0, 0, 0, alpha]);
@@ -691,14 +696,14 @@ impl Viewport {
             };
             if below {
                 if shown.bottom {
-                    add(&model.shadows.bottom);
+                    add(&model.shadows.bottom, contact);
                 }
             } else {
                 if shown.ground {
-                    add(&model.shadows.ground);
+                    add(&model.shadows.ground, peak);
                 }
                 if shown.top {
-                    add(&model.shadows.top);
+                    add(&model.shadows.top, contact);
                 }
             }
         }
