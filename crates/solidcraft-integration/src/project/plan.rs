@@ -219,7 +219,7 @@ fn look(kind: BodyKind) -> Result<Material> {
     Ok(material::material(
         kind,
         &Fabrication::default(),
-        &crate::stack::Stack::standard()?,
+        &crate::stack::Stack::none()?,
     ))
 }
 

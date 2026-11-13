@@ -273,7 +273,7 @@ pub fn convert_profile(old: &Value) -> Result<Value> {
     if p["basis"] != "fabricator_entered" || text("source").is_empty() || text("date").is_empty() {
         return Err(format!(
             "the profile {name:?} is an estimate without a source and date; \
-             pass --profile FILE.json naming a sourced profile (examples/profiles/)"
+             pass --profile FILE.json naming a sourced profile (library/profiles/)"
         )
         .into());
     }

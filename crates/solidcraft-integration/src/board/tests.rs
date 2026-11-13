@@ -85,7 +85,7 @@ pub(super) fn created_curves(outcome: &SketchOutcome) -> Vec<SketchCurveId> {
 
 #[test]
 fn the_rectangle_sketch_solves_to_the_plain_rectangle() -> Fallible<()> {
-    let board = EV.rectangle([60.0, 40.0])?;
+    let board = EV.rectangle([60.0, 40.0], 0.01)?;
     assert_eq!(board.solve.status, SolveStatus::Solved);
     assert_eq!(board.solve.dof, 0);
     let plain = SolvedBoard::rectangle([60.0, 40.0]);

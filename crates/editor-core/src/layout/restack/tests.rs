@@ -280,10 +280,10 @@ fn malformed_moves_are_refused_without_change() -> Fallible<()> {
 fn the_draft_adds_layers_in_pairs_and_keeps_its_outer_foils() -> Fallible<()> {
     let mut draft = StackupDraft::of(&Stackup::preset(4)?);
     assert!(!draft.changed());
-    draft.add_layer(DielectricKind::Prepreg)?;
+    draft.add_layer(&StackupPresets::fixture()?, DielectricKind::Prepreg)?;
     // Five foils: the rules say why it cannot be applied yet.
     assert!(draft.stackup.check().is_err());
-    draft.add_layer(DielectricKind::Core)?;
+    draft.add_layer(&StackupPresets::fixture()?, DielectricKind::Core)?;
     draft.stackup.check()?;
     use DielectricKind::{Core, Prepreg};
     let kinds: Vec<_> = draft.stackup.dielectrics.iter().map(|d| d.kind).collect();
@@ -293,7 +293,7 @@ fn the_draft_adds_layers_in_pairs_and_keeps_its_outer_foils() -> Fallible<()> {
     assert_eq!(draft.origin(3), None);
     assert_eq!(draft.origin(5), Some(CopperLayer::Bottom));
     assert!(draft.moves(&BTreeMap::new()).is_empty());
-    draft.add_pair()?;
+    draft.add_pair(&StackupPresets::fixture()?)?;
     assert_eq!(draft.stackup.copper.len(), 8);
     draft.stackup.check()?;
     assert!(draft.remove_layer(0).is_err());
@@ -303,11 +303,11 @@ fn the_draft_adds_layers_in_pairs_and_keeps_its_outer_foils() -> Fallible<()> {
     draft.move_row(DraftRow::Dielectric(0), false)?;
     assert_eq!(draft.stackup.dielectrics[0].kind, Core);
     let mut full = StackupDraft::of(&Stackup::preset(MAX_COPPER_LAYERS)?);
-    assert!(full.add_pair().is_err());
+    assert!(full.add_pair(&StackupPresets::fixture()?).is_err());
     assert_eq!(full.stackup.copper.len(), MAX_COPPER_LAYERS);
     // A preset keeps the outer layers' identity.
     let mut shrink = StackupDraft::of(&Stackup::preset(8)?);
-    shrink.use_preset(4)?;
+    shrink.use_preset(&StackupPresets::fixture()?, 4)?;
     assert_eq!(
         shrink.removed(),
         vec![

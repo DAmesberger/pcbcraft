@@ -15,8 +15,10 @@ fn context() -> egui::Context {
     ctx
 }
 
+/// An empty project on the test fixture fab profile: the parts it makes
+/// estimate their lands with the board's margins.
 fn empty_engine() -> Engine {
-    Engine::default()
+    Engine::profiled().unwrap_or_default()
 }
 
 /// The palette open with `text` typed; the texts it drew, top to bottom.

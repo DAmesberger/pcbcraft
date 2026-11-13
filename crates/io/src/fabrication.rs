@@ -257,10 +257,10 @@ fn write_zip(output: &Path, files: &[FabFile]) -> Result<()> {
 }
 
 /// A fabrication profile by id from the user's library
-/// (`UserDirs::config/fab-profiles/`) or the built-ins.
+/// (`UserDirs::config/fab-profiles/`) or the shipped library.
 pub fn resolve_profile(id: &str) -> Result<RuleProfile> {
     let dirs = crate::settings::UserDirs::from_env()?;
-    crate::rule_profiles::ProfileLibrary::from_dirs(&dirs).get(id)
+    crate::rule_profiles::ProfileLibrary::from_dirs(&dirs)?.get(id)
 }
 
 #[cfg(test)]

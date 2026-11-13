@@ -133,7 +133,8 @@ fn push(
 fn generated(seed: u64) -> Result<Library> {
     use crate::library::graphics::{Item, TextContent};
     let mut rng = Rng(seed | 1);
-    let mut library = synthetic::project_with_parts(2 + rng.below(4))?.library;
+    let mut library =
+        synthetic::project_with_parts(2 + rng.below(4), &crate::NewBoard::fixture())?.library;
     // Symbol texts show a field the owning component selects.
     let selected: Vec<(DefinitionId, DefinitionId)> = library
         .components
@@ -1334,7 +1335,7 @@ fn duplicate_copies_a_component_with_its_symbols_and_bindings_as_drafts() -> Res
 }
 
 fn synthetic_folder() -> Result<Vec<RevisionRecord>> {
-    let mut library = synthetic::project_with_parts(4)?.library;
+    let mut library = synthetic::project_with_parts(4, &crate::NewBoard::fixture())?.library;
     let mut folder = Vec::new();
     let mut rng = Rng(21);
     let roots: Vec<DefinitionRef> = library

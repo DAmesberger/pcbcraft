@@ -470,7 +470,7 @@ impl Builder {
         self.native.stage(crate::export::Stage::Building)?;
         self.native.activate_root()?;
         // Generated bodies already carry their materials' looks.
-        let stack = crate::stack::Stack::standard()?;
+        let stack = crate::stack::Stack::none()?;
         for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
             let names: Vec<&str> = self
                 .bodies

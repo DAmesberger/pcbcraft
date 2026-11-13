@@ -293,13 +293,24 @@ pub fn structure(stackup: &Stackup, layer: CopperLayer) -> Result<LayerLine> {
         .copper_span(layer)
         .ok_or_else(|| Error::Invalid("layer outside the stackup".into()))?;
     let t = top - bottom;
+    if let Some(d) = stackup
+        .dielectrics
+        .iter()
+        .find(|d| stackup.permittivity(d).is_none())
+    {
+        return Err(Error::Invalid(format!(
+            "the stackup has no Dk for its {} mm dielectric and no estimate for its glass: \
+             enter the fabricator's Dk",
+            d.thickness_mm
+        )));
+    }
     // Dielectrics between foil `a` and foil `b` (a < b): thickness-weighted Dk.
     let er_between = |a: usize, b: usize| {
         let parts: Vec<_> = stackup.dielectrics.get(a..b).unwrap_or_default().to_vec();
         let thick: f64 = parts.iter().map(|d| d.thickness_mm).sum();
         let weighted: f64 = parts
             .iter()
-            .map(|d| d.thickness_mm * d.permittivity())
+            .map(|d| d.thickness_mm * stackup.permittivity(d).unwrap_or(f64::NAN))
             .sum();
         let estimated = parts.iter().any(|d| d.permittivity_estimated());
         ((weighted / thick.max(1e-9)), estimated)
@@ -532,7 +543,9 @@ pub struct ClassImpedance {
     pub impedance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_impedance: Option<f64>,
-    pub tolerance_pct: f64,
+    /// The stated tolerance; without one routed impedance is not checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance_pct: Option<f64>,
     pub layers: Vec<Derived>,
 }
 

@@ -49,7 +49,10 @@ mod tests {
         let folder_text = folder.display().to_string();
         let mut author = Session::new(Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project_with_parts(4)?,
+            project: sparksmith_core::catalog::synthetic::project_with_parts(
+                4,
+                &sparksmith_core::NewBoard::fixture(),
+            )?,
             drafts: Drafts::default(),
         })?);
         let published = publish_library(&mut author, &folder_text, "Team library")?;

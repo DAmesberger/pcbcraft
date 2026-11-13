@@ -18,7 +18,7 @@ use crate::library::{
     Definition, DefinitionMeta, DistributorOffer, DraftEdit, Library, PartDefinition, Provenance,
     Published, Reference, ReferenceKind,
 };
-use crate::model::Project;
+use crate::model::{NewBoard, Project};
 use crate::quantity::{Decimal, UnitOfMeasure, UnitSet};
 
 /// Parts one synthetic project holds; each takes three lineages.
@@ -370,20 +370,21 @@ fn part(index: usize, fields: &Fields) -> Part {
 pub const MANUFACTURER: &str = "ExampleCo";
 
 /// A project whose library holds `parts` published synthetic components
-/// (resistors, capacitors and headers in turn) with typed field defaults.
-pub fn project(parts: usize) -> Result<Project> {
-    build(parts, false)
+/// (resistors, capacitors and headers in turn) with typed field defaults,
+/// on `board`.
+pub fn project(parts: usize, board: &NewBoard) -> Result<Project> {
+    build(parts, false, board)
 }
 
 /// [`project`] plus two generic components without values, a 0603
 /// resistor and a 0402 capacitor, and exact `ExampleCo` Parts that pin
 /// them: `EX-R0603-10K0-F`, `EX-R0603-22K0-F` (±1 %), `EX-C0402-100N-16V`
 /// and `EX-C0402-100N-25V` (rated voltage as a minimum rating).
-pub fn project_with_parts(parts: usize) -> Result<Project> {
-    build(parts, true)
+pub fn project_with_parts(parts: usize, board: &NewBoard) -> Result<Project> {
+    build(parts, true, board)
 }
 
-fn build(parts: usize, exact: bool) -> Result<Project> {
+fn build(parts: usize, exact: bool, board: &NewBoard) -> Result<Project> {
     if parts > MAX_PARTS {
         return Err(Error::Limit(format!(
             "a synthetic project holds at most {MAX_PARTS} parts"
@@ -464,7 +465,7 @@ fn build(parts: usize, exact: bool) -> Result<Project> {
         name: "Synthetic parts".into(),
         next_id: ids.0,
         library,
-        ..Project::default()
+        ..Project::new(board)
     })
 }
 
@@ -661,7 +662,7 @@ fn exact_parts(
 /// An index of `count` synthetic entries for benchmarks: the entries of a
 /// small synthetic project repeated with distinct lineages and names.
 pub fn index(count: usize) -> Result<Index> {
-    let project = project(48)?;
+    let project = build(48, false, &NewBoard::without_board())?;
     let base = entries(&project, &Default::default());
     if base.is_empty() {
         return Err(Error::Invalid("synthetic project has no entries".into()));

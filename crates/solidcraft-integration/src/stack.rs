@@ -148,6 +148,9 @@ pub struct Stack {
     looks: Looks,
 }
 
+/// A test fixture, never in the product: the stack of the core's fixture
+/// [`Stackup::default`] with the default pad finish.
+#[cfg(any(test, feature = "test-fixtures"))]
 impl Stack {
     /// The stack of [`Stackup::default`] with the default pad finish.
     pub fn standard() -> Result<Self> {
@@ -257,8 +260,9 @@ impl Stack {
             dielectrics: Vec::new(),
             top: 0.0,
             copper: [0.0; 2],
-            mask: sparksmith_core::MASK_UM / 1000.0,
-            mask_laminate: sparksmith_core::MASK_LAMINATE.to_mm_f64(),
+            // No board, no soldermask.
+            mask: 0.0,
+            mask_laminate: 0.0,
             finish: finish_um(&looks, PadFinish::default()) / 1000.0,
             looks,
         })
@@ -508,10 +512,10 @@ mod tests {
         // into the mask by design, so it is compared by its top).
         let finish = stack.span_of(Slot::Finish(Layer::Top)).ok_or("no finish")?;
         let silk = stack.span_of(Slot::Silk(Layer::Top)).ok_or("no legend")?;
-        // The default stackup's mask over copper is the core's seed.
+        // The default stackup's mask over copper is the stackup's own.
         near(
             Stack::standard().map_err(|e| e.to_string())?.mask_mm(),
-            sparksmith_core::MASK_UM / 1000.0,
+            Stackup::default().mask_um / 1000.0,
         );
         assert!(finish[1] > top + 0.070 && silk[1] > top + 0.030);
         near(

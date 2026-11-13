@@ -133,7 +133,7 @@ fn names(report: &TemplateReport) -> Vec<&str> {
 /// A project with rows of several families, both 0402 meanings and a
 /// cited QFN-32 with land overrides.
 fn rows_engine() -> Fallible<Engine> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let mut imperial = row(chip(ChipKind::Resistor, [1.0, 0.5, 0.35]), &["R0402"]);
     imperial.size_code = code("0402", "1005");
     publish_row(&mut engine, "Chip 0402 (1005 metric)", imperial)?;
@@ -262,7 +262,7 @@ fn a_size_code_matches_both_meanings_unless_a_system_is_named() -> Fallible<()> 
 /// (a 1×40's "1x40 2.54" prefixes "1x4") must not outrank it.
 #[test]
 fn the_named_size_or_pin_count_ranks_first() -> Fallible<()> {
-    let engine = Engine::default();
+    let engine = Engine::profiled()?;
     let top = |query: &str| -> Fallible<String> {
         let report = templates_with(&engine, query, &CatalogContext::default())?;
         Ok(names(&report).first().ok_or("a hit")?.to_string())
@@ -343,7 +343,7 @@ fn folder_rows_are_indexed_and_searched_with_their_source_revision() -> Fallible
         sources: vec![Arc::new(catalog)],
         ..project_only()
     };
-    let engine = Engine::default();
+    let engine = Engine::profiled()?;
     let found = templates_with(&engine, "pkg:i0603", &context)?;
     let [hit] = found.hits.as_slice() else {
         return Err(format!("one hit: {:?}", names(&found)).into());
@@ -362,7 +362,7 @@ fn folder_rows_are_indexed_and_searched_with_their_source_revision() -> Fallible
             .is_empty()
     );
     // The host passes the folder row as a bundle; nothing is imported.
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let bundle = Bundle {
         library,
         name: "Packages".into(),
@@ -512,7 +512,7 @@ fn a_component_from_a_cited_row_is_one_undo_step_and_publishes() -> Fallible<()>
 fn every_custom_family_builds_a_publishable_component() -> Fallible<()> {
     for family in FamilyKind::ALL {
         let values = family.custom_values();
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let skeleton = FamilyKind::default_skeleton(&values);
         let ids = new_from(
             &mut engine,
@@ -809,7 +809,7 @@ fn package_from_template_previews_and_replaces_in_one_step() -> Fallible<()> {
 
 #[test]
 fn a_package_row_is_saved_as_a_draft_and_publishes() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let ids = new_from(
         &mut engine,
         NewFromTemplate {
@@ -920,7 +920,7 @@ fn row_publish_findings_name_each_problem() -> Fallible<()> {
     );
     // Through the engine: a bad row does not publish, and the engine is
     // unchanged.
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let Outcome::DraftCreated { id } = apply(
         &mut engine,
         LibraryCommand::NewDraft {
@@ -982,7 +982,7 @@ fn preset_rows_are_valid_estimated_rows() {
 /// starter rows: the gallery is populated with no library source added.
 #[test]
 fn a_fresh_engine_lists_the_built_in_starter_rows() -> Fallible<()> {
-    let engine = Engine::default();
+    let engine = Engine::profiled()?;
     let all = |query: &str| templates_with(&engine, query, &CatalogContext::default());
     for query in [
         "qfn 48",
@@ -1093,7 +1093,7 @@ fn every_template_row_builds_family_correct_lands() -> Fallible<()> {
     }
     assert!(sources.len() > 150);
     for (name, source, definition) in sources {
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let ids = new_from(
             &mut engine,
             NewFromTemplate {
@@ -1275,7 +1275,7 @@ fn built_drafts_record_the_row_identity() -> Fallible<()> {
 /// no repeated `EP`, no missing number.
 #[test]
 fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let ids = new_from(
         &mut engine,
         NewFromTemplate {
@@ -1339,7 +1339,7 @@ fn a_replaced_package_is_designated_from_the_new_form() -> Fallible<()> {
 /// never filled by position.
 #[test]
 fn terminals_carry_over_by_number_and_a_mismatch_is_reported() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let ids = bridge(&mut engine)?;
     // The SOIC-8's terminals numbered in reverse list order (as an import
     // whose rows are not in pin order leaves them), and its first terminal
@@ -1462,7 +1462,7 @@ fn terminals_carry_over_by_number_and_a_mismatch_is_reported() -> Fallible<()> {
 /// order, renumbers them from the new form and says so.
 #[test]
 fn matching_by_position_is_explicit_and_flagged() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let ids = bridge(&mut engine)?;
     let draft = engine.drafts().get(ids[2]).ok_or("package")?.clone();
     let Definition::Package(mut package) = draft.definition else {
@@ -1566,7 +1566,7 @@ fn bridge(engine: &mut Engine) -> Fallible<Vec<DefinitionId>> {
 
 #[test]
 fn a_missing_footprint_is_created_and_bound_in_one_step() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let (ids, request) = without_footprint(&mut engine)?;
     let before = engine.to_file();
     let revision = engine.revision();
@@ -1634,7 +1634,7 @@ fn a_missing_footprint_is_created_and_bound_in_one_step() -> Fallible<()> {
 
 #[test]
 fn a_created_footprint_without_one_binding_reports_what_to_bind() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let (ids, request) = without_footprint(&mut engine)?;
     // A second binding draft of the package: which one uses the footprint
     // is the author's choice.
@@ -1716,7 +1716,7 @@ fn set_counters(
 
 #[test]
 fn package_from_template_allocates_valid_ids_from_any_counter() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let ids = bridge(&mut engine)?;
     let held: Vec<u32> = match &engine.drafts().get(ids[3]).ok_or("footprint")?.definition {
         Definition::Footprint(f) => f
@@ -1790,7 +1790,7 @@ fn package_from_template_allocates_valid_ids_from_any_counter() -> Fallible<()> 
     )?;
 
     // An exhausted counter is refused and changes nothing.
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let ids = bridge(&mut engine)?;
     set_counters(&mut engine, &ids, 9, u32::MAX)?;
     let before = engine.to_file();
@@ -1818,7 +1818,7 @@ fn no_lead_and_chip_starter_rows_keep_the_mask_web() -> Fallible<()> {
         ) {
             continue;
         }
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let ids = new_from(
             &mut engine,
             NewFromTemplate {
@@ -2008,7 +2008,7 @@ fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
             } else {
                 (SymbolKind::Diode, "D")
             };
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let (symbol, designator) = starter_build(&mut engine, name, None, None)?;
         assert_eq!(designator, prefix, "{name}");
         assert_eq!(
@@ -2028,7 +2028,7 @@ fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
 /// differs from the package's is refused with the document unchanged.
 #[test]
 fn prefix_explicit_symbol_and_conventions_choose_the_drawing() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let (diode, _) = starter_build(&mut engine, "Tantalum case A (3216-18)", Some("D"), None)?;
     assert_eq!(
         diode,
@@ -2101,7 +2101,7 @@ const USB_C: &str = "USB-C receptacle, USB 2.0, 16 contacts, top mount (GCT USB4
 #[test]
 fn the_usb_c_template_emits_its_opening() -> Fallible<()> {
     use crate::library::datum::{DatumProfile, PackageDatumGeometry, PackageDatumOrigin};
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let row = crate::library::templates::starter::row(USB_C)?;
     let ids = new_from(
         &mut engine,
@@ -2156,7 +2156,7 @@ fn the_usb_c_template_emits_its_opening() -> Fallible<()> {
 /// the drawing's lands and its provenance, and it publishes.
 #[test]
 fn a_usb_c_receptacle_is_found_built_mapped_and_published() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     for query in ["usb", "USB-C", "usb-c", "type-c", "Type-C", "connector"] {
         assert!(
             starter_hits(&engine, query)?.iter().any(|n| n == USB_C),
@@ -2394,7 +2394,7 @@ fn chip_passives_carry_their_value_fields() -> Fallible<()> {
             "100 nF",
         ),
     ] {
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let before = engine.to_file();
         let ids = {
             let row = crate::library::templates::starter::row(name)?;
@@ -2448,7 +2448,7 @@ fn a_chip_led_is_found_drawn_marked_and_carries_its_fields() -> Fallible<()> {
         ("Chip LED 0603 (1608 metric)", [0.8, 0.8], 0.825),
         ("Chip LED 0805 (2012 metric)", [1.25, 1.1], 1.175),
     ] {
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         for query in ["led", "LED", "light", "diode", "chip led"] {
             assert!(
                 starter_hits(&engine, query)?.iter().any(|n| n == name),
@@ -2571,7 +2571,7 @@ fn a_chip_led_is_found_drawn_marked_and_carries_its_fields() -> Fallible<()> {
 /// the fields follow the construction, not a drawing choice.
 #[test]
 fn an_led_symbol_on_another_row_keeps_that_rows_fields() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let name = "Chip capacitor 0603 (1608 metric)";
     let row = crate::library::templates::starter::row(name)?;
     let ids = new_from(
@@ -2605,7 +2605,7 @@ fn an_led_symbol_on_another_row_keeps_that_rows_fields() -> Fallible<()> {
 /// A client that types its own fields asks for none: nothing is imported.
 #[test]
 fn without_fields_imports_nothing() -> Fallible<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let name = "Chip resistor 0603 (1608 metric)";
     let row = crate::library::templates::starter::row(name)?;
     new_from(
@@ -2630,7 +2630,7 @@ fn without_fields_imports_nothing() -> Fallible<()> {
 #[test]
 fn publish_from_template_is_one_atomic_step() -> crate::diagnostics::Result<()> {
     let rows = starter::rows().map_err(|why| Error::Invalid(why.to_owned()))?;
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     for row in rows {
         let before = engine.project().library.components.len();
         let request = NewFromTemplate {

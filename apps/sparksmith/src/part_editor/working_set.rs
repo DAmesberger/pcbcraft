@@ -86,7 +86,12 @@ impl Template {
             Self::Header => {
                 samples::two_terminal_header(self.name(), samples::Kind::CONNECTOR, refs)
             }
-            Self::Package(preset) => samples::packaged(self.name(), preset, refs),
+            Self::Package(preset) => samples::packaged(
+                self.name(),
+                preset,
+                refs,
+                &sparksmith_core::rules::DesignRules::default(),
+            ),
         }
     }
 }

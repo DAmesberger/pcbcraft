@@ -42,7 +42,7 @@ pub fn build(pick: FolderPick, bundle: Bundle) -> Result<Preview, String> {
     let report = sparksmith_core::catalog::preview::inspect_bundle(&bundle, None, None)
         .ok()
         .map(Arc::new);
-    let mut engine = Engine::default();
+    let mut engine = sparksmith_io::new_project::engine().map_err(|e| e.to_string())?;
     let component = import(&mut engine, bundle.clone())?;
     working_set::draft_closure(&mut engine, component).map_err(|e| e.to_string())?;
     if WorkingSet::of(engine.drafts(), component.id).is_none() {

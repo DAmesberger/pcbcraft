@@ -122,7 +122,7 @@ fn user_session(engine: Engine) -> Session {
 
 /// A session, optionally starting from a project file.
 fn open(path: Option<&String>) -> Result<Session> {
-    let mut session = user_session(Engine::default());
+    let mut session = user_session(sparksmith_io::new_project::engine()?);
     if let Some(path) = path {
         let revision = session.engine().revision();
         execute(
@@ -207,6 +207,9 @@ fn run() -> Result<()> {
     sparksmith_io::settings::adopt_former_folders();
     // The standards every engine draws on, from the shipped library.
     sparksmith_io::standards::install_shipped()?;
+    // What a new project starts with (fab profile, stackup, board size),
+    // from the shipped library, once.
+    sparksmith_io::new_project::shipped()?;
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.as_slice() {
         [command] if command == "commands" => print(&session::schemas()),
@@ -250,13 +253,17 @@ fn run() -> Result<()> {
             }
             let engine = if command == "showcase" {
                 let choice = rest.get(1).map(String::as_str);
-                session::showcase(sparksmith_io::rule_profiles::for_new_board_from_env(
-                    choice,
-                )?)?
+                session::showcase(
+                    &sparksmith_io::new_project::shipped()?.presets,
+                    sparksmith_io::rule_profiles::for_new_board_from_env(choice)?,
+                )?
             } else {
-                Engine::from_file(sparksmith_core::format::EditorFile {
+                sparksmith_io::new_project::open(sparksmith_core::format::EditorFile {
                     version: sparksmith_core::format::FILE_VERSION,
-                    project: sparksmith_core::catalog::synthetic::project(24)?,
+                    project: sparksmith_core::catalog::synthetic::project(
+                        24,
+                        &sparksmith_io::new_project::shipped()?.board,
+                    )?,
                     drafts: Default::default(),
                 })?
             };
@@ -342,9 +349,12 @@ fn sample_library(path: &str, name: &str) -> Result<()> {
     if std::path::Path::new(path).try_exists()? {
         return Err("output exists; choose a new folder".into());
     }
-    let engine = Engine::from_file(sparksmith_core::format::EditorFile {
+    let engine = sparksmith_io::new_project::open(sparksmith_core::format::EditorFile {
         version: sparksmith_core::format::FILE_VERSION,
-        project: sparksmith_core::catalog::synthetic::project_with_parts(24)?,
+        project: sparksmith_core::catalog::synthetic::project_with_parts(
+            24,
+            &sparksmith_io::new_project::shipped()?.board,
+        )?,
         drafts: Default::default(),
     })?;
     let mut session = Session::new(engine);
@@ -517,7 +527,10 @@ mod mcp_option_tests {
         let folder = dir.path().join("library").display().to_string();
         let engine = Engine::from_file(sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project_with_parts(2)?,
+            project: sparksmith_core::catalog::synthetic::project_with_parts(
+                2,
+                &sparksmith_core::NewBoard::fixture(),
+            )?,
             drafts: Default::default(),
         })?;
         session::publish_library(&mut Session::new(engine), &folder, "Mine")?;

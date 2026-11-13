@@ -281,7 +281,7 @@ mod tests {
             assert_eq!(dome.layer, Some(CopperLayer::from(side)));
             assert_eq!(dome.item, Some(7));
             // It covers the ring and its skirt, above the copper's crown.
-            let crown = 0.035 + sparksmith_core::MASK_UM / 1000.0;
+            let crown = 0.035 + sparksmith_core::Stackup::default().mask_um / 1000.0;
             // The shipped tent skirt.
             let r = 0.3 + 0.08;
             assert!((dome.max[0] - dome.min[0] - 2.0 * r).abs() < 1e-6);

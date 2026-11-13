@@ -16,7 +16,7 @@ use crate::{
 fn catalog() -> Result<Engine> {
     Engine::from_file(EditorFile {
         version: FILE_VERSION,
-        project: synthetic::project(6)?,
+        project: synthetic::project(6, &crate::NewBoard::fixture())?,
         drafts: Drafts::default(),
     })
 }

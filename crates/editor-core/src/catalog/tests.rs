@@ -8,7 +8,7 @@ type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 fn engine(parts: usize) -> Result<Engine> {
     Engine::from_file(EditorFile {
         version: FILE_VERSION,
-        project: synthetic::project(parts)?,
+        project: synthetic::project(parts, &crate::NewBoard::fixture())?,
         drafts: Drafts::default(),
     })
 }

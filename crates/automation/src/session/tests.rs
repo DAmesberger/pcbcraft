@@ -420,7 +420,10 @@ fn select_functions_through_json_returns_the_engine_resolution() -> TestResult {
 fn parts_session() -> std::result::Result<Session, Box<dyn std::error::Error>> {
     let file = EditorFile {
         version: sparksmith_core::format::FILE_VERSION,
-        project: sparksmith_core::catalog::synthetic::project(24)?,
+        project: sparksmith_core::catalog::synthetic::project(
+            24,
+            &sparksmith_core::NewBoard::fixture(),
+        )?,
         drafts: Drafts::default(),
     };
     Ok(Session::new(Engine::from_file(file)?))

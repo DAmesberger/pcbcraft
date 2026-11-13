@@ -698,8 +698,8 @@ fn check_pair(project: &Project, pair: &DiffPair, lengths: &Measured, findings: 
             ],
         ));
     }
-    if let Some(target) = signal.diff_impedance {
-        impedance_of_runs(project, pair, target, signal.tolerance_pct(), &c, findings);
+    if let (Some(target), Some(tolerance)) = (signal.diff_impedance, signal.tolerance_pct()) {
+        impedance_of_runs(project, pair, target, tolerance, &c, findings);
     }
 }
 
@@ -730,9 +730,12 @@ fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
             unreferenced.insert((track.net, track.layer));
             continue;
         };
+        let Some(tolerance) = signal.tolerance_pct() else {
+            continue;
+        };
         let z = line.structure.z0(track.width, line.t);
         let off = (z - target).abs() / target * 100.0;
-        if off > signal.tolerance_pct() + 1e-9 {
+        if off > tolerance + 1e-9 {
             let entry = worst
                 .entry((track.net, track.layer))
                 .or_insert((off, z, track.id, target));
@@ -750,7 +753,10 @@ fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
                 layer.name(),
                 z,
                 target,
-                mm(rules.signal(super::net_class(project, net)).tolerance_pct())
+                mm(rules
+                    .signal(super::net_class(project, net))
+                    .tolerance_pct()
+                    .unwrap_or_default())
             ),
             vec![ObjectRef::Net { id: net }, ObjectRef::Track { id: track }],
         ));

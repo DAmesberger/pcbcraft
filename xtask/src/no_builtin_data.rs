@@ -28,9 +28,6 @@ enum Reason {
     UiAsset,
     /// The MCP prompt served from a skill.
     SkillPrompt,
-    /// Library data another change is moving to `library/`; remove the
-    /// entry when it lands.
-    BeingMoved,
     /// In-code templates the generator modules replace in slice GP5.
     UntilGp5,
 }
@@ -59,19 +56,6 @@ const ALLOWED: &[(&str, &str, Reason)] = &[
         "skills/sparksmith-datasheet-part/SKILL.md",
         Reason::SkillPrompt,
     ),
-    // Being moved: assistant run profiles.
-    // Being moved: fab profiles.
-    (
-        "crates/io/src/rule_profiles.rs",
-        "examples/profiles/jlcpcb-2-layer-1oz.json",
-        Reason::BeingMoved,
-    ),
-    (
-        "crates/io/src/rule_profiles.rs",
-        "examples/profiles/jlcpcb-4-layer-1oz.json",
-        Reason::BeingMoved,
-    ),
-    // Being moved: built-in part files.
     // Until GP5: the starter package rows, which generator modules replace.
     (
         "crates/editor-core/src/library/templates/starter.rs",
@@ -581,7 +565,7 @@ mod tests {
         )])?;
         let allowed = [
             ("crates/ui/src/fonts.rs", "fonts/Plex.ttf", Reason::UiAsset),
-            ("crates/ui/src/gone.rs", "old.json", Reason::BeingMoved),
+            ("crates/ui/src/gone.rs", "old.json", Reason::UntilGp5),
         ];
         let report = review(&sites, &allowed);
         assert_eq!(report.allowed.len(), 1);

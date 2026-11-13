@@ -63,9 +63,9 @@ pub struct NewParams {
     /// The revision of the last reply; refused as stale when the document
     /// has moved since.
     pub expected_revision: u64,
-    /// The board's fab profile: a library or built-in id, or a whole
+    /// The board's fab profile: a library or shipped id, or a whole
     /// profile file's `profile`. Omitted: the Settings default, else the
-    /// built-in `jlcpcb-2-layer-1oz`.
+    /// shipped default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<sparksmith_core::fabrication::ProfileChoice>,
 }
@@ -775,7 +775,7 @@ impl Request {
             info::<NewParams>(
                 "project.new",
                 "Start a new empty project at expected_revision with its board's fab profile, clearing history.",
-                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the Settings default, else built-in jlcpcb-2-layer-1oz. Refused without changes on a stale revision.",
+                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the Settings default, else the shipped default. Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",
@@ -1031,7 +1031,6 @@ impl CommandInfo {
 
 /// A headless editing session: one engine, the current file path and the
 /// library sources.
-#[derive(Default)]
 pub struct Session {
     engine: Engine,
     path: Option<PathBuf>,
@@ -1044,21 +1043,36 @@ pub struct Session {
     shipped: Option<sparksmith_io::shipped::ShippedLibrary>,
 }
 
+/// A test fixture, never in the product: a session on the core's fixture
+/// engine ([`Engine::default`]).
+#[cfg(any(test, feature = "test-fixtures"))]
+impl Default for Session {
+    fn default() -> Self {
+        Self::new(Engine::default())
+    }
+}
+
 impl Session {
     pub fn new(engine: Engine) -> Self {
-        Self {
-            engine,
-            ..Self::default()
-        }
+        Self::with_sources(engine, sources::Sources::default())
     }
     /// A session with the given library sources, e.g.
     /// [`sources::Sources::from_env`].
     pub fn with_sources(engine: Engine, sources: sources::Sources) -> Self {
         Self {
             engine,
+            path: None,
             sources,
-            ..Self::default()
+            compact: false,
+            baseline: None,
+            shipped: None,
         }
+    }
+    /// A session without a project of its own, for a host that only lends
+    /// it engines ([`Session::lend`]) or forwards its calls to an open
+    /// window ([`Engine::placeholder`]).
+    pub fn lending() -> Self {
+        Self::new(Engine::placeholder())
     }
     pub fn sources(&self) -> &sources::Sources {
         &self.sources
@@ -1092,6 +1106,9 @@ impl Session {
         self.ensure_generators();
         // Once per process; later calls only read it.
         crate::load_materials();
+        // The new-project defaults, once per process; a failure is kept and
+        // returned, naming the file, by the request that needs them.
+        let _ = sparksmith_io::new_project::shipped();
         // The one revision check of every document-changing request.
         if let Some(expected) = request.expected_revision() {
             self.engine.check_revision(expected)?;
@@ -1135,7 +1152,7 @@ impl Session {
                         .collect();
                     let dirs = sparksmith_io::settings::UserDirs::from_env()?;
                     let listing =
-                        sparksmith_io::rule_profiles::ProfileLibrary::from_dirs(&dirs).list()?;
+                        sparksmith_io::rule_profiles::ProfileLibrary::from_dirs(&dirs)?.list()?;
                     for p in listing.profiles.into_iter().chain(listing.builtins) {
                         if !profiles.iter().any(|q| q.id == p.id) {
                             profiles.push(p);
@@ -1179,7 +1196,7 @@ impl Session {
                     }
                     None => sparksmith_io::rule_profiles::for_new_board_from_env(None)?,
                 };
-                let mut project = Project::default();
+                let mut project = Project::new(&sparksmith_io::new_project::shipped()?.board);
                 sparksmith_core::rules::apply(
                     &mut project.rules,
                     sparksmith_core::rules::RulesCommand::SetProfile {
@@ -1198,6 +1215,8 @@ impl Session {
                 let path = PathBuf::from(params.path);
                 let file = sparksmith_io::read_project(&path)?;
                 self.engine.replace_document(file)?;
+                self.engine
+                    .supply_dk_estimates(&sparksmith_io::new_project::shipped()?.presets.glass_dk);
                 self.path = Some(path);
             }
             Request::Save(params) => {
@@ -1735,11 +1754,12 @@ mod two_way_tests;
 
 /// The shipped showcase ([`sparksmith_core::Engine::showcase_hosted`]) on
 /// SolidCraft's sketch engine: its sketched board, cutout, slot and
-/// edge-held header included, on `profile`.
+/// edge-held header included, on `profile` and `presets`' stackups.
 pub fn showcase(
+    presets: &sparksmith_core::StackupPresets,
     profile: sparksmith_core::rules::RuleProfile,
 ) -> sparksmith_core::Result<sparksmith_core::Engine> {
-    sparksmith_core::Engine::showcase_hosted(hosted(), profile)
+    sparksmith_core::Engine::showcase_hosted(hosted(), presets, profile)
 }
 
 /// The host evaluators every applied operation gets: SolidCraft's sketch

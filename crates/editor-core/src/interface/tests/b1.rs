@@ -125,7 +125,7 @@ fn sketched() -> Fallible<Engine> {
             holes: vec![hole(1, [4.0, 4.0]), hole(2, [56.0, 4.0])],
             edges: Vec::new(),
         },
-        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        outline_fit: 0.01,
         fault: None,
         idle: Vec::new(),
     }));

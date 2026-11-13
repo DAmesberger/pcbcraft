@@ -120,7 +120,10 @@ fn context() -> egui::Context {
 
 fn library() -> Result<(tempfile::TempDir, ProfileLibrary), Box<dyn std::error::Error>> {
     let dir = tempfile::tempdir()?;
-    let library = ProfileLibrary::new(dir.path().join(rule_profiles::PROFILES_DIR));
+    let library = ProfileLibrary::new(
+        dir.path().join(rule_profiles::PROFILES_DIR),
+        sparksmith_io::shipped::ShippedLibrary::locate()?,
+    );
     Ok((dir, library))
 }
 
@@ -680,7 +683,11 @@ fn a_new_project_asks_for_a_profile_with_jlcpcb_preselected() -> TestResult {
         click(&mut editor, &engine, &ctx, "Use profile")?.ok_or("Use profile did nothing")?;
     assert_eq!(marked(&ctx), Some(Origin::Dialog(choose_id())));
     engine.apply(engine.revision(), use_it)?;
-    let builtin = rule_profiles::builtin(rule_profiles::DEFAULT_BUILTIN).ok_or("built-in")?;
+    let shipped = sparksmith_io::new_project::shipped()?.fab_profile;
+    let builtin = rule_profiles::shipped_from_env()?
+        .into_iter()
+        .find(|p| p.id == shipped)
+        .ok_or("shipped default")?;
     assert_eq!(engine.project().rules.profile.as_ref(), Some(&builtin));
     assert_eq!(builtin, fixtures::jlcpcb_example()?, "the shipped file");
     frame(&mut editor, &engine, &ctx, vec![]);

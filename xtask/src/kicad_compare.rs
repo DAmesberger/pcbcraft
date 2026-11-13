@@ -134,7 +134,8 @@ fn kind_of(e: &dyn std::error::Error) -> String {
 
 fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     let bytes = std::fs::read(board)?;
-    let imported = sparksmith_kicad::import(&bytes)?;
+    let defaults = sparksmith_io::new_project::shipped()?;
+    let imported = sparksmith_kicad::import(&bytes, &defaults.board, &defaults.presets)?;
     let project = board.with_extension("kicad_pro");
     let project = project.is_file().then_some(project);
     let copper = imported.report.counts.copper_layers;
@@ -307,7 +308,9 @@ mod tests {
               (property \"Value\" \"QQSECRETVALUE\" (at 0 0 0) (layer \"F.Fab\")) \
               (pad \"QQ7\" smd rect (at 0.4321 0 90) (size 1.2345 0.6789) (layers \"F.Cu\" \"F.Paste\" \"F.Mask\") \
                 (net 1 \"QQSECRETNET\") (pinfunction \"QQPINFN\") (zqxtoken 1))))";
-        let imported = sparksmith_kicad::import(text.as_bytes())?;
+        let defaults = sparksmith_io::new_project::shipped()?;
+        let imported =
+            sparksmith_kicad::import(text.as_bytes(), &defaults.board, &defaults.presets)?;
         let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
         let ours: Vec<File> = set
             .files

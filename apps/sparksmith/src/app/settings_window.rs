@@ -591,20 +591,20 @@ fn lists_rows(ui: &mut egui::Ui, lists: &mut sparksmith_io::settings::ListSettin
 }
 
 /// The Default fab profile choices: none, then every readable profile of
-/// the user's library by name, then the built-ins none of them replaces.
+/// the user's library by name, then the shipped ones none of them replaces.
 fn profile_choices() -> Vec<(Option<String>, String)> {
-    use sparksmith_io::rule_profiles::{ProfileLibrary, builtins};
+    use sparksmith_io::rule_profiles::{ProfileLibrary, shipped_from_env};
     let mut out = vec![(None, "None: choose for each board".to_owned())];
     let listing = sparksmith_io::settings::UserDirs::from_env()
         .ok()
-        .and_then(|dirs| ProfileLibrary::from_dirs(&dirs).list().ok());
+        .and_then(|dirs| ProfileLibrary::from_dirs(&dirs).ok()?.list().ok());
     let profiles: Vec<_> = match listing {
         Some(listing) => listing
             .profiles
             .into_iter()
             .chain(listing.builtins)
             .collect(),
-        None => builtins(),
+        None => shipped_from_env().unwrap_or_default(),
     };
     out.extend(profiles.into_iter().map(|p| (Some(p.id), p.name)));
     out

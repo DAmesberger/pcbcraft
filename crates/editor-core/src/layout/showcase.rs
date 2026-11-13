@@ -29,7 +29,7 @@ use crate::library::footprint_source::{
 use crate::model::board::{BoardShape, ConstraintTarget};
 use crate::model::dimension::{BoardRef, FeatureRef, PartDimensionSpec, PartRelation};
 use crate::model::fill::{FillSettings, FillSpec, PadConnections};
-use crate::model::{CopperLayer, Layer, Project, Stackup};
+use crate::model::{CopperLayer, Layer, Project, StackupPresets};
 use crate::rules::{NetClassSpec, PadConnection};
 
 /// The showcase board outline, in mm.
@@ -317,7 +317,7 @@ fn tracks(net: Id, layer: CopperLayer, width: f64, points: &[Point]) -> Vec<Rout
 
 /// The layout commands that build the showcase board over `project`,
 /// whose instances and nets carry the showcase designators and net names.
-pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
+pub fn commands(project: &Project, presets: &StackupPresets) -> Result<Vec<LayoutCommand>> {
     let rules = project.rules.require()?.rules().clone();
     let instance = |designator: &str| {
         project
@@ -334,7 +334,7 @@ pub fn commands(project: &Project) -> Result<Vec<LayoutCommand>> {
             .ok_or_else(|| Error::NotFound(format!("showcase net {name}")))
     };
     let mut commands = vec![
-        LayoutCommand::SetStackup(Stackup::preset(4)?),
+        LayoutCommand::SetStackup(presets.preset(4)?),
         LayoutCommand::SetBoardSize { size: BOARD_MM },
     ];
     for (designator, position, rotation_deg, layer) in PLACEMENTS {

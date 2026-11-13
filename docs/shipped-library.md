@@ -28,6 +28,7 @@ If none is found, the message lists every folder searched and names the variable
 | Parts | `parts/` | Part files (`.solidcraft`), each with a sidecar |
 | Templates | `templates/` | Package templates and starter rows |
 | Generators | `generators/` | Built generator modules, `<name>.wasm` ([generator plugins](generator-plugins.md)) |
+| Defaults | `defaults/` | What a new project starts with: its fab profile, stackup and board size (`new-project.json`) |
 
 ## Rules
 

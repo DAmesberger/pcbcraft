@@ -684,7 +684,6 @@ pub fn name_by_file(project: &mut Arc<Project>, file: &std::path::Path) -> Optio
 /// Every mutation is staged on a candidate and validated before it replaces
 /// the document, so a failed operation leaves document, revision and history
 /// unchanged.
-#[derive(Default)]
 pub struct Engine {
     document: Document,
     revision: u64,
@@ -743,11 +742,64 @@ impl Engine {
         self.waiver_reason_required
     }
 
-    /// An engine for an already validated file, with empty history.
-    pub fn from_file(file: format::EditorFile) -> Result<Self> {
-        let mut engine = Self::default();
+    fn with_document(document: Document) -> Self {
+        Self {
+            document,
+            revision: 0,
+            undo: VecDeque::new(),
+            redo: Vec::new(),
+            last_step: None,
+            waiver_reason_required: false,
+            copper: std::sync::OnceLock::new(),
+            rerouted: layout::router::reroute::Rerouted::default(),
+            generators: None,
+        }
+    }
+
+    /// An engine without a board (no layers, no size, which every check
+    /// refuses): only for a host that lends it other engines' documents
+    /// (a session forwarding to an open window) and never edits its own.
+    pub fn placeholder() -> Self {
+        Self::with_document(Document::empty_for_file())
+    }
+
+    /// An engine on a new, empty project on `board` (the shipped new-board
+    /// data `sparksmith-io` loads), with empty history.
+    pub fn new(board: &NewBoard) -> Self {
+        Self::with_document(Document {
+            project: Arc::new(Project::new(board)),
+            drafts: Arc::default(),
+        })
+    }
+
+    /// An engine for an already validated file, with empty history. A file
+    /// never carries Dk estimates: its stackup takes `dk_estimates` (the
+    /// shipped stackup data, [`Stackup::dk_estimates`]).
+    pub fn from_file_with(file: format::EditorFile, dk_estimates: &GlassDk) -> Result<Self> {
+        let mut engine = Self::with_document(Document::empty_for_file());
+        Arc::make_mut(&mut engine.document.project)
+            .stackup
+            .dk_estimates = Unsaved(dk_estimates.clone());
         engine.replace_document(file)?;
         Ok(engine)
+    }
+
+    /// Give the document's stackup the Dk estimates `dk_estimates` when it
+    /// has none (a file opened into an engine that had none to keep).
+    /// They are never saved and take no part in revisions or undo.
+    pub fn supply_dk_estimates(&mut self, dk_estimates: &GlassDk) {
+        if self.document.project.stackup.dk_estimates.0.0.is_empty() {
+            Arc::make_mut(&mut self.document.project)
+                .stackup
+                .dk_estimates = Unsaved(dk_estimates.clone());
+        }
+    }
+
+    /// A test fixture, never in the product: [`Engine::from_file_with`] the
+    /// fixture stackup's Dk estimates.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn from_file(file: format::EditorFile) -> Result<Self> {
+        Self::from_file_with(file, &StackupPresets::fixture()?.glass_dk)
     }
 
     /// The PCB realism showcase: a 4-layer board with an SOIC-8, a QFN-16,
@@ -757,15 +809,20 @@ impl Engine {
     ///
     /// Unconnected terminals are marked no-connect. The board's rules are
     /// `profile`. The undo history is cleared.
-    pub fn showcase_with(profile: rules::RuleProfile) -> Result<Self> {
-        Self::showcase_in(None, profile)
+    /// Its stackups are `presets`' (the shipped stackup data).
+    pub fn showcase_with(presets: &StackupPresets, profile: rules::RuleProfile) -> Result<Self> {
+        Self::showcase_in(None, presets, profile)
     }
 
     /// A test fixture, never in the product: [`Engine::showcase_with`] the
     /// test prototype profile, whose values the showcase was drawn for.
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase() -> Result<Self> {
-        Self::showcase_in(None, rules::fixtures::prototype()?)
+        Self::showcase_in(
+            None,
+            &StackupPresets::fixture()?,
+            rules::fixtures::prototype()?,
+        )
     }
 
     /// The showcase as the shipped file shows it: [`Engine::showcase`]
@@ -776,20 +833,33 @@ impl Engine {
     /// last, over the final shape. The undo history is cleared.
     pub fn showcase_hosted(
         evaluators: Evaluators<'_>,
+        presets: &StackupPresets,
         profile: rules::RuleProfile,
     ) -> Result<Self> {
-        Self::showcase_in(Some(evaluators), profile)
+        Self::showcase_in(Some(evaluators), presets, profile)
     }
 
     /// A test fixture, never in the product: [`Engine::showcase_hosted`]
     /// on the test prototype profile.
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase_hosted_fixture(evaluators: Evaluators<'_>) -> Result<Self> {
-        Self::showcase_in(Some(evaluators), rules::fixtures::prototype()?)
+        Self::showcase_in(
+            Some(evaluators),
+            &StackupPresets::fixture()?,
+            rules::fixtures::prototype()?,
+        )
     }
 
-    fn showcase_in(hosted: Option<Evaluators<'_>>, profile: rules::RuleProfile) -> Result<Self> {
-        let mut engine = Self::default();
+    fn showcase_in(
+        hosted: Option<Evaluators<'_>>,
+        presets: &StackupPresets,
+        profile: rules::RuleProfile,
+    ) -> Result<Self> {
+        let showcase_rules = profile.rules().clone();
+        let mut engine = Self::new(&NewBoard {
+            size: layout::showcase::BOARD_MM,
+            stackup: presets.preset(MIN_COPPER_LAYERS)?,
+        });
         engine.apply(
             engine.revision,
             Operation::Rules(rules::RulesCommand::SetProfile {
@@ -806,8 +876,14 @@ impl Engine {
         let mut refs = Vec::new();
         for part in samples::showcase_parts() {
             let lineages = engine.reserve_lineages()?;
-            let mut part_edits =
-                samples::packaged_symbol(part.name, part.form, part.prefix, part.symbol, lineages)?;
+            let mut part_edits = samples::packaged_symbol(
+                part.name,
+                part.form,
+                part.prefix,
+                part.symbol,
+                lineages,
+                &showcase_rules,
+            )?;
             samples::trim_heels(&mut part_edits, part.heel_trim_mm)?;
             if part.pin_one {
                 samples::mark_pin_one(&mut part_edits);
@@ -932,7 +1008,7 @@ impl Engine {
                 }),
             )?;
         }
-        for command in layout::showcase::commands(engine.project())? {
+        for command in layout::showcase::commands(engine.project(), presets)? {
             engine.apply(engine.revision, Operation::Layout(command))?;
         }
         for command in layout::showcase::fill_commands(engine.project())? {
@@ -1209,7 +1285,12 @@ impl Engine {
     pub fn replace_document(&mut self, file: format::EditorFile) -> Result<()> {
         file.validate()?;
         let revision = self.next_revision()?;
-        self.document = file.into_document();
+        let estimates = self.document.project.stackup.dk_estimates.clone();
+        let mut document = file.into_document();
+        if document.project.stackup.dk_estimates.0.0.is_empty() {
+            Arc::make_mut(&mut document.project).stackup.dk_estimates = estimates;
+        }
+        self.document = document;
         self.set_revision(revision);
         self.undo.clear();
         self.redo.clear();
@@ -1303,7 +1384,7 @@ impl Engine {
             waiver_reason_required: self.waiver_reason_required,
             copper: self.copper.clone(),
             generators: self.generators.clone(),
-            ..Engine::default()
+            ..Engine::with_document(self.document.clone())
         };
         let mut outcomes = Vec::with_capacity(count);
         let mut rerouted = layout::router::reroute::Rerouted::default();
@@ -2263,4 +2344,13 @@ pub fn schemas() -> serde_json::Value {
         "pinout": library::pinout::schema(),
         "pin_config": firmware::schema(),
     })
+}
+
+/// A test fixture, never in the product: an engine on the fixture project
+/// ([`Project::default`]).
+#[cfg(any(test, feature = "test-fixtures"))]
+impl Default for Engine {
+    fn default() -> Self {
+        Self::with_document(Document::default())
+    }
 }

@@ -31,7 +31,7 @@ fn replay(reference: &Reference) -> Fallible {
         Some(&example.join("assist-profiles")),
     )?;
     assert_eq!(config.run_profile.name, "qwen3.8-flash-next");
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");
     let f = &outcome.facts;

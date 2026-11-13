@@ -149,6 +149,9 @@ impl App {
         // standard fields, the generic-part grammar), from the shipped
         // library, before the first engine is made.
         sparksmith_io::standards::install_shipped()?;
+        // What a new project starts with (fab profile, stackup, board
+        // size), from the shipped library, once.
+        sparksmith_io::new_project::shipped()?;
         follow_system_theme(&cc.egui_ctx, true);
         // Solidcraft's icons and glyphs, which its UI kit draws only once
         // a host installs them (once per process).
@@ -156,7 +159,7 @@ impl App {
         fonts::setup_bundled_fonts(&cc.egui_ctx);
         fonts::load_system_fonts_in_background(&cc.egui_ctx);
         let render_state = cc.wgpu_render_state.as_ref().ok_or("wgpu is required")?;
-        let mut engine = file_ui::new_project();
+        let mut engine = file_ui::new_project()?;
         let mut files = FileUi::new(cc, &engine);
         // `sparksmith FILE.sparksmith` opens that project through the file workflow.
         if let Some(path) = std::env::args_os()

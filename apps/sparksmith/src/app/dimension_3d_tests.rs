@@ -34,8 +34,12 @@ impl BoardShapeEvaluator for Counting {
     fn evaluator(&self) -> EvaluatorRef {
         SketchBoardEvaluator.evaluator()
     }
-    fn rectangle(&self, size: sparksmith_core::Point) -> sparksmith_core::Result<BoardSketch> {
-        SketchBoardEvaluator.rectangle(size)
+    fn rectangle(
+        &self,
+        size: sparksmith_core::Point,
+        outline_fit: f64,
+    ) -> sparksmith_core::Result<BoardSketch> {
+        SketchBoardEvaluator.rectangle(size, outline_fit)
     }
     fn apply_sketch(
         &self,

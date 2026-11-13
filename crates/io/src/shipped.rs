@@ -1,6 +1,7 @@
 //! The shipped library: the data that comes with Sparksmith (fab profiles,
 //! stackups, materials, standards, standard fields, catalog vocabulary,
-//! assistant profiles, part files, templates and generator modules). It is loaded as data from one
+//! assistant profiles, part files, templates, generator modules and
+//! new-project defaults). It is loaded as data from one
 //! folder, never compiled into the program, so the program holds no rules,
 //! profiles or library data of its own.
 //!
@@ -54,6 +55,8 @@ pub enum Shelf {
     Templates,
     /// Built generator modules (`generators/`).
     Generators,
+    /// What a new project starts with (`defaults/`).
+    Defaults,
 }
 
 impl Shelf {
@@ -70,6 +73,7 @@ impl Shelf {
             Self::Parts => "parts",
             Self::Templates => "templates",
             Self::Generators => "generators",
+            Self::Defaults => "defaults",
         }
     }
 }

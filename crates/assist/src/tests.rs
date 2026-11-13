@@ -12,6 +12,12 @@ use serde_json::Value;
 use sparksmith_automation::{Mode, Policy};
 use std::sync::atomic::AtomicBool;
 
+/// A session on a board with the test fixture fab profile: the estimated
+/// lands a run builds take their margins from the board's profile.
+fn profiled_session() -> Session {
+    Session::new(sparksmith_core::Engine::profiled().unwrap_or_default())
+}
+
 type Fallible<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// EXR-22: 8 + 6 + 8 castellated pads at 1.27 mm and a 2 × 2 ground array
@@ -106,7 +112,7 @@ fn reply_json(outcome: ToolOutcome) -> Fallible<Value> {
 
 /// The recorded responses of a complete run on an empty project.
 fn script() -> Fallible<Vec<Value>> {
-    script_on(Session::default())
+    script_on(profiled_session())
 }
 
 /// The recorded responses of a complete run, made against a shadow
@@ -246,7 +252,7 @@ fn run_with(
 fn a_recorded_run_authors_the_module_and_submits_its_review() -> Fallible {
     let dir = tempfile::tempdir()?;
     let mut backend = anthropic(script()?)?;
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(
         &shipped_config()?,
         &mut backend,
@@ -379,7 +385,7 @@ fn a_cancelled_run_sends_nothing_and_a_refusal_stops() -> Fallible {
         &goal(datasheet(&dir)?),
         &shipped_config()?,
         &mut backend,
-        &mut Session::default(),
+        &mut profiled_session(),
         &mut |_| {},
         &AtomicBool::new(true),
     )?;
@@ -394,7 +400,7 @@ fn a_cancelled_run_sends_nothing_and_a_refusal_stops() -> Fallible {
         &shipped_config()?,
         &mut backend,
         datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     )?;
     assert_eq!(outcome.stop, Stop::Refused("cyber".into()));
     Ok(())
@@ -406,7 +412,7 @@ fn a_tool_call_cut_off_at_max_tokens_is_not_run() -> Fallible {
     let mut cut = tool_turn("t1", "library_set_marking", json!({"draft": 1}));
     cut["stop_reason"] = json!("max_tokens");
     let mut backend = anthropic(vec![cut])?;
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let before = session.engine().revision();
     let (outcome, _) = run_with(
         &shipped_config()?,
@@ -453,7 +459,7 @@ fn pages_are_counted_for_the_estimate() -> Fallible {
 fn publishing_and_paths_outside_the_output_folder_are_refused_by_the_gate() -> Fallible {
     let dir = tempfile::tempdir()?;
     let policy = output_policy(&dir.path().join("part.sparksmith"))?;
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let before = session.engine().revision();
     // Publishing needs a person, and a run has no one to ask.
     let reply = tools::send(
@@ -513,7 +519,7 @@ fn a_gated_tool_call_comes_back_as_a_tool_result_and_the_run_goes_on() -> Fallib
         policy: Policy::new(Mode::AskEveryTime, [dir.path().to_path_buf()]),
         ..shipped_config()?
     };
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(&config, &mut backend, datasheet(&dir)?, &mut session)?;
     // The run went on to its report, which the review check refuses: with
     // nothing applied there is no component draft. The script ends there.
@@ -552,7 +558,7 @@ fn the_pinout_applies_without_a_base_or_with_it_as_text() -> Fallible {
     // A local model could not copy a 19-digit base: it wrote it as a float.
     // The base is optional, text is read, and a float is named as the cause.
     for (base, applies) in [(None, true), (Some("text"), true), (Some("float"), false)] {
-        let mut session = Session::default();
+        let mut session = profiled_session();
         let mut workspace = tools::Workspace::default();
         reply_json(execute_open(
             &mut session,
@@ -607,7 +613,7 @@ fn non_pdf_files_and_unnamed_models_are_refused() -> Fallible {
         &goal(datasheet(&dir)?),
         &config,
         &mut anthropic(vec![])?,
-        &mut Session::default(),
+        &mut profiled_session(),
         &mut |_| {},
         &AtomicBool::new(false),
     );
@@ -684,7 +690,7 @@ fn a_local_model_authors_the_module_from_text_and_a_page_view() -> Fallible {
     ];
     replies.extend(chat_script(&script()?));
     let mut backend = openai(replies, &config);
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");
     assert_eq!(outcome.report.ok_or("a report")?.part, "EXR-22");
@@ -777,7 +783,7 @@ fn replies_cut_off_at_the_limit_are_reported_never_used() -> Fallible {
     // A small context: 16 384 output tokens a request, 24 576 after a cut.
     let config = local_config(32_768)?;
     let mut backend = openai(vec![cut_reply(), cut_reply(), cut_reply()], &config);
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let before = session.engine().revision();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     let Stop::CutOff(why) = &outcome.stop else {
@@ -821,7 +827,7 @@ fn a_prompt_too_large_for_the_context_says_why_before_sending() -> Fallible {
         &config,
         &mut backend,
         text_datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     );
     let Err(error) = result else {
         return Err("expected a refusal".into());
@@ -843,7 +849,7 @@ fn token_and_time_caps_bind_a_local_model() -> Fallible {
         &config,
         &mut backend,
         text_datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     )?;
     assert!(
         matches!(&outcome.stop, Stop::Budget(why) if why.contains("30000 tokens")),
@@ -859,7 +865,7 @@ fn token_and_time_caps_bind_a_local_model() -> Fallible {
         &config,
         &mut backend,
         text_datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     )?;
     assert!(
         matches!(&outcome.stop, Stop::Budget(why) if why.contains("seconds")),
@@ -874,7 +880,7 @@ fn token_and_time_caps_bind_a_local_model() -> Fallible {
         &config,
         &mut backend,
         text_datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     )?;
     assert!(
         backend
@@ -895,7 +901,7 @@ fn a_model_declared_without_tools_says_why() -> Fallible {
         &config,
         &mut openai(vec![], &config),
         text_datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     );
     assert!(
         matches!(&result, Err(e) if e.to_string().contains("not possible with this model") && e.to_string().contains("tool calling")),
@@ -917,7 +923,7 @@ fn a_shrinking_prompt_count_warns_of_truncation() -> Fallible {
         &config,
         &mut backend,
         text_datasheet(&dir)?,
-        &mut Session::default(),
+        &mut profiled_session(),
     )?;
     assert_eq!(
         outcome.facts.warnings.len(),

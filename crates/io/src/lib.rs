@@ -11,6 +11,7 @@ pub mod interface;
 pub mod library_folder;
 pub mod library_folder_index;
 pub mod materials;
+pub mod new_project;
 pub mod pdf;
 pub mod persistence;
 pub mod recovery;

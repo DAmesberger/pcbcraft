@@ -1199,7 +1199,7 @@ fn a_part_for_a_newer_revision_is_assigned_with_the_update_in_one_step() -> Resu
 
 #[test]
 fn the_catalog_indexes_parts_with_mpn_badges_and_filters() -> Result<()> {
-    let project = catalog::synthetic::project_with_parts(6)?;
+    let project = catalog::synthetic::project_with_parts(6, &crate::NewBoard::fixture())?;
     crate::validate::document(&project, &Default::default())?;
     let index = Index::of_project(&project, &Default::default())?;
     let search = |text: &str| -> Result<Vec<String>> {

@@ -72,7 +72,7 @@ impl Default for LiveMcp {
     fn default() -> Self {
         Self {
             endpoint: None,
-            session: Session::default(),
+            session: Session::lending(),
             mode: Mode::AutoAllowEdits,
             held: None,
             open: false,
@@ -137,8 +137,11 @@ impl LiveMcp {
                 if self.place.user_sources {
                     self.session =
                         match sparksmith_automation::session::sources::Sources::from_env() {
-                            Ok(sources) => Session::with_sources(Default::default(), sources),
-                            Err(_) => Session::default(),
+                            Ok(sources) => Session::with_sources(
+                                sparksmith_core::Engine::placeholder(),
+                                sources,
+                            ),
+                            Err(_) => Session::lending(),
                         };
                 }
                 self.endpoint = Some(endpoint);

@@ -23,9 +23,9 @@ use sparksmith_core::units::{Nm, PointNm};
 use sparksmith_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, FunctionId, Id,
     InstanceCommand, LibraryCommand, Operation, Outcome, PackageRef, PackageTerminalId, PadId,
-    PhysicalChoice, Revision, Stackup, SymbolRef, TerminalId, UnitId,
+    PhysicalChoice, Revision, StackupPresets, SymbolRef, TerminalId, UnitId,
 };
-use sparksmith_core::{Engine, instances::NewInstance};
+use sparksmith_core::{Engine, NewBoard, instances::NewInstance};
 use std::collections::BTreeMap;
 
 /// Why an import failed. Messages carry no file content.
@@ -82,8 +82,14 @@ const PROVENANCE: &str = "Imported from a KiCad board's embedded footprint copy.
 /// Schematic spacing of the imported instances, mm.
 const SHEET_PITCH_MM: f64 = 25.4;
 
-/// Import the footprints of a KiCad board file.
-pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
+/// Import the footprints of a KiCad board file into a new project on
+/// `new_board`, with the board's copper count taken from `presets` (both
+/// shipped data the caller loads).
+pub fn import(
+    bytes: &[u8],
+    new_board: &NewBoard,
+    presets: &StackupPresets,
+) -> Result<Imported, ImportError> {
     let mut report = Report::default();
     let board = board::read(bytes, &mut report)?;
     report.format_version = board.version;
@@ -92,13 +98,15 @@ pub fn import(bytes: &[u8]) -> Result<Imported, ImportError> {
     report.counts.footprints_back = board.footprints.iter().filter(|f| f.back).count();
     report.add_n(Case::BoardObjects, board.other.values().sum());
     let mut session = Session {
-        engine: Engine::default(),
+        engine: Engine::new(new_board),
     };
-    if board.copper.len() != 2 {
-        let stackup = Stackup::preset(board.copper.len()).map_err(|e| ImportError::Refused {
-            step: "layout.set_stackup",
-            reason: e.to_string(),
-        })?;
+    if board.copper.len() != new_board.stackup.copper.len() {
+        let stackup = presets
+            .preset(board.copper.len())
+            .map_err(|e| ImportError::Refused {
+                step: "layout.set_stackup",
+                reason: e.to_string(),
+            })?;
         session.apply(
             "layout.set_stackup",
             Operation::Layout(LayoutCommand::SetStackup(stackup)),

@@ -12,14 +12,14 @@ use sparksmith_io::settings::UserDirs;
 use std::path::Path;
 
 /// The usage line(s).
-pub const USAGE: &str = "fab-profile list        list the user's fab profiles and the built-in ones
+pub const USAGE: &str = "fab-profile list        list the user's fab profiles and the shipped ones
   fab-profile import FILE.json
                                    add a fab profile file to the user's library
   fab-profile export ID|FILE.sparksmith NEW_FILE.json
                                    write a fab profile (or a project's effective rules)";
 
 fn library() -> Result<ProfileLibrary> {
-    Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?))
+    Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?)?)
 }
 
 fn summary(profile: &RuleProfile, kind: &str) -> serde_json::Value {
@@ -105,16 +105,19 @@ mod tests {
         list.iter().map(|s| (*s).to_owned()).collect()
     }
 
-    /// The sourced example profile file in `examples/profiles/`.
+    /// A sourced profile file of the shipped library (`library/profiles/`).
     const EXAMPLE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../examples/profiles/jlcpcb-2-layer-1oz.json"
+        "/../../library/profiles/jlcpcb-2-layer-1oz.json"
     );
 
     #[test]
     fn list_import_export_through_the_subcommand() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().join("fab-profiles"));
+        let library = ProfileLibrary::new(
+            dir.path().join("fab-profiles"),
+            sparksmith_io::shipped::ShippedLibrary::locate()?,
+        );
         let kinds = |listed: &serde_json::Value| -> Vec<(String, String)> {
             listed["profiles"]
                 .as_array()

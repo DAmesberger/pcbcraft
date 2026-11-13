@@ -27,8 +27,6 @@ pub const IMPEDANCE_RANGE: std::ops::RangeInclusive<f64> = 10.0..=200.0;
 pub const DIFF_IMPEDANCE_RANGE: std::ops::RangeInclusive<f64> = 20.0..=300.0;
 /// Impedance tolerance accepted, percent of the target.
 pub const TOLERANCE_RANGE: std::ops::RangeInclusive<f64> = 0.5..=50.0;
-/// The impedance tolerance when a class names none, percent.
-pub const DEFAULT_TOLERANCE_PCT: f64 = 10.0;
 /// Longest target length and largest length tolerance, mm.
 pub const MAX_LENGTH_MM: f64 = 10_000.0;
 
@@ -46,7 +44,8 @@ pub struct SignalRules {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_impedance: Option<f64>,
     /// How far a routed track's impedance may stray from the target,
-    /// percent ([`DEFAULT_TOLERANCE_PCT`] when unset).
+    /// percent. Unset, the target still sets routed widths but routed
+    /// impedance is not checked: a check needs a stated limit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub impedance_tolerance: Option<f64>,
     /// Longest stretch, in mm, of either half of a pair that does not run
@@ -68,9 +67,9 @@ impl SignalRules {
         *self == Self::default()
     }
 
-    /// The impedance tolerance in percent.
-    pub fn tolerance_pct(&self) -> f64 {
-        self.impedance_tolerance.unwrap_or(DEFAULT_TOLERANCE_PCT)
+    /// The impedance tolerance in percent, if the class states one.
+    pub fn tolerance_pct(&self) -> Option<f64> {
+        self.impedance_tolerance
     }
 
     /// Why these values are invalid for class `name`, or `None`.

@@ -149,6 +149,9 @@ fn usb(signal: SignalRules) -> Result<Usb> {
 fn usb90() -> SignalRules {
     SignalRules {
         diff_impedance: Some(90.0),
+        // A check needs a stated limit: without a tolerance the target
+        // only sets widths.
+        impedance_tolerance: Some(10.0),
         pair_max_skew: Some(0.1),
         pair_max_uncoupled: Some(5.0),
         ..Default::default()

@@ -113,7 +113,9 @@ pub trait BoardShapeEvaluator: Sync {
     /// A sketch of a `size` rectangle (lower-left corner at the origin)
     /// with `width`/`height` parameters driving it and its edges named
     /// [`crate::model::board::RECT_EDGES`].
-    fn rectangle(&self, size: Point) -> Result<BoardSketch>;
+    /// Its curves are fitted within `outline_fit` mm (the effective
+    /// `board.outline_fit` rule).
+    fn rectangle(&self, size: Point, outline_fit: f64) -> Result<BoardSketch>;
     /// Apply one sketch edit to a canonical sketch.
     fn apply_sketch(&self, sketch: &SketchBlob, edit: &SketchEdit) -> Result<SketchOutcome>;
     /// Solve the board with its parameters: the outline is the sketch's one
@@ -408,7 +410,8 @@ pub fn apply(
                     "board.sketch_exists: the board is already a sketch".into(),
                 ));
             }
-            let sketch = evaluator.rectangle(project.board_size)?;
+            project.rules.require()?;
+            let sketch = evaluator.rectangle(project.board_size, outline_fit(project))?;
             commit(project, sketch, evaluator)?;
             Ok(BoardApplied::Nothing)
         }
@@ -842,7 +845,7 @@ pub(crate) fn commit(
 }
 
 /// The effective `board.outline_fit` rule, mm.
-fn outline_fit(project: &Project) -> f64 {
+pub(crate) fn outline_fit(project: &Project) -> f64 {
     match project
         .rules
         .resolve(crate::rules::RuleKey::BoardOutlineFit)

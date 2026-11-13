@@ -11,10 +11,10 @@ use sparksmith_core::geometry::{Transform2, polygon_contains};
 use sparksmith_core::layout::{PlacedPad, placed_pads};
 use sparksmith_core::library::{HoleShape, MaskRule, PadKind, PadShape, PasteRule};
 use sparksmith_core::{Layer, Project};
+use sparksmith_kicad::ImportError;
 use sparksmith_kicad::board::BoardError;
 use sparksmith_kicad::report::Case;
-use sparksmith_kicad::{ImportError, import};
-use support::{Board, Footprint, Pad};
+use support::{Board, Footprint, Pad, import};
 
 type Fallible<T> = Result<T, Box<dyn std::error::Error>>;
 

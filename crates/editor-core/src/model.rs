@@ -30,8 +30,8 @@ pub use sheet::{
 };
 pub use stackup::{
     COPPER_UM_RANGE, CopperFoil, CopperLayer, DIELECTRIC_MM_RANGE, DK_RANGE, Dielectric,
-    DielectricKind, GlassStyle, MASK_LAMINATE, MASK_UM, MASK_UM_RANGE, MAX_COPPER_LAYERS,
-    MIN_COPPER_LAYERS, OUNCE_UM, Stackup,
+    DielectricKind, GlassDk, GlassStep, GlassStyle, MASK_UM_RANGE, MAX_COPPER_LAYERS,
+    MIN_COPPER_LAYERS, OUNCE_UM, PresetDielectric, Stackup, StackupPresets, Unsaved,
 };
 pub use via::{Via, ViaSpan};
 
@@ -527,8 +527,61 @@ fn interface_is_empty(table: &Shared<interface::InterfaceTable>) -> bool {
 /// a project without one.
 pub const UNTITLED: &str = "Untitled";
 
+/// What a new project's board starts as: shipped data
+/// (`library/defaults/new-project.json` and its stackup family) that
+/// `sparksmith-io` loads and hands in.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewBoard {
+    /// The board rectangle, mm.
+    pub size: Point,
+    pub stackup: Stackup,
+}
+
+/// A test fixture, never in the product: a project on the fixture stackup
+/// ([`StackupPresets::fixture`]) and a 60 × 40 mm board, the board the
+/// tests were measured on.
+#[cfg(any(test, feature = "test-fixtures"))]
 impl Default for Project {
     fn default() -> Self {
+        Self::new(&NewBoard::fixture())
+    }
+}
+
+impl NewBoard {
+    /// No board: no layers and no size, which every check and file refuses.
+    /// For a project that only carries a library to read (a catalog
+    /// preview or index), never one that is saved or edited.
+    pub fn without_board() -> Self {
+        Self {
+            size: [0.0, 0.0],
+            stackup: Stackup {
+                copper: Vec::new(),
+                dielectrics: Vec::new(),
+                mask_top: false,
+                mask_bottom: false,
+                mask_um: 0.0,
+                mask_laminate_nm: crate::units::Nm::ZERO,
+                silkscreen_top: false,
+                silkscreen_bottom: false,
+                dk_estimates: Unsaved::default(),
+            },
+        }
+    }
+
+    /// A test fixture, never in the product: a 60 × 40 mm board on the
+    /// fixture stackup ([`Stackup::default`]).
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn fixture() -> Self {
+        Self {
+            size: [60.0, 40.0],
+            stackup: Stackup::default(),
+        }
+    }
+}
+
+impl Project {
+    /// An empty project named [`UNTITLED`] on `board`, without rules.
+    pub fn new(board: &NewBoard) -> Self {
         Self {
             name: UNTITLED.into(),
             next_id: 1,
@@ -542,8 +595,8 @@ impl Default for Project {
             placements: Shared::default(),
             tracks: Shared::default(),
             vias: Shared::default(),
-            board_size: [60.0, 40.0],
-            stackup: Stackup::default(),
+            board_size: board.size,
+            stackup: board.stackup.clone(),
             fabrication: Fabrication::default(),
             material_table: crate::materials::BUILTIN_REVISION,
             rules: crate::rules::ProjectRules::default(),
@@ -677,8 +730,20 @@ pub enum EditPolicy {
 
 /// Everything one undo step restores: the project and the drafts being
 /// authored. Unchanged halves are shared between history entries.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(any(test, feature = "test-fixtures"), derive(Default))]
 pub struct Document {
     pub project: Arc<Project>,
     pub drafts: Arc<Drafts>,
+}
+
+impl Document {
+    /// A placeholder that a file replaces before anyone reads it: no board
+    /// layers and no size, which every check refuses.
+    pub(crate) fn empty_for_file() -> Self {
+        Self {
+            project: Arc::new(Project::new(&NewBoard::without_board())),
+            drafts: Arc::default(),
+        }
+    }
 }

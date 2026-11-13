@@ -487,7 +487,7 @@ fn starter(
     crate::library::PackageDefinition,
 )> {
     use crate::library::templates::catalog::{NewFromTemplate, RowSource};
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let row = crate::library::templates::starter::row(name)?;
     let crate::Outcome::DraftsCreated { ids } = engine.apply(
         engine.revision(),

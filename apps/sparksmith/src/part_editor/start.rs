@@ -511,7 +511,7 @@ mod generic_tests {
     /// it with no form, and the same text then opens that part.
     #[test]
     fn open_creates_the_part_and_opens_it() -> TestResult {
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let mut editor = PartEditor::default();
         let screen = Screen::new(vec2(1000.0, 700.0));
         editor.start.query = "header 1x4".to_owned();

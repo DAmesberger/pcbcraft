@@ -21,7 +21,7 @@ fn replay(name: &str) -> Fallible<(Outcome, Replay, Session)> {
     let mut backend = Replay::from_file(&example(name))?;
     backend.keep_requests = true;
     backend.prompt_tokens = Some(453_129);
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let goal = Goal {
         name: "ESP32-S31-WROOM-3".into(),
         datasheets: vec![datasheet(&dir)?],

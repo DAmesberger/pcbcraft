@@ -10,7 +10,7 @@ fn a_repeated_refused_call_is_named_then_ends_the_run() -> Fallible {
     // unchanged, as a local model once did 54 times.
     let apply = || chat_call("a", "library_pinout_apply", r#"{"base": "12"}"#);
     let mut backend = openai(vec![apply(), apply(), apply(), apply()], &config);
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     assert_eq!(
         outcome.stop,
@@ -45,7 +45,7 @@ fn a_call_that_succeeds_between_refusals_starts_the_count_again() -> Fallible {
         vec![apply(), edit, apply(), apply(), apply(), apply()],
         &config,
     );
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     assert!(matches!(outcome.stop, Stop::Repeated(_)), "{log:?}");
     // Three refusals after the edit, not two after it plus one before.
@@ -59,7 +59,7 @@ fn claude_runs_with_the_base_prompt_and_every_tool() -> Fallible {
     let config = shipped_config()?;
     assert_eq!(config.run_profile.name, "claude");
     let mut backend = anthropic(script()?)?;
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, _) = run_with(&config, &mut backend, datasheet(&dir)?, &mut session)?;
     assert_eq!(outcome.facts.run_profile, "claude");
     let body = bodies(&backend)[0];

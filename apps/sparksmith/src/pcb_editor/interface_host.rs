@@ -94,7 +94,7 @@ pub(super) fn start(
     std::thread::Builder::new()
         .name("sparksmith-interface".into())
         .spawn(move || {
-            let mut session = Session::default();
+            let mut session = Session::lending();
             let done = session.lend(&mut fork, project.as_deref(), |s| run(s, job));
             let _ = sender.send(done);
             repaint.request_repaint();

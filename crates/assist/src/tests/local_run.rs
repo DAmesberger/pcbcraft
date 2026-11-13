@@ -15,7 +15,7 @@ fn the_local_run_replays_to_the_same_ldo() -> Fallible {
         .join("../../examples/tlv75733-local/tlv757.recording.jsonl");
     let mut backend = Replay::from_file(&path)?;
     let config = local_config(262_144)?;
-    let mut session = Session::default();
+    let mut session = profiled_session();
     let (outcome, log) = run_with(&config, &mut backend, text_datasheet(&dir)?, &mut session)?;
     assert_eq!(outcome.stop, Stop::Submitted, "{log:?}");
     let f = &outcome.facts;

@@ -2,14 +2,22 @@
 //! top to bottom, plus which sides carry soldermask and silkscreen. The
 //! stackup sets the native board's thickness and copper heights; its rules
 //! (`Stackup::check`) are pure data validation.
+//!
+//! What a new stackup is built of (foil, mask, dielectric thicknesses,
+//! glass and its Dk estimates) is shipped data, a [`StackupPresets`]
+//! family that `sparksmith-io` loads from `library/stackups/`; this module
+//! holds only the build logic and the input bounds.
 use super::Layer;
 use crate::diagnostics::{Error, Result};
 use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
-/// Copper foil thickness of one ounce per square foot, in µm (IPC-4562
-/// nominal 34.8 µm, rounded as fabricators quote it).
+/// Copper foil thickness of one ounce per square foot, in µm: a unit
+/// conversion (IPC-4562 nominal 34.8 µm, rounded as fabricators quote it),
+/// used to show foils in ounces. Which foil a new stackup gets is shipped
+/// data ([`StackupPresets::copper_um`]).
 pub const OUNCE_UM: f64 = 35.0;
 /// Fewest copper layers of a stackup: a double-sided board.
 pub const MIN_COPPER_LAYERS: usize = 2;
@@ -22,22 +30,6 @@ pub const MAX_COPPER_LAYERS: usize = 64;
 pub const COPPER_UM_RANGE: std::ops::RangeInclusive<f64> = 5.0..=210.0;
 /// Dielectric thicknesses a stackup accepts, in mm.
 pub const DIELECTRIC_MM_RANGE: std::ops::RangeInclusive<f64> = 0.025..=3.2;
-/// Soldermask over copper of a new stackup, in µm: within the 10–20 µm
-/// over copper that the LPI soldermask datasheets quote (Florida CirTech
-/// LPI-950 LC-1, C-8GD and S-22; listed in `docs/materials.md`,
-/// "Sources"), toward their thin end because LPI thins over a track's
-/// crown and edges. The 3D view's mask over copper, its geometry and its
-/// colour, is this thickness.
-pub const MASK_UM: f64 = 12.0;
-/// Soldermask over bare laminate of a new stackup, in µm. **Uncited**:
-/// Sparksmith's earlier 3D display value. LPI flows into the gaps between
-/// copper, so it is thicker over laminate than over copper, but no
-/// fabricator capability page or mask datasheet consulted states a value
-/// over laminate (`docs/materials.md`, "Sources").
-pub const MASK_LAMINATE: Nm = match Nm::try_new(20 * crate::units::NM_PER_UM) {
-    Some(nm) => nm,
-    None => Nm::ZERO,
-};
 /// Soldermask thicknesses (over copper or laminate) a stackup accepts, in
 /// µm. An input
 /// bound, not a fabrication limit: from below the thinnest LPI coat to
@@ -108,10 +100,10 @@ pub struct CopperFoil {
 }
 
 impl CopperFoil {
-    /// A foil of `ounces` per square foot.
-    pub fn ounces(ounces: f64) -> Self {
+    /// A foil `thickness_um` thick, not a plane.
+    pub fn of_um(thickness_um: f64) -> Self {
         Self {
-            thickness_um: ounces * OUNCE_UM,
+            thickness_um,
             plane: false,
         }
     }
@@ -127,7 +119,9 @@ pub enum DielectricKind {
 
 /// E-glass fabric style (IPC-4412 designations), which sets the weave pitch
 /// the routed board edge shows.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
+#[derive(
+    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GlassStyle {
     Style106,
@@ -144,8 +138,8 @@ pub struct Dielectric {
     pub thickness_mm: f64,
     pub glass: GlassStyle,
     /// Relative permittivity (Dk) the fabricator quotes for this layer.
-    /// When absent, [`Dielectric::permittivity`] estimates it from the
-    /// glass style.
+    /// When absent, [`Stackup::permittivity`] estimates it from the glass
+    /// style.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dk: Option<f64>,
 }
@@ -154,25 +148,34 @@ pub struct Dielectric {
 pub const DK_RANGE: std::ops::RangeInclusive<f64> = 1.0..=20.0;
 
 impl Dielectric {
-    /// The relative permittivity the impedance model uses: the entered
-    /// [`Dielectric::dk`], else a generic FR-4 estimate by glass style
-    /// (resin-rich thin styles lower, glass-heavy 7628 higher; typical
-    /// values near 1 GHz, not a fabricator's data). Checked against Isola's
-    /// published 370HR core table (`docs/materials.md`, "Sources"): 106,
-    /// 1080 and 2116 agree within 0.05 (3.81, 4.04, 4.26); 7628 does not
-    /// (Isola 4.36 at 42 % resin), and stays uncited until decided.
-    pub fn permittivity(&self) -> f64 {
-        self.dk.unwrap_or(match self.glass {
-            GlassStyle::Style106 => 3.8,
-            GlassStyle::Style1080 => 4.0,
-            GlassStyle::Style2116 => 4.3,
-            GlassStyle::Style7628 => 4.6,
-        })
-    }
-
-    /// Whether [`Dielectric::permittivity`] is an estimate.
+    /// Whether [`Stackup::permittivity`] is an estimate: no Dk was entered.
     pub fn permittivity_estimated(&self) -> bool {
         self.dk.is_none()
+    }
+}
+
+/// A value carried with the document for computation but not part of it:
+/// never serialised, and every two are equal, so it takes no part in
+/// equality, undo or revision comparisons.
+#[derive(Clone, Debug, Default)]
+pub struct Unsaved<T>(pub T);
+
+impl<T> PartialEq for Unsaved<T> {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+/// Relative permittivity estimates by glass style, for dielectrics without
+/// an entered Dk. Shipped data with its sources (`library/stackups/`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(transparent)]
+pub struct GlassDk(pub BTreeMap<GlassStyle, f64>);
+
+impl GlassDk {
+    /// The estimate for `glass`, if the table has one.
+    pub fn get(&self, glass: GlassStyle) -> Option<f64> {
+        self.0.get(&glass).copied()
     }
 }
 
@@ -185,104 +188,274 @@ pub struct Stackup {
     pub dielectrics: Vec<Dielectric>,
     pub mask_top: bool,
     pub mask_bottom: bool,
-    /// Soldermask thickness over copper in µm, on every side with mask
-    /// ([`MASK_UM`] unless the fabricator quotes another).
-    #[serde(default = "default_mask_um")]
+    /// Soldermask thickness over copper in µm, on every side with mask;
+    /// 0 or left out keeps the board's.
+    #[serde(default)]
     pub mask_um: f64,
-    /// Soldermask thickness over bare laminate in µm, on every side with
-    /// mask ([`MASK_LAMINATE`] unless the fabricator quotes another).
-    #[serde(default = "default_mask_laminate")]
+    /// Soldermask thickness over bare laminate, on every side with mask;
+    /// 0 or left out keeps the board's.
+    #[serde(default)]
     pub mask_laminate_nm: Nm,
     pub silkscreen_top: bool,
     pub silkscreen_bottom: bool,
+    /// The Dk estimates by glass style for dielectrics without an entered
+    /// Dk: the shipped data the stackup was made or opened with
+    /// ([`StackupPresets::glass_dk`]). Never saved and never part of the
+    /// stackup's equality ([`Unsaved`]).
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub dk_estimates: Unsaved<GlassDk>,
 }
 
-fn default_mask_um() -> f64 {
-    MASK_UM
+/// The glass a preset dielectric gets: the first step whose `from_mm` its
+/// thickness reaches (else the last step).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GlassStep {
+    pub from_mm: f64,
+    pub glass: GlassStyle,
 }
 
-fn default_mask_laminate() -> Nm {
-    MASK_LAMINATE
+/// One dielectric a preset or an added layer uses.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PresetDielectric {
+    pub thickness_mm: f64,
+    pub glass: GlassStyle,
 }
 
-impl Default for Stackup {
-    /// Two layers of 1 oz copper on a 1.6 mm FR-4 core (7628 glass), mask
-    /// and silkscreen on both sides.
-    fn default() -> Self {
-        Self {
-            copper: vec![CopperFoil::ounces(1.0); 2],
-            dielectrics: vec![Dielectric {
-                kind: DielectricKind::Core,
-                thickness_mm: 1.6,
-                glass: GlassStyle::Style7628,
-                dk: None,
-            }],
-            mask_top: true,
-            mask_bottom: true,
-            mask_um: MASK_UM,
-            mask_laminate_nm: MASK_LAMINATE,
-            silkscreen_top: true,
-            silkscreen_bottom: true,
+/// A family of stackup presets: every number a new stackup, a preset of
+/// any layer count and an added layer read. It is shipped data
+/// (`library/stackups/`, loaded by `sparksmith-io`); this type holds the
+/// build logic only.
+///
+/// A two-layer preset is [`Self::two_layer_core`]. A preset of more layers
+/// is a symmetric foil build: prepreg outside and between the cores, which
+/// carry the inner layers in pairs. Its total dielectric is
+/// [`Self::dielectric_mm`] up to [`Self::dielectric_mm_up_to_layers`]
+/// layers and [`Self::dielectric_mm_per_layer_above`] a layer above that;
+/// its prepregs are [`Self::prepreg_mm`] up to
+/// [`Self::prepreg_mm_up_to_layers`] layers and [`Self::prepreg_mm_above`]
+/// above; the cores share the rest, rounded to µm.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct StackupPresets {
+    pub id: String,
+    pub name: String,
+    /// Copper foil of every preset layer and added layer, µm.
+    pub copper_um: f64,
+    /// Soldermask over copper, µm.
+    pub mask_um: f64,
+    /// Soldermask over bare laminate, µm.
+    pub mask_laminate_um: f64,
+    /// The two-layer build's one core.
+    pub two_layer_core: PresetDielectric,
+    pub dielectric_mm: f64,
+    pub dielectric_mm_up_to_layers: usize,
+    pub dielectric_mm_per_layer_above: f64,
+    pub prepreg_mm: f64,
+    pub prepreg_mm_up_to_layers: usize,
+    pub prepreg_mm_above: f64,
+    /// Glass of a preset prepreg by thickness, thickest step first.
+    pub prepreg_glass: Vec<GlassStep>,
+    /// Glass of a preset core by thickness, thickest step first.
+    pub core_glass: Vec<GlassStep>,
+    /// The prepreg an added layer gets.
+    pub added_prepreg: PresetDielectric,
+    /// The core an added layer gets.
+    pub added_core: PresetDielectric,
+    pub glass_dk: GlassDk,
+    /// Where the values come from, by field name.
+    #[serde(default)]
+    pub sources: BTreeMap<String, String>,
+}
+
+impl StackupPresets {
+    /// The values' own rules: every thickness within the stackup ranges,
+    /// glass steps given and every Dk estimate within [`DK_RANGE`].
+    pub fn check(&self) -> Result<()> {
+        let mm = |v: f64| v.is_finite() && v > 0.0 && v <= *DIELECTRIC_MM_RANGE.end();
+        let ok = COPPER_UM_RANGE.contains(&self.copper_um)
+            && MASK_UM_RANGE.contains(&self.mask_um)
+            && MASK_UM_RANGE.contains(&self.mask_laminate_um)
+            && [
+                self.two_layer_core.thickness_mm,
+                self.prepreg_mm,
+                self.prepreg_mm_above,
+                self.added_prepreg.thickness_mm,
+                self.added_core.thickness_mm,
+                self.dielectric_mm,
+                self.dielectric_mm_per_layer_above,
+            ]
+            .into_iter()
+            .all(mm)
+            && !self.prepreg_glass.is_empty()
+            && !self.core_glass.is_empty()
+            && self
+                .glass_dk
+                .0
+                .values()
+                .all(|dk| dk.is_finite() && DK_RANGE.contains(dk));
+        if ok {
+            Ok(())
+        } else {
+            Err(Error::Invalid(format!(
+                "the stackup presets {} hold a value outside the stackup ranges",
+                self.id
+            )))
         }
     }
-}
 
-impl Stackup {
-    /// A symmetric preset of `count` copper layers of 1 oz copper, for any
-    /// count the rules allow: prepreg outside and between the cores, which
-    /// carry the inner layers in pairs (foil lamination). Up to ten layers
-    /// it keeps the common 1.6 mm of dielectric; above that it grows by
-    /// 0.16 mm a layer, as thick high-count boards do. Thin builds use the
-    /// finer glass styles.
-    pub fn preset(count: usize) -> Result<Self> {
-        check_count(count)?;
-        if count == MIN_COPPER_LAYERS {
-            return Ok(Self::default());
+    fn dielectric(kind: DielectricKind, layer: PresetDielectric) -> Dielectric {
+        Dielectric {
+            kind,
+            thickness_mm: layer.thickness_mm,
+            glass: layer.glass,
+            dk: None,
         }
-        let prepregs = count / 2;
-        let cores = prepregs - 1;
-        let lossy = |v: usize| f64::from(u32::try_from(v).unwrap_or(u32::MAX));
-        let total = if count <= 10 {
-            1.6
+    }
+
+    /// The dielectric of `kind` an added layer gets.
+    pub fn added(&self, kind: DielectricKind) -> Dielectric {
+        match kind {
+            DielectricKind::Prepreg => Self::dielectric(kind, self.added_prepreg),
+            DielectricKind::Core => Self::dielectric(kind, self.added_core),
+        }
+    }
+
+    /// One foil of the family's copper.
+    pub fn foil(&self) -> CopperFoil {
+        CopperFoil::of_um(self.copper_um)
+    }
+
+    fn glass(steps: &[GlassStep], mm: f64) -> Result<GlassStyle> {
+        steps
+            .iter()
+            .find(|step| mm >= step.from_mm)
+            .or(steps.last())
+            .map(|step| step.glass)
+            .ok_or_else(|| Error::Invalid("the stackup presets list no glass".into()))
+    }
+
+    /// The symmetric preset of `count` copper layers, for any count the
+    /// stackup rules allow, with mask and silkscreen on both sides and
+    /// this family's Dk estimates.
+    pub fn preset(&self, count: usize) -> Result<Stackup> {
+        check_count(count)?;
+        let dielectrics = if count == MIN_COPPER_LAYERS {
+            vec![Self::dielectric(DielectricKind::Core, self.two_layer_core)]
         } else {
-            0.16 * lossy(count)
-        };
-        let prepreg_mm = if count <= 6 { 0.2 } else { 0.1 };
-        let core_mm =
-            ((total - prepreg_mm * lossy(prepregs)) / lossy(cores) * 1000.0).round() / 1000.0;
-        let prepreg = Dielectric {
-            kind: DielectricKind::Prepreg,
-            thickness_mm: prepreg_mm,
-            glass: if prepreg_mm >= 0.2 {
-                GlassStyle::Style2116
+            let prepregs = count / 2;
+            let cores = prepregs - 1;
+            let lossy = |v: usize| f64::from(u32::try_from(v).unwrap_or(u32::MAX));
+            let total = if count <= self.dielectric_mm_up_to_layers {
+                self.dielectric_mm
             } else {
-                GlassStyle::Style1080
-            },
-            dk: None,
-        };
-        let core = Dielectric {
-            kind: DielectricKind::Core,
-            thickness_mm: core_mm,
-            glass: if core_mm >= 0.3 {
-                GlassStyle::Style7628
+                self.dielectric_mm_per_layer_above * lossy(count)
+            };
+            let prepreg_mm = if count <= self.prepreg_mm_up_to_layers {
+                self.prepreg_mm
             } else {
-                GlassStyle::Style2116
-            },
-            dk: None,
+                self.prepreg_mm_above
+            };
+            let core_mm =
+                ((total - prepreg_mm * lossy(prepregs)) / lossy(cores) * 1000.0).round() / 1000.0;
+            let prepreg = Dielectric {
+                kind: DielectricKind::Prepreg,
+                thickness_mm: prepreg_mm,
+                glass: Self::glass(&self.prepreg_glass, prepreg_mm)?,
+                dk: None,
+            };
+            let core = Dielectric {
+                kind: DielectricKind::Core,
+                thickness_mm: core_mm,
+                glass: Self::glass(&self.core_glass, core_mm)?,
+                dk: None,
+            };
+            (0..count - 1)
+                .map(|i| if i % 2 == 0 { prepreg } else { core })
+                .collect()
         };
-        let dielectrics = (0..count - 1)
-            .map(|i| if i % 2 == 0 { prepreg } else { core })
-            .collect();
-        let stackup = Self {
-            copper: vec![CopperFoil::ounces(1.0); count],
+        let stackup = Stackup {
+            copper: vec![self.foil(); count],
             dielectrics,
-            ..Self::default()
+            mask_top: true,
+            mask_bottom: true,
+            mask_um: self.mask_um,
+            mask_laminate_nm: Nm::from_mm_f64_rounded(self.mask_laminate_um / 1000.0)?,
+            silkscreen_top: true,
+            silkscreen_bottom: true,
+            dk_estimates: Unsaved(self.glass_dk.clone()),
         };
         stackup.check()?;
         Ok(stackup)
     }
 
-    /// The copper layer counts [`Stackup::preset`] offers, in order.
+    /// A test fixture, never in the product: the original test family
+    /// `model/fixtures/stackup-presets.json`, not shipped and not offered.
+    /// Its values equal the shipped family's, so the tests measured
+    /// against a 1.6 mm two-layer board still are (a `sparksmith-io` test
+    /// holds the two equal).
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn fixture() -> Result<Self> {
+        let presets: Self = serde_json::from_str(include_str!("fixtures/stackup-presets.json"))
+            .map_err(|e| Error::Invalid(format!("the fixture stackup presets: {e}")))?;
+        presets.check()?;
+        Ok(presets)
+    }
+}
+
+/// A test fixture, never in the product: the fixture family's two-layer
+/// preset ([`StackupPresets::fixture`]). A broken fixture gives an empty
+/// stackup, which every check refuses.
+#[cfg(any(test, feature = "test-fixtures"))]
+impl Default for Stackup {
+    fn default() -> Self {
+        Self::preset(MIN_COPPER_LAYERS).unwrap_or_else(|_| Stackup {
+            copper: Vec::new(),
+            dielectrics: Vec::new(),
+            mask_top: false,
+            mask_bottom: false,
+            mask_um: 0.0,
+            mask_laminate_nm: Nm::ZERO,
+            silkscreen_top: false,
+            silkscreen_bottom: false,
+            dk_estimates: Unsaved::default(),
+        })
+    }
+}
+
+impl Stackup {
+    /// A test fixture, never in the product: the fixture family's preset
+    /// of `count` layers ([`StackupPresets::preset`]).
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn preset(count: usize) -> Result<Self> {
+        StackupPresets::fixture()?.preset(count)
+    }
+
+    /// The relative permittivity the impedance model uses for `d`: its
+    /// entered [`Dielectric::dk`], else the estimate for its glass style
+    /// ([`Stackup::dk_estimates`]); `None` when neither is known.
+    pub fn permittivity(&self, d: &Dielectric) -> Option<f64> {
+        d.dk.or_else(|| self.dk_estimates.0.get(d.glass))
+    }
+
+    /// This stackup with what a request left out (mask thicknesses of 0,
+    /// no Dk estimates) taken from `current`, the board's stackup.
+    pub fn keeping_unstated(mut self, current: &Stackup) -> Self {
+        if self.mask_um == 0.0 {
+            self.mask_um = current.mask_um;
+        }
+        if self.mask_laminate_nm == Nm::ZERO {
+            self.mask_laminate_nm = current.mask_laminate_nm;
+        }
+        if self.dk_estimates.0.0.is_empty() {
+            self.dk_estimates = current.dk_estimates.clone();
+        }
+        self
+    }
+
+    /// The copper layer counts [`StackupPresets::preset`] offers, in order.
     pub fn preset_counts() -> impl Iterator<Item = usize> {
         (MIN_COPPER_LAYERS..=MAX_COPPER_LAYERS).step_by(2)
     }

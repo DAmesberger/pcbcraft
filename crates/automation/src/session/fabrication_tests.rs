@@ -40,7 +40,10 @@ fn names(result: &Value) -> Vec<String> {
 #[test]
 fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(
+        &sparksmith_core::StackupPresets::fixture()?,
+        sparksmith_core::rules::fixtures::prototype()?,
+    )?);
     let revision = session.engine().revision();
     let folder = dir.path().join("fab");
     let result = ok(&mut session, export(&folder, false, None))?;
@@ -101,7 +104,10 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
 #[test]
 fn the_project_name_reaches_the_production_files() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(
+        &sparksmith_core::StackupPresets::fixture()?,
+        sparksmith_core::rules::fixtures::prototype()?,
+    )?);
     let was = session.engine().project().name.clone();
     let revision = session.engine().revision();
     let renamed = ok(
@@ -161,7 +167,10 @@ fn the_project_name_reaches_the_production_files() -> Fallible<()> {
 /// hold and a malformed profile are refused. Sparksmith has no built-in ids.
 #[test]
 fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
-    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(
+        &sparksmith_core::StackupPresets::fixture()?,
+        sparksmith_core::rules::fixtures::prototype()?,
+    )?);
     let query = |profile: Value| {
         json!({"command": "project.query", "params": {
             "query": "fabrication.preflight",
@@ -202,7 +211,10 @@ fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
 #[test]
 fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
-    let mut session = Session::new(showcase(sparksmith_core::rules::fixtures::prototype()?)?);
+    let mut session = Session::new(showcase(
+        &sparksmith_core::StackupPresets::fixture()?,
+        sparksmith_core::rules::fixtures::prototype()?,
+    )?);
     // Switched to a finer profile, the fills were computed under other
     // rules: they are stale, an error that blocks production.
     let revision = session.engine().revision();

@@ -2366,7 +2366,7 @@ mod tests {
     ) -> Result<catalog::SourceCatalog, Box<dyn std::error::Error>> {
         let engine = Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: catalog::synthetic::project(count)?,
+            project: catalog::synthetic::project(count, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {
@@ -2404,7 +2404,7 @@ mod tests {
     /// template rows, and library folders last, whatever the search ranked.
     #[test]
     fn the_list_keeps_its_order() -> Result<(), Box<dyn std::error::Error>> {
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let found = template_gallery::find_generic(&engine, "resistor 0603");
         let request = found.first().and_then(|c| c.would_create.clone());
         let request = request.ok_or("a request")?;
@@ -2590,7 +2590,7 @@ mod tests {
         use sparksmith_core::library::Origin;
         let engine = Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: catalog::synthetic::project(3)?,
+            project: catalog::synthetic::project(3, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {
@@ -2684,7 +2684,7 @@ mod tests {
     {
         let engine = Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: catalog::synthetic::project(3)?,
+            project: catalog::synthetic::project(3, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {

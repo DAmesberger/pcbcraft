@@ -976,7 +976,10 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let engine = Engine::from_file(sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project(24)?,
+            project: sparksmith_core::catalog::synthetic::project(
+                24,
+                &sparksmith_core::NewBoard::fixture(),
+            )?,
             drafts: Default::default(),
         })?;
         let ctx = egui::Context::default();
@@ -1070,7 +1073,10 @@ mod tests {
     fn esc_and_the_clear_button_empty_the_filter() -> Result<(), Box<dyn std::error::Error>> {
         let engine = Engine::from_file(sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project(24)?,
+            project: sparksmith_core::catalog::synthetic::project(
+                24,
+                &sparksmith_core::NewBoard::fixture(),
+            )?,
             drafts: Default::default(),
         })?;
         let ctx = egui::Context::default();

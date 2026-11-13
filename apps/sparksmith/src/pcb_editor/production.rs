@@ -482,7 +482,7 @@ impl PcbEditor {
     pub(super) fn open_production(&mut self) {
         let library = sparksmith_io::settings::UserDirs::from_env()
             .ok()
-            .map(|dirs| ProfileLibrary::from_dirs(&dirs));
+            .and_then(|dirs| ProfileLibrary::from_dirs(&dirs).ok());
         self.open_production_in(library);
     }
 
