@@ -100,6 +100,15 @@ pub enum Level {
     UnderFoil(usize),
 }
 
+impl Level {
+    /// The dielectric the slab is (part of), counted from the top.
+    pub fn dielectric(self) -> usize {
+        match self {
+            Self::Dielectric(index) | Self::Foil { index, .. } | Self::UnderFoil(index) => index,
+        }
+    }
+}
+
 /// The document object a flat body comes from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Origin {
@@ -271,52 +280,6 @@ impl BoardPlan {
             .chain(self.tracks.iter().map(|t| &t.body))
             .chain(self.vias.iter().flat_map(|v| &v.bodies))
             .chain(&self.laminate)
-    }
-
-    /// The laminate as the live view draws it: one body from the bottom
-    /// slab's bottom face to the top slab's top, its loops those of every
-    /// slab that is not a foil level (the board outline less every drill
-    /// and every cut through the board; those slabs hold the same loops).
-    /// It differs from the slabs only in each inner foil level, where the
-    /// slabs leave room for that layer's copper; drawn whole, that copper
-    /// lies inside it. The exact build makes the slabs ([`Self::laminate`]),
-    /// so its saved bodies stay disjoint. `None` for a plan without
-    /// laminate.
-    pub fn whole_laminate(&self) -> Result<Option<PlanBody>> {
-        let mut through = self
-            .laminate
-            .iter()
-            .filter(|s| !matches!(s.source, Origin::Laminate(Level::Foil { .. })));
-        let Some(first) = through.next() else {
-            return if self.laminate.is_empty() {
-                Ok(None)
-            } else {
-                Err(Error::Verification(
-                    "the laminate has only foil levels".into(),
-                ))
-            };
-        };
-        if let Some(other) = through.find(|s| s.loops != first.loops) {
-            return Err(Error::Verification(format!(
-                "laminate slabs {} and {} are drilled differently",
-                first.name, other.name
-            )));
-        }
-        let low = self
-            .laminate
-            .iter()
-            .map(|s| s.z[0])
-            .fold(f64::MAX, f64::min);
-        let high = self
-            .laminate
-            .iter()
-            .map(|s| s.z[1])
-            .fold(f64::MIN, f64::max);
-        Ok(Some(PlanBody {
-            name: "Substrate".to_owned(),
-            z: [low, high],
-            ..first.clone()
-        }))
     }
 }
 
@@ -744,7 +707,7 @@ fn laminate(
         let mut loops = Vec::with_capacity(holes.len() + 1);
         loops.push(outline.clone());
         loops.extend(holes.iter().cloned());
-        slabs.push(PlanBody::new(
+        let mut body = PlanBody::new(
             name,
             BodyKind::Substrate,
             Origin::Laminate(level),
@@ -753,7 +716,13 @@ fn laminate(
             z,
             Frame::BOARD,
             loops,
-        ));
+        );
+        // Each slab shows its own dielectric's weave, as the edge band of
+        // that dielectric does.
+        if let Some(d) = stackup.dielectrics.get(level.dielectric()) {
+            body.look.detail = crate::stackup_edge::laminate_detail(d.kind, d.glass);
+        }
+        slabs.push(body);
     };
     for index in 0..stackup.dielectrics.len() {
         let (low, high) = stackup

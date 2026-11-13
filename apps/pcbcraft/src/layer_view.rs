@@ -35,7 +35,14 @@ pub enum ViewLayer {
     Silkscreen(Layer),
     Mask(Layer),
     Copper(CopperLayer),
-    /// The laminate and its edge bands.
+    /// One dielectric of the laminate, counted from the top
+    /// ([`Stack::dielectrics`]): its slabs, the laminate a mask opening on
+    /// its outer face shows, and its slice of the routed edge (its band
+    /// and the foil line in it). The stack peels one of these at a time.
+    Dielectric(usize),
+    /// A laminate body not divided by dielectric (no
+    /// [`Geometry::dielectric`]): no toggle of its own, it is drawn while
+    /// every dielectric is.
     Substrate,
     Vias,
 }
@@ -53,31 +60,66 @@ impl ViewLayer {
             Self::Silkscreen(s) => format!("{} silkscreen", side(s)),
             Self::Mask(s) => format!("{} solder mask", side(s)),
             Self::Copper(layer) => format!("{} copper", layer.name()),
+            Self::Dielectric(index) => format!("Dielectric {}", index.saturating_add(1)),
             Self::Substrate => "Substrate".into(),
             Self::Vias => "Vias".into(),
         }
     }
 
+    /// The toggle's label on a board of `stack`: a board of one dielectric
+    /// calls it the substrate.
+    pub fn label_on(self, stack: &Stack) -> String {
+        match self {
+            Self::Dielectric(_) if stack.dielectrics().len() == 1 => "Substrate".into(),
+            layer => layer.label(),
+        }
+    }
+
     /// The popover's toggles for a board of `stack`, in the order the
     /// layers lie: components and their markings, the stack's films and
-    /// foils top to bottom (a finish shows with its copper), then the vias
-    /// that pass through it all.
+    /// foils top to bottom (a finish shows with its copper), each
+    /// dielectric between the foils either side of it, then the vias that
+    /// pass through it all.
     pub fn stack(stack: &Stack) -> Vec<ViewLayer> {
         let mut out = vec![Self::Bodies, Self::Markings];
-        for (slot, _) in stack.slots() {
-            let layer = Self::from(*slot);
+        let mut push = |layer: ViewLayer| {
             if !out.contains(&layer) {
                 out.push(layer);
             }
+        };
+        for (slot, _) in stack.slots() {
+            match *slot {
+                // Each inner foil lies at the top of its dielectric: listed
+                // with it, below.
+                Slot::Copper(layer) if layer.side().is_none() => {}
+                Slot::Substrate => {
+                    for (index, (_, foil)) in stack.dielectrics().iter().enumerate() {
+                        if let Some(foil) = foil {
+                            push(Self::Copper(*foil));
+                        }
+                        push(Self::Dielectric(index));
+                    }
+                }
+                slot => push(Self::from(slot)),
+            }
         }
-        out.push(Self::Vias);
+        push(Self::Vias);
         out
     }
 
-    /// The toggle a body belongs to: its stack slot's
+    /// The toggle a body belongs to: its kind's ([`Self::of`]), and for a
+    /// laminate body its dielectric's.
+    pub fn of_body(geometry: &Geometry) -> Self {
+        match (Self::of(geometry.kind, geometry.layer), geometry.dielectric) {
+            (Self::Substrate, Some(index)) => Self::Dielectric(index),
+            (layer, _) => layer,
+        }
+    }
+
+    /// The toggle a body of `kind` on `layer` belongs to: its stack slot's
     /// ([`BodyKind::slot`]). Vias shows every plated hole; the foils'
     /// lines at the routed edge are part of the edge's stackup bands, with
-    /// the substrate.
+    /// the laminate ([`Self::of_body`] files them under their dielectric).
     pub fn of(kind: BodyKind, layer: Option<CopperLayer>) -> Self {
         Self::from(kind.slot(layer))
     }
@@ -108,16 +150,14 @@ pub struct LayerView {
 
 impl LayerView {
     #[cfg(test)]
-    /// The view the old substrate toggle gave: the laminate and both masks
-    /// hidden together, or nothing hidden.
-    pub fn substrate_hidden(hidden: bool) -> Self {
+    /// The view the old substrate toggle gave: the laminate (every
+    /// dielectric of `stack`) and both masks hidden together, or nothing
+    /// hidden.
+    pub fn substrate_hidden(hidden: bool, stack: &Stack) -> Self {
         let mut view = Self::default();
-        for layer in [
-            ViewLayer::Substrate,
-            ViewLayer::Mask(Layer::Top),
-            ViewLayer::Mask(Layer::Bottom),
-        ] {
-            view.set(layer, !hidden);
+        view.set_laminate(stack, !hidden);
+        for side in [Layer::Top, Layer::Bottom] {
+            view.set(ViewLayer::Mask(side), !hidden);
         }
         view
     }
@@ -125,16 +165,23 @@ impl LayerView {
     /// X-ray: only the copper and vias, every film, the laminate, the
     /// components and their markings hidden, so the stackup's copper shows
     /// layer over layer.
-    pub fn x_ray() -> Self {
+    pub fn x_ray(stack: &Stack) -> Self {
         let mut view = Self::default();
         for side in [Layer::Top, Layer::Bottom] {
             view.set(ViewLayer::Mask(side), false);
             view.set(ViewLayer::Silkscreen(side), false);
         }
-        view.set(ViewLayer::Substrate, false);
+        view.set_laminate(stack, false);
         view.set(ViewLayer::Bodies, false);
         view.set(ViewLayer::Markings, false);
         view
+    }
+
+    /// Show or hide every dielectric of `stack`: the whole laminate.
+    pub fn set_laminate(&mut self, stack: &Stack, visible: bool) {
+        for index in 0..stack.dielectrics().len() {
+            self.set(ViewLayer::Dielectric(index), visible);
+        }
     }
 
     /// Only one copper layer (and nothing else) shows.
@@ -152,11 +199,30 @@ impl LayerView {
         !self.hidden.is_empty()
     }
 
+    /// Whether `layer`'s toggle is on; the undivided laminate
+    /// ([`ViewLayer::Substrate`]) is while no dielectric is hidden.
     pub fn visible(&self, layer: ViewLayer) -> bool {
-        !self.hidden.contains(&layer)
+        match layer {
+            ViewLayer::Substrate => !self
+                .hidden
+                .iter()
+                .any(|l| matches!(l, ViewLayer::Dielectric(_))),
+            layer => !self.hidden.contains(&layer),
+        }
     }
 
+    /// Whether any of `stack`'s dielectrics shows: some of the board is
+    /// left to stand on.
+    pub fn shows_laminate(&self, stack: &Stack) -> bool {
+        (0..stack.dielectrics().len()).any(|i| self.visible(ViewLayer::Dielectric(i)))
+    }
+
+    /// Turn `layer`'s toggle on or off. The undivided laminate has no
+    /// toggle of its own ([`Self::set_laminate`] sets every dielectric).
     pub fn set(&mut self, layer: ViewLayer, visible: bool) {
+        if layer == ViewLayer::Substrate {
+            return;
+        }
         if visible {
             self.hidden.remove(&layer);
         } else {
@@ -166,7 +232,7 @@ impl LayerView {
 
     /// Whether a body is drawn and pickable.
     pub fn shows(&self, geometry: &Geometry) -> bool {
-        self.draws(ViewLayer::of(geometry.kind, geometry.layer))
+        self.draws(ViewLayer::of_body(geometry))
     }
 
     /// Whether the bodies of `layer` are drawn: its toggle shown, and for
@@ -254,23 +320,23 @@ fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
     let mut changed = false;
     let mut toggle = |ui: &mut Ui, layer: ViewLayer| {
         let mut shown = view.visible(layer);
-        if crate::kit::check(ui, &layer.label(), &mut shown) {
+        if crate::kit::check(ui, &layer.label_on(stack), &mut shown) {
             view.set(layer, shown);
             changed = true;
         }
     };
     // The films above, the copper and laminate (scrolled on a many-layer
     // board), the films below and the vias.
-    let stack = ViewLayer::stack(stack);
-    let first = stack
+    let layers = ViewLayer::stack(stack);
+    let first = layers
         .iter()
         .position(|l| matches!(l, ViewLayer::Copper(_)))
-        .unwrap_or(stack.len());
-    let last = stack
+        .unwrap_or(layers.len());
+    let last = layers
         .iter()
         .rposition(|l| matches!(l, ViewLayer::Copper(_)))
         .map_or(first, |i| i + 1);
-    let (above, rest) = stack.split_at(first.min(stack.len()));
+    let (above, rest) = layers.split_at(first.min(layers.len()));
     let (board, below) = rest.split_at(last.saturating_sub(first).min(rest.len()));
     for layer in above {
         toggle(ui, *layer);
@@ -284,7 +350,7 @@ fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
         toggle(ui, *layer);
     }
     ui.horizontal(|ui| {
-        let x_ray = LayerView::x_ray();
+        let x_ray = LayerView::x_ray(stack);
         let preset = ui_kit::button(ui, "X-ray", Button::Enabled(*view != x_ray))
             .on_hover_text("Show only the copper layers and vias, through the board");
         if preset.clicked() && *view != x_ray {
@@ -304,9 +370,16 @@ fn popover(ui: &mut Ui, view: &mut LayerView, stack: &Stack) -> bool {
 mod tests {
     use super::*;
 
+    fn four() -> Result<Stack, String> {
+        pcbcraft_core::Stackup::preset(4)
+            .map(|s| Stack::of(&s, pcbcraft_core::PadFinish::default()))
+            .map_err(|e| e.to_string())
+    }
+
     #[test]
-    fn the_substrate_view_hides_exactly_the_board_level_bodies() {
-        let view = LayerView::substrate_hidden(true);
+    fn the_substrate_view_hides_exactly_the_board_level_bodies() -> Result<(), String> {
+        let four = four()?;
+        let view = LayerView::substrate_hidden(true, &four);
         for kind in BodyKind::ALL {
             for layer in [None, Some(CopperLayer::Top), Some(CopperLayer::Bottom)] {
                 let shown = view.visible(ViewLayer::of(kind, layer));
@@ -319,13 +392,33 @@ mod tests {
                 );
             }
         }
-        assert_eq!(LayerView::substrate_hidden(false), LayerView::default());
+        assert_eq!(
+            LayerView::substrate_hidden(false, &four),
+            LayerView::default()
+        );
+        Ok(())
     }
 
-    fn four() -> Result<Stack, String> {
-        pcbcraft_core::Stackup::preset(4)
-            .map(|s| Stack::of(&s, pcbcraft_core::PadFinish::default()))
-            .map_err(|e| e.to_string())
+    /// One dielectric hidden hides its laminate bodies and no other
+    /// dielectric's; a laminate body of no dielectric shows only while
+    /// every dielectric does, and has no toggle of its own.
+    #[test]
+    fn a_dielectric_hides_only_its_own_laminate() -> Result<(), String> {
+        let four = four()?;
+        let mut view = LayerView::default();
+        view.set(ViewLayer::Dielectric(1), false);
+        for index in 0..four.dielectrics().len() {
+            assert_eq!(view.visible(ViewLayer::Dielectric(index)), index != 1);
+        }
+        assert!(!view.visible(ViewLayer::Substrate));
+        assert!(view.shows_laminate(&four));
+        view.set(ViewLayer::Substrate, true);
+        assert!(!view.visible(ViewLayer::Substrate), "no toggle of its own");
+        view.set_laminate(&four, false);
+        assert!(!view.shows_laminate(&four));
+        view.set_laminate(&four, true);
+        assert_eq!(view, LayerView::default());
+        Ok(())
     }
 
     #[test]
@@ -347,24 +440,40 @@ mod tests {
                 "Top silkscreen",
                 "Top solder mask",
                 "Top copper",
+                "Dielectric 1",
                 "Inner 1 copper",
+                "Dielectric 2",
                 "Inner 2 copper",
-                "Substrate",
+                "Dielectric 3",
                 "Bottom copper",
                 "Bottom solder mask",
                 "Bottom silkscreen",
                 "Vias",
             ]
         );
-        // Every body kind on every layer of the board has its toggle.
+        // Every body kind on every layer of the board has its toggle: a
+        // laminate body its dielectric's.
         for kind in BodyKind::ALL {
             for layer in copper.iter().copied().map(Some).chain([None]) {
                 let toggle = ViewLayer::of(kind, layer);
-                assert!(stack.contains(&toggle), "{kind:?} on {layer:?}");
+                if toggle == ViewLayer::Substrate {
+                    for index in 0..four.dielectrics().len() {
+                        assert!(stack.contains(&ViewLayer::Dielectric(index)));
+                    }
+                } else {
+                    assert!(stack.contains(&toggle), "{kind:?} on {layer:?}");
+                }
             }
         }
         let two = ViewLayer::stack(&Stack::default());
-        assert_eq!(two.len(), stack.len() - 2);
+        assert_eq!(two.len(), stack.len() - 4);
+        // A board of one dielectric calls it the substrate.
+        let laminate: Vec<String> = two
+            .iter()
+            .filter(|l| matches!(l, ViewLayer::Dielectric(_)))
+            .map(|l| l.label_on(&Stack::default()))
+            .collect();
+        assert_eq!(laminate, ["Substrate"]);
         // Only the films the stackup has: no bottom mask or top legend
         // toggle on a board without them.
         let bare = ViewLayer::stack(&Stack::of(
@@ -473,7 +582,7 @@ mod tests {
             );
         }
         let four = four()?;
-        let x_ray = LayerView::x_ray();
+        let x_ray = LayerView::x_ray(&four);
         for layer in ViewLayer::stack(&four) {
             let copper = matches!(layer, ViewLayer::Copper(_) | ViewLayer::Vias);
             assert_eq!(x_ray.visible(layer), copper, "{layer:?}");
@@ -497,6 +606,7 @@ mod tests {
         assert!(click(&ctx, &mut view, "Top solder mask")?);
         assert!(!view.visible(ViewLayer::Mask(Layer::Top)));
         assert!(click(&ctx, &mut view, "Substrate")?);
+        assert!(!view.visible(ViewLayer::Dielectric(0)));
         assert!(!view.visible(ViewLayer::Substrate));
         assert!(view.visible(ViewLayer::Copper(CopperLayer::Top)));
         assert!(click(&ctx, &mut view, "Show all")?);

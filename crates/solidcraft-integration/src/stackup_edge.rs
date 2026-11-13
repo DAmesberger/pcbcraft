@@ -42,6 +42,15 @@ pub fn weave_strength(kind: DielectricKind, glass: GlassStyle) -> f64 {
     }
 }
 
+/// The glass weave a dielectric of `kind` and `glass` shows, on its
+/// slab's faces and its band at the edge alike ([`weave_strength`]).
+pub fn laminate_detail(kind: DielectricKind, glass: GlassStyle) -> Detail {
+    Detail {
+        pattern: Pattern::Weave,
+        strength: weave_strength(kind, glass),
+    }
+}
+
 /// One band of the edge: what it shows and its z range.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Band {
@@ -84,13 +93,20 @@ pub fn bands(stackup: &Stackup, board: &Board) -> Result<Vec<Geometry>> {
         }
         let before = out.len();
         appearance::push(&mut out, Some(board), kind, None, layer, mesh)?;
-        if let (Band::Dielectric(index), Some(geometry)) = (band, out.get_mut(before))
-            && let Some(d) = stackup.dielectrics.get(index)
-        {
-            geometry.detail = Detail {
-                pattern: Pattern::Weave,
-                strength: weave_strength(d.kind, d.glass),
-            };
+        let Some(geometry) = out.get_mut(before) else {
+            continue;
+        };
+        // A band and a foil's line go with the dielectric they lie in, so
+        // peeling it takes its slice of the edge with it.
+        match band {
+            Band::Dielectric(index) => {
+                geometry.dielectric = Some(index);
+                if let Some(d) = stackup.dielectrics.get(index) {
+                    geometry.detail = laminate_detail(d.kind, d.glass);
+                }
+            }
+            Band::Copper(layer) => geometry.dielectric = board.stack.dielectric_of(layer),
+            Band::Mask(_) => {}
         }
     }
     Ok(out)

@@ -46,7 +46,7 @@ Should the live 3D board stop being a Solidcraft model (option 3), what should S
 | 3D only adds faces to reference | It also adds heights (keepouts, collisions) and a third model, the enclosure, which only the engine can evaluate. |
 | It maps to RFC 0001 | RFC 0001 is a draft with nothing built. Its PCB payload is to be "defined with PCBCraft", which is upstream's own app, not Sparksmith. The plan must work on today's commands first. |
 | (9 November) The published board design is the full board | Update Links on the full ESP32 board took 17.1 s, and its names are the fragile ones. Publish the interface; offer the full board as an option. |
-| (Earlier study) 20,000 drills × 5 slabs in 135 ms | Not reproduced: 2.5–6.9 s with the mesher as it is; 0.53 s for one slab with 1 mm tiles. Still far faster than the kernel, but the live laminate should be one slab, not five. |
+| (Earlier study) 20,000 drills × 5 slabs in 135 ms | Not reproduced: 2.5–6.9 s with the mesher as it is; 0.53 s for one slab with 1 mm tiles. Still far faster than the kernel. The live laminate was one merged body for a while; it is one body per slab again (L1, see the [speed profile](../3d-speed-profile.md)), so the view peels it per dielectric. |
 
 ### Recommended architecture
 
@@ -600,7 +600,7 @@ Stages A are option 3; stages B are the interface (2.8). Hours are estimates.
 | 8 | B6 | UI | 10–12 | VM review |
 | 9 | A5 (built) | Export tiers, progress and cancel, the per-export volume check | 8–10 | A full export reports any body that differs from the plan (`export::tests::a_full_export_reports_a_body_that_differs_from_the_plan`) |
 | 10 | B7, B9 | Live channel; VM run and measurements | 14–17 | Acceptance 9 |
-| Later | A6 | Scale: one-slab laminate, lazy inner layers, compact meshes; then lift `MAX_TRACKS` | 10–16 | 20,000 vias and 60,000 tracks under 1 GB and 1 s (target) |
+| Later | A6 | Scale: lazy inner layers, compact meshes, the laminate's tile size following hole density; then lift `MAX_TRACKS` | 10–16 | 20,000 vias and 60,000 tracks under 1 GB and 1 s (target) |
 | Later | A7 | Persisted part cache (mesh, face table, datums) | 10–14 | A board opens in 3D with no kernel call |
 | Later | B8 | `.craftx` | 8–12 | Upstream |
 

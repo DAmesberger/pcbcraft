@@ -294,7 +294,7 @@ fn instance(geometry: &[Geometry], stack: &Stack) -> Result<Vec<Instanced>, Stri
             continue;
         }
         let place = g.place.unwrap_or(Place::IDENTITY);
-        let layer = ViewLayer::of(g.kind, g.layer);
+        let layer = ViewLayer::of_body(g);
         let address = Arc::as_ptr(&g.mesh) as usize;
         let colour = plain_colour(g.surface);
         let look_key = look_graph::look_key(g.surface, g.detail);
@@ -531,7 +531,7 @@ fn ordered(geometry: &[Geometry]) -> Vec<(ViewLayer, &Geometry)> {
     let mut out: Vec<(ViewLayer, &Geometry)> = geometry
         .iter()
         .filter(|g| streamed(g))
-        .map(|g| (ViewLayer::of(g.kind, g.layer), g))
+        .map(|g| (ViewLayer::of_body(g), g))
         .collect();
     // A stable sort keeps model order inside each layer.
     out.sort_by_key(|(layer, _)| *layer);
@@ -675,9 +675,7 @@ fn pack_placed(
     let placed: Vec<&Geometry> = geometry
         .iter()
         .chain(decals)
-        .filter(|g| {
-            !streamed(g) && stream_shaded(g, stack) && view.draws(ViewLayer::of(g.kind, g.layer))
-        })
+        .filter(|g| !streamed(g) && stream_shaded(g, stack) && view.draws(ViewLayer::of_body(g)))
         .inspect(|g| *uses.entry(Arc::as_ptr(&g.mesh) as usize).or_default() += 1)
         .collect();
     let mut order: Vec<&Geometry> = placed;
@@ -759,7 +757,7 @@ pub fn build(geometry: Vec<Geometry>, stack: &Stack) -> Result<ModelScene, Strin
         let Some(item) = g.item.filter(|_| g.place.is_none()) else {
             continue;
         };
-        let segment = ViewLayer::of(g.kind, g.layer);
+        let segment = ViewLayer::of_body(g);
         let at = *index.entry((item, segment)).or_insert_with(|| {
             flat.push((item, segment, BlockBuilder::default()));
             flat.len() - 1
@@ -1096,7 +1094,7 @@ pub(crate) mod tests {
             for (k, at) in group.bodies.iter().enumerate() {
                 let g = &scene.geometry[*at];
                 assert_eq!(Arc::as_ptr(&g.mesh) as usize as u64, group.mesh.key);
-                assert_eq!(ViewLayer::of(g.kind, g.layer), group.layer);
+                assert_eq!(ViewLayer::of_body(g), group.layer);
                 let rows = g.place.unwrap_or(Place::IDENTITY).rows_f32();
                 let bytes: Vec<u8> = rows
                     .iter()
@@ -1255,7 +1253,7 @@ pub(crate) mod tests {
                 * scene
                     .geometry
                     .iter()
-                    .filter(|g| streamed(g) && ViewLayer::of(g.kind, g.layer) == layer)
+                    .filter(|g| streamed(g) && ViewLayer::of_body(g) == layer)
                     .map(|g| g.mesh.triangles.len())
                     .sum::<usize>()
         };
@@ -1290,7 +1288,7 @@ pub(crate) mod tests {
         use pcbcraft_core::{CopperLayer, Layer};
         let scene = demo_scene()?;
         let views = [
-            LayerView::substrate_hidden(true),
+            LayerView::substrate_hidden(true, &scene.stack),
             {
                 let mut v = LayerView::default();
                 v.set(ViewLayer::Mask(Layer::Top), false);
@@ -1427,7 +1425,7 @@ pub(crate) mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let scene = demo_scene()?;
         let mut x_ray = LayerView::default();
-        x_ray.set(ViewLayer::Substrate, false);
+        x_ray.set_laminate(&scene.stack, false);
         let mut seen = 0;
         for g in &scene.geometry {
             let (under, over) = match g.kind {
@@ -1791,7 +1789,7 @@ pub(crate) mod tests {
                 scene
                     .geometry
                     .iter()
-                    .any(|g| g.item == Some(*item) && ViewLayer::of(g.kind, g.layer) == *segment)
+                    .any(|g| g.item == Some(*item) && ViewLayer::of_body(g) == *segment)
             );
         }
         // Tracks' mask caps sit on the mask layer but still highlight with
@@ -1802,6 +1800,134 @@ pub(crate) mod tests {
                 .iter()
                 .any(|(_, s, _)| matches!(s, ViewLayer::Mask(_)))
         );
+        Ok(())
+    }
+
+    /// The showcase (four layers) and its live model's scene, its flat
+    /// bodies meshed as the 3D view draws them.
+    fn showcase_live() -> Result<(pcbcraft_core::Project, ModelScene), Box<dyn std::error::Error>> {
+        use pcbcraft_solidcraft::models::imported::SourceCache;
+        use pcbcraft_solidcraft::project::{Flat, build_flat};
+        let project = Engine::showcase()?.project().clone();
+        let model = build_flat(&project, &SourceCache::default(), None, Flat::Meshed)?;
+        let scene = build(model.geometry, &model.stack)?;
+        Ok((project, scene))
+    }
+
+    /// The stack peels one layer at a time: hiding any one toggle of the
+    /// popover leaves out exactly that layer's bodies, from the draw lists
+    /// and from the material stream alike, and every copper layer and
+    /// every dielectric has bodies of its own (a dielectric its slabs and
+    /// its slice of the routed edge). Peeled from the top down to an inner
+    /// foil, a ray straight down onto one of its tracks meets that foil's
+    /// copper first; peeled through the foil, the dielectric under it.
+    #[test]
+    fn peeling_each_layer_hides_exactly_that_layers_bodies()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use pcbcraft_solidcraft::material::BodyKind;
+        use pcbcraft_solidcraft::scene::Geometry;
+        let (project, scene) = showcase_live()?;
+        let stack = &scene.stack;
+        let layers = ViewLayer::stack(stack);
+        let dielectrics = stack.dielectrics().len();
+        assert_eq!(dielectrics, project.stackup.dielectrics.len());
+        assert!(dielectrics >= 3, "the showcase has inner dielectrics");
+        assert!(
+            scene
+                .geometry
+                .iter()
+                .all(|g| ViewLayer::of_body(g) != ViewLayer::Substrate),
+            "every laminate body is filed under its dielectric"
+        );
+        for index in 0..dielectrics {
+            let has = |kind: BodyKind| {
+                scene.geometry.iter().any(|g| {
+                    g.kind == kind && ViewLayer::of_body(g) == ViewLayer::Dielectric(index)
+                })
+            };
+            assert!(has(BodyKind::Substrate), "dielectric {index}: a slab");
+            assert!(
+                has(BodyKind::EdgeDielectric),
+                "dielectric {index}: an edge band"
+            );
+        }
+        for layer in &layers {
+            let mut view = LayerView::default();
+            view.set(*layer, false);
+            let mut hidden = 0;
+            for g in &scene.geometry {
+                let body = ViewLayer::of_body(g);
+                let own =
+                    body == *layer || (*layer == ViewLayer::Bodies && body == ViewLayer::Markings);
+                assert_eq!(
+                    !view.shows(g),
+                    own,
+                    "{layer:?}: {:?} on {:?} in {:?}",
+                    g.kind,
+                    g.layer,
+                    g.dielectric
+                );
+                hidden += usize::from(own);
+            }
+            if matches!(layer, ViewLayer::Copper(_) | ViewLayer::Dielectric(_)) {
+                assert!(hidden > 0, "{layer:?} has bodies");
+            }
+            let (_, runs) = pack(&scene.geometry, &[], &view, stack)?;
+            let packed: std::collections::BTreeSet<ViewLayer> =
+                runs.iter().map(|(l, _)| *l).collect();
+            let expected: std::collections::BTreeSet<ViewLayer> = scene
+                .runs
+                .iter()
+                .map(|(l, _)| *l)
+                .filter(|l| view.draws(*l))
+                .collect();
+            assert_eq!(packed, expected, "{layer:?}");
+            assert!(!packed.contains(layer), "{layer:?}");
+        }
+        let first = |view: &LayerView, at: [f64; 2]| -> Option<&Geometry> {
+            scene
+                .geometry
+                .iter()
+                .filter(|g| view.shows(g))
+                .filter_map(|g| {
+                    g.raycast(Vec3::new(at[0], at[1], 10.0), Vec3::new(0.0, 0.0, -1.0))
+                        .map(|(t, _)| (t, g))
+                })
+                .min_by(|a, b| a.0.total_cmp(&b.0))
+                .map(|(_, g)| g)
+        };
+        let mut view = LayerView::default();
+        let mut inner = 0;
+        for layer in &layers {
+            if let ViewLayer::Copper(copper) = *layer
+                && copper.side().is_none()
+            {
+                let track = project
+                    .tracks
+                    .iter()
+                    .find(|t| t.layer == copper)
+                    .ok_or("an inner track")?;
+                let mid = [
+                    (track.start[0] + track.end[0]) / 2.0,
+                    (track.start[1] + track.end[1]) / 2.0,
+                ];
+                let hit = first(&view, mid).ok_or("the ray met nothing")?;
+                assert_eq!(ViewLayer::of_body(hit), *layer, "{:?}", hit.kind);
+                let mut through = view.clone();
+                through.set(*layer, false);
+                let under = first(&through, mid).ok_or("the ray met nothing")?;
+                let dielectric = stack.dielectric_of(copper).ok_or("no dielectric")?;
+                assert_eq!(
+                    ViewLayer::of_body(under),
+                    ViewLayer::Dielectric(dielectric),
+                    "{:?}",
+                    under.kind
+                );
+                inner += 1;
+            }
+            view.set(*layer, false);
+        }
+        assert_eq!(inner, project.stackup.layers().len() - 2);
         Ok(())
     }
 }

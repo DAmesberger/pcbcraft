@@ -3,8 +3,10 @@
 //! ([`crate::appearance::slab`], and [`crate::appearance::prism`] for a
 //! body of one convex loop), not built in the kernel. Each body is the
 //! plan body's loops, flattened at [`FLATTEN_TOLERANCE_MM`], extruded
-//! between its two heights; nothing is added, dropped or reshaped, except
-//! that the laminate is drawn as one body ([`BoardPlan::whole_laminate`]).
+//! between its two heights; nothing is added, dropped or reshaped. The
+//! laminate is its slabs, one body per slab as the exact build makes them,
+//! each carrying its dielectric ([`Geometry::dielectric`]) so the 3D view
+//! peels the stack one dielectric at a time.
 //!
 //! A body is meshed in its own frame and placed by the frame's turn and
 //! move, so every via of a size, and every track of a length and width,
@@ -12,19 +14,18 @@
 //! an edit meshes only the bodies it changed.
 //!
 //! Every mesh is picked as the document object its plan body came from:
-//! its geometry carries that object's pick ([`super::Source`]); the
-//! laminate carries none (the board). [`parity`] checks the meshes
+//! its geometry carries that object's pick ([`super::Source`]); a
+//! laminate slab carries none (the board). [`parity`] checks the meshes
 //! against the plan.
 use super::Source;
-use super::plan::{BoardPlan, Origin, PlanBody};
+use super::plan::{BoardPlan, Level, Origin, PlanBody};
 use crate::appearance::{Region, SMOOTH_TURN, prism, prism_points, slab};
 use crate::geom::prelude::*;
 use crate::geom::{Mesh, Vec3};
-use crate::material;
 use crate::pad_outline::{Contour, FLATTEN_TOLERANCE_MM};
 use crate::scene::{Geometry, Place, Volume};
 use crate::{Error, Result};
-use pcbcraft_core::{Fabrication, Id, PadId, Point};
+use pcbcraft_core::{Id, PadId, Point};
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -69,10 +70,11 @@ impl Memo {
 /// One meshed flat body.
 #[derive(Clone)]
 pub struct Meshed {
-    /// The plan body it was meshed from; `None` for the whole laminate.
-    pub source: Option<Origin>,
+    /// The plan body it was meshed from.
+    pub source: Origin,
     pub geometry: Geometry,
-    /// The flattened loops' area, mm², and their length, mm.
+    /// The flattened loops' area (the outer less each hole: a foil level's
+    /// holes overlap, so not its area), mm², and their length, mm.
     pub area: f64,
     pub perimeter: f64,
 }
@@ -393,9 +395,9 @@ fn add_edges(mesh: &mut Mesh, points: &[Point], walls: &[u32], z: [f64; 2]) {
     }
 }
 
-/// The board's flat bodies of `plan`, meshed: each plan body but the
-/// laminate's slabs, then the laminate whole. Each body's geometry is
-/// picked as its object's source in `sources`. Unchanged meshes come from
+/// The board's flat bodies of `plan`, meshed: one per plan body, the
+/// laminate's slabs included. Each body's geometry is picked as its
+/// object's source in `sources`; a slab's names its dielectric. Unchanged meshes come from
 /// `memo`, which keeps this call's.
 pub fn bodies(
     plan: &BoardPlan,
@@ -403,13 +405,7 @@ pub fn bodies(
     memo: &mut Memo,
 ) -> Result<(Vec<Meshed>, Stats)> {
     let picks = picks(sources);
-    let whole = plan.whole_laminate()?;
-    let planned: Vec<(&PlanBody, Option<Origin>)> = plan
-        .bodies()
-        .filter(|b| !matches!(b.source, Origin::Laminate(_)))
-        .map(|b| (b, Some(b.source)))
-        .chain(whole.iter().map(|b| (b, None)))
-        .collect();
+    let planned: Vec<(&PlanBody, Origin)> = plan.bodies().map(|b| (b, b.source)).collect();
     let keys: Vec<u64> = planned.iter().map(|(b, _)| key(b)).collect();
     // Each mesh not held, once, made on every core.
     let mut wanted: Vec<(u64, &PlanBody)> = Vec::new();
@@ -439,7 +435,6 @@ pub fn bodies(
         })??;
         next.made.insert(*key, made);
     }
-    let fabrication = Fabrication::default();
     let mut out = Vec::with_capacity(planned.len());
     for ((body, source), key) in planned.into_iter().zip(keys) {
         let made = match next.made.get(&key) {
@@ -453,7 +448,7 @@ pub fn bodies(
                 made
             }
         };
-        let item = match source.as_ref().and_then(object) {
+        let item = match object(&source) {
             Some(object) => Some(*picks.get(&object).ok_or_else(|| {
                 Error::Verification(format!("plan body {} has no source", body.name))
             })?),
@@ -481,8 +476,12 @@ pub fn bodies(
                 item,
                 kind: body.kind,
                 layer: body.layer,
+                dielectric: match source {
+                    Origin::Laminate(level) => Some(level.dielectric()),
+                    _ => None,
+                },
                 surface: body.look.surface()?,
-                detail: material::detail(body.kind, &fabrication),
+                detail: body.look.detail,
                 mesh: made.mesh,
                 place,
                 volume: Volume::known(made.volume),
@@ -519,30 +518,25 @@ pub const PARITY_MM: f64 = FLATTEN_TOLERANCE_MM * 1.1 + 1e-9;
 pub const EXACT_VOLUME: f64 = 1e-9;
 
 /// Where the meshed bodies `meshed` differ from `plan`'s: one mesh per plan
-/// body but the laminate's slabs, of its kind, source and layer, and one
-/// laminate body, the plan's whole laminate. Each mesh's box lies within
-/// [`PARITY_MM`] of its plan body's; its volume is its flattened loops'
-/// area times its thickness (to [`EXACT_VOLUME`]), and lies from the plan
-/// body's exact volume by no more than flattening explains: the loops'
-/// length times [`FLATTEN_TOLERANCE_MM`] times the thickness. The whole
-/// laminate's volume is checked against the outline less its holes where
-/// those are disjoint. Empty when they agree.
+/// body, the laminate's slabs included, of its kind, source and layer (and
+/// a slab of its dielectric). Each mesh's box lies within [`PARITY_MM`] of
+/// its plan body's; its volume is its flattened loops' area times its
+/// thickness (to [`EXACT_VOLUME`]), and lies from the plan body's exact
+/// volume by no more than flattening explains: the loops' length times
+/// [`FLATTEN_TOLERANCE_MM`] times the thickness. A slab's volume, which
+/// the plan states none of, is checked against the outline less its holes
+/// where those are disjoint. Empty when they agree.
 pub fn parity(plan: &BoardPlan, meshed: &[Meshed]) -> Result<Vec<String>> {
     let mut out = Vec::new();
-    let mut by_source: HashMap<Option<String>, &Meshed> = HashMap::new();
+    let mut by_source: HashMap<String, &Meshed> = HashMap::new();
     for m in meshed {
-        let key = m.source.map(|s| format!("{s:?}"));
+        let key = format!("{:?}", m.source);
         if by_source.insert(key.clone(), m).is_some() {
-            out.push(format!("meshed twice: {key:?}"));
+            out.push(format!("meshed twice: {key}"));
         }
     }
-    let whole = plan.whole_laminate()?;
-    let planned = plan
-        .bodies()
-        .filter(|b| !matches!(b.source, Origin::Laminate(_)))
-        .map(|b| (b, Some(format!("{:?}", b.source))))
-        .chain(whole.iter().map(|b| (b, None)));
-    for (body, key) in planned {
+    for body in plan.bodies() {
+        let key = format!("{:?}", body.source);
         let Some(m) = by_source.remove(&key) else {
             out.push(format!(
                 "planned, not meshed: {} {:?}",
@@ -551,11 +545,14 @@ pub fn parity(plan: &BoardPlan, meshed: &[Meshed]) -> Result<Vec<String>> {
             continue;
         };
         let g = &m.geometry;
-        let laminate = key.is_none();
-        if g.kind != body.kind || (!laminate && g.layer != body.layer) {
+        let dielectric = match body.source {
+            Origin::Laminate(level) => Some(level.dielectric()),
+            _ => None,
+        };
+        if g.kind != body.kind || g.layer != body.layer || g.dielectric != dielectric {
             out.push(format!(
-                "{}: meshed as {:?} on {:?}, planned {:?} on {:?}",
-                body.name, g.kind, g.layer, body.kind, body.layer
+                "{}: meshed as {:?} on {:?} in dielectric {:?}, planned {:?} on {:?} in {dielectric:?}",
+                body.name, g.kind, g.layer, g.dielectric, body.kind, body.layer
             ));
         }
         let (min, max) = body.bounds()?;
@@ -574,17 +571,18 @@ pub fn parity(plan: &BoardPlan, meshed: &[Meshed]) -> Result<Vec<String>> {
         let thickness = body.z[1] - body.z[0];
         let volume = g.volume();
         let flat = m.area * thickness;
-        if (volume - flat).abs() > EXACT_VOLUME * flat.abs().max(1.0) {
+        // A foil level's holes are that layer's copper outlines, which
+        // overlap (a ring on a track): the outer less each hole is no area
+        // of it, so only its exact volume is checked, where the holes lie
+        // apart.
+        let overlapping = matches!(body.source, Origin::Laminate(Level::Foil { .. }));
+        if !overlapping && (volume - flat).abs() > EXACT_VOLUME * flat.abs().max(1.0) {
             out.push(format!(
                 "{}: mesh volume {volume}, its loops' {flat}",
                 body.name
             ));
         }
-        let exact = if laminate {
-            disjoint_volume(body)
-        } else {
-            body.volume()
-        };
+        let exact = body.volume().or_else(|| disjoint_volume(body));
         if let Some(exact) = exact {
             let allowed = m.perimeter * FLATTEN_TOLERANCE_MM * thickness + 1e-9;
             if (volume - exact).abs() > allowed {
@@ -596,7 +594,7 @@ pub fn parity(plan: &BoardPlan, meshed: &[Meshed]) -> Result<Vec<String>> {
         }
     }
     for (key, _) in by_source {
-        out.push(format!("meshed, not planned: {key:?}"));
+        out.push(format!("meshed, not planned: {key}"));
     }
     Ok(out)
 }

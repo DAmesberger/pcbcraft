@@ -39,12 +39,12 @@ fn write_layer_pictures() -> Result<(), Box<dyn std::error::Error>> {
         }
         view
     };
-    let mut copper_only = LayerView::x_ray();
+    let mut copper_only = LayerView::x_ray(&stack);
     copper_only.set(ViewLayer::Vias, false);
     let views = [
         ("layers-all", LayerView::default()),
         ("layers-no-top-mask", hidden(&[ViewLayer::Mask(Layer::Top)])),
-        ("layers-x-ray", LayerView::x_ray()),
+        ("layers-x-ray", LayerView::x_ray(&stack)),
         ("layers-copper-only", copper_only),
         (
             "layers-inner-1-only",

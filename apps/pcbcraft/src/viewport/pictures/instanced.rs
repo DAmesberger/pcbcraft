@@ -3,7 +3,6 @@
 //! toggle uploads no via triangles again, and (ignored, a benchmark) how
 //! long boards of thousands of vias take to show and to draw.
 use super::*;
-use crate::layer_view::ViewLayer;
 use pcbcraft_solidcraft::scene::Geometry;
 
 fn gpu() -> Result<Option<Gpu>, Box<dyn std::error::Error>> {
@@ -261,7 +260,7 @@ fn a_layer_toggle_uploads_no_instanced_via_mesh() -> Result<(), Box<dyn std::err
     };
     assert!(first.geometry > stream(&v), "the via meshes went up once");
     assert!(first.placements > 0);
-    v.set_layer(ViewLayer::Substrate, false);
+    v.set_laminate(false);
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while v.receive_repack() {
         if std::time::Instant::now() > deadline {

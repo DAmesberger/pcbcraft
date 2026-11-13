@@ -336,6 +336,7 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
             item: source.map(|i| i.id),
             kind,
             layer: None,
+            dielectric: None,
             surface: crate::material::material(
                 kind,
                 &pcbcraft_core::Fabrication::default(),

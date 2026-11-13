@@ -1038,6 +1038,7 @@ pub fn preview(
             item: None,
             kind: lib.kind(),
             layer: None,
+            dielectric: None,
             surface,
             detail,
             mesh: body.mesh(),

@@ -796,7 +796,7 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
         model
             .geometry
             .iter()
-            .filter(|g| ViewLayer::of(g.kind, g.layer) == ViewLayer::Bodies)
+            .filter(|g| ViewLayer::of_body(g) == ViewLayer::Bodies)
             .map(|g| {
                 let dx = (g.min[0] - via.position[0]).max(via.position[0] - g.max[0]);
                 let dy = (g.min[1] - via.position[1]).max(via.position[1] - g.max[1]);
@@ -870,7 +870,8 @@ fn write_showcase_pictures() -> Result<(), Box<dyn std::error::Error>> {
     // The open via's barrel through the 4-layer stackup, in X-ray: the
     // plated barrel with its ring on every copper layer and the inner
     // tracks it joins.
-    show_layers(&mut v, crate::layer_view::LayerView::x_ray())?;
+    let stack = v.model.as_ref().ok_or("no model")?.stack.clone();
+    show_layers(&mut v, crate::layer_view::LayerView::x_ray(&stack))?;
     let barrel = Vec3::new(o.position[0], o.position[1], (underside + top) / 2.0);
     aim(&mut v, barrel, 6.5, 30.0, 12.0);
     save(&mut v, "09b-via-barrel-x-ray")?;
@@ -1304,7 +1305,7 @@ fn write_wroom_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
     save(&mut v, "wroom-board")?;
     aim(&mut v, c, 30.0, 20.0, -35.0);
     save(&mut v, "wroom-board-below")?;
-    v.set_layer(ViewLayer::Substrate, false);
+    v.set_laminate(false);
     v.set_layer(ViewLayer::Mask(Layer::Bottom), false);
     v.set_layer(ViewLayer::Mask(Layer::Top), false);
     for _ in 0..500 {

@@ -567,6 +567,7 @@ pub fn open_laminate(
         if region.fills.is_empty() {
             continue;
         }
+        let before = out.len();
         push(
             &mut out,
             Some(board),
@@ -575,6 +576,10 @@ pub fn open_laminate(
             layer,
             slab(&region, z0, z1, MASK_TILE_MM),
         )?;
+        // The laminate in an opening is the outer dielectric's face.
+        if let Some(open) = out.get_mut(before) {
+            open.dielectric = board.stack.outer_dielectric(side);
+        }
     }
     Ok(out)
 }
@@ -1269,6 +1274,7 @@ pub(crate) fn push(
         item,
         kind,
         layer,
+        dielectric: None,
         surface: material::material(kind, &looks, &stack).surface()?,
         detail: material::detail(kind, &looks),
         mesh: Arc::new(mesh),

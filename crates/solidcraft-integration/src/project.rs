@@ -684,6 +684,7 @@ fn finish_with(
             item,
             kind,
             layer: layer(kind),
+            dielectric: None,
             surface,
             detail,
             mesh,

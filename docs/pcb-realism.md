@@ -184,6 +184,9 @@ These are never saved:
   the board's silkscreen colour.
 - The board edge shows stackup bands (`EdgeDielectric`, `EdgeCopper`): a band for each
   dielectric, with the weave of its glass style, a line for each foil and a mask lip.
+  Each laminate slab shows the same weave as its dielectric's band
+  (`stackup_edge::laminate_detail`), so a peeled inner dielectric's face is its own glass
+  in the realistic view (`each_slab_carries_its_dielectrics_realistic_material`).
 - Every display body carries its copper layer or side (`Geometry.layer`), which the 3D
   layer toggles use. The layer is per body, not per pick: a through-hole pad's opposite
   land is on the other side, and copper on no single layer (plated barrels, a via's
@@ -232,10 +235,19 @@ These are never saved:
 ## 3D layer toggles (`apps/pcbcraft`)
 
 - `ViewLayer` lists the toggles: components, silkscreen and mask for each side, copper for
-  each stackup layer, substrate and vias. `LayerView` holds the visibility of each one.
-  Vias covers every plated hole (via and through-hole barrels, a via's finished rings and
-  bore); a tented via's dome is its side's mask. The edge's foil lines go with the
-  substrate.
+  each stackup layer, each dielectric between the foils either side of it (`Dielectric 1`,
+  …; "Substrate" on a two-layer board) and vias. `LayerView` holds the visibility of each
+  one. Vias covers every plated hole (via and through-hole barrels, a via's finished rings
+  and bore); a tented via's dome is its side's mask.
+- **The stack peels one layer at a time.** The live laminate is its slabs, one body per
+  slab as the exact build makes them, and each slab carries its dielectric
+  (`Geometry::dielectric`, from the plan's `Level`): a dielectric's toggle hides its slabs
+  (an inner one's foil level and the part under it too), the laminate a mask opening on
+  its outer face shows, and its slice of the routed edge (its band and the foil line in
+  it). Peeled from the top down to an inner foil, its copper shows; peeled through it,
+  the dielectric under it (`peeling_each_layer_hides_exactly_that_layers_bodies`). A
+  laminate body of no dielectric (an exact model's slab, read from a file) shows while
+  every dielectric does.
 - X-ray, next to Show all, shows only copper and vias, so the stackup's copper shows layer
   over layer.
 - A Layers popover (eye icon) on the floating navigation bar holds the toggles. It lists

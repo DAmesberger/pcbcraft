@@ -138,6 +138,9 @@ pub type Span = [f64; 2];
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stack {
     slots: Vec<(Slot, Span)>,
+    /// Each dielectric, top down: its z span and the inner foil at its top
+    /// (`None` for the top dielectric, under the top foil).
+    dielectrics: Vec<(Span, Option<CopperLayer>)>,
     /// The laminate's top face (its bottom face is z = 0).
     top: f64,
     /// The outer foils' thickness, top and bottom.
@@ -172,8 +175,20 @@ impl Stack {
     /// [`Stackup::mask_um`] over copper.
     pub fn of(stackup: &Stackup, finish: PadFinish) -> Self {
         let foil = |layer: CopperLayer| stackup.copper_span(layer).map_or(0.0, |(a, b)| b - a);
+        let layers = stackup.layers();
+        let dielectrics = (0..stackup.dielectrics.len())
+            .filter_map(|index| {
+                let (low, high) = stackup.dielectric_span(index)?;
+                let foil = layers
+                    .iter()
+                    .copied()
+                    .find(|l| l.side().is_none() && stackup.index(*l) == Some(index));
+                Some(([low, high], foil))
+            })
+            .collect();
         let mut stack = Self {
             slots: Vec::new(),
+            dielectrics,
             top: stackup.dielectric_mm(),
             copper: [foil(CopperLayer::Top), foil(CopperLayer::Bottom)],
             mask: stackup.mask_um / 1000.0,
@@ -211,7 +226,6 @@ impl Stack {
             out
         };
         let mut slots = films(&stack, Layer::Top);
-        let layers = stackup.layers();
         let span = |l: &CopperLayer| {
             stackup
                 .copper_span(*l)
@@ -241,6 +255,7 @@ impl Stack {
     pub fn none() -> Self {
         Self {
             slots: Vec::new(),
+            dielectrics: Vec::new(),
             top: 0.0,
             copper: [0.0; 2],
             mask: pcbcraft_core::MASK_UM / 1000.0,
@@ -252,6 +267,34 @@ impl Stack {
     /// Every slot the board has, top to bottom, with its z span.
     pub fn slots(&self) -> &[(Slot, Span)] {
         &self.slots
+    }
+
+    /// Each dielectric of the laminate, top down: its z span and the inner
+    /// copper foil lying at its top (`None` for the top dielectric). The
+    /// laminate's bodies are divided by these ([`crate::scene::Geometry::dielectric`]).
+    pub fn dielectrics(&self) -> &[(Span, Option<CopperLayer>)] {
+        &self.dielectrics
+    }
+
+    /// The dielectric a copper foil lies in or on: an inner foil in the
+    /// dielectric whose top it lies at, the top foil on the top dielectric,
+    /// the bottom foil under the bottom one. `None` without a laminate.
+    pub fn dielectric_of(&self, layer: CopperLayer) -> Option<usize> {
+        let last = self.dielectrics.len().checked_sub(1)?;
+        match layer {
+            CopperLayer::Top => Some(0),
+            CopperLayer::Bottom => Some(last),
+            inner => self
+                .dielectrics
+                .iter()
+                .position(|(_, foil)| *foil == Some(inner)),
+        }
+    }
+
+    /// The dielectric on the outside of a side: the top one or the bottom
+    /// one.
+    pub fn outer_dielectric(&self, side: Layer) -> Option<usize> {
+        self.dielectric_of(side.into())
     }
 
     /// Whether the board has `slot` (component bodies, their films and
