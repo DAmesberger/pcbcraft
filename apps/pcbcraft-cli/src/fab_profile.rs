@@ -1,7 +1,7 @@
 //! `fab-profile list|import|export`: the user's fab profile
 //! library (`pcbcraft_io::rule_profiles`, JSON files in
-//! `PCBCRAFT_CONFIG_DIR/fab-profiles/` or the platform config folder).
-//! Switching a project's profile is the typed `rules.set_fab_profile` request
+//! `PCBCRAFT_CONFIG_DIR/fab-profiles/` or the platform config folder) and
+//! the read-only built-in profiles. Switching a project's profile is the typed `rules.set_fab_profile` request
 //! (`stdio`/`mcp`); this subcommand only moves profile files.
 use super::{Result, open, print};
 use pcbcraft_core::product::SHORT_NAME as CLI;
@@ -12,15 +12,11 @@ use serde_json::json;
 use std::path::Path;
 
 /// The usage line(s).
-pub const USAGE: &str = concat!(
-    "fab-profile list        list the user's fab profiles (",
-    pcbcraft_core::product_name!(),
-    " ships none)
+pub const USAGE: &str = "fab-profile list        list the user's fab profiles and the built-in ones
   fab-profile import FILE.json
                                    add a fab profile file to the user's library
   fab-profile export ID|FILE.pcbcraft NEW_FILE.json
-                                   write a fab profile (or a project's effective rules)"
-);
+                                   write a fab profile (or a project's effective rules)";
 
 fn library() -> Result<ProfileLibrary> {
     Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?))
@@ -68,6 +64,7 @@ fn reply(library: &ProfileLibrary, args: &[String]) -> Result<serde_json::Value>
                 .profiles
                 .iter()
                 .map(|p| summary(p, "user"))
+                .chain(listing.builtins.iter().map(|p| summary(p, "built-in")))
                 .collect();
             let problems: Vec<_> = listing
                 .problems
@@ -118,18 +115,49 @@ mod tests {
     fn list_import_export_through_the_subcommand() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().join("fab-profiles"));
+        let kinds = |listed: &serde_json::Value| -> Vec<(String, String)> {
+            listed["profiles"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|p| {
+                    let text = |v: &serde_json::Value| v.as_str().unwrap_or("").to_owned();
+                    (text(&p["id"]), text(&p["kind"]))
+                })
+                .collect()
+        };
+        let pair = |id: &str, kind: &str| (id.to_owned(), kind.to_owned());
         let listed = reply(&library, &args(&["list"]))?;
         assert_eq!(
-            listed["profiles"].as_array().map(Vec::len),
-            Some(0),
-            concat!(pcbcraft_core::product_name!(), " ships no profiles")
+            kinds(&listed),
+            [
+                pair("jlcpcb-2-layer-1oz", "built-in"),
+                pair("jlcpcb-4-layer-1oz", "built-in"),
+            ],
+            "the built-ins, with an empty user library"
+        );
+        // A built-in exports like a user profile.
+        let builtin = dir.path().join("builtin.json");
+        reply(
+            &library,
+            &args(&["export", "jlcpcb-4-layer-1oz", &builtin.to_string_lossy()]),
+        )?;
+        assert_eq!(
+            rule_profiles::read_profile_file(&builtin)?.name,
+            "JLCPCB 4-layer 1 oz"
         );
         let imported = reply(&library, &args(&["import", EXAMPLE]))?;
         assert_eq!(imported["imported"]["id"], "jlcpcb-2-layer-1oz");
         assert_eq!(imported["imported"]["source"]["publisher"], "JLCPCB");
         let listed = reply(&library, &args(&["list"]))?;
-        assert_eq!(listed["profiles"].as_array().map(Vec::len), Some(1));
-        assert_eq!(listed["profiles"][0]["kind"], "user");
+        assert_eq!(
+            kinds(&listed),
+            [
+                pair("jlcpcb-2-layer-1oz", "user"),
+                pair("jlcpcb-4-layer-1oz", "built-in"),
+            ],
+            "the user's copy replaces the built-in of its id"
+        );
 
         let file = dir.path().join("again.json");
         let file_text = file.to_string_lossy().into_owned();

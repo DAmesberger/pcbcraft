@@ -18,8 +18,8 @@
 //! every applicable value; widths take the net class value over the
 //! effective rule.
 //!
-//! Every value here is pure data: no files and no fabricator data;
-//! Pcbcraft ships no built-in profile.
+//! Every value here is pure data: no files and no fabricator data. The
+//! built-in profiles are files `pcbcraft-io` reads (`rule_profiles::builtins`).
 use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

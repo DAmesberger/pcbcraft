@@ -18,7 +18,7 @@ The Gerber writer follows Ucamco's public Gerber Layer Format Specification. The
 
 ## Production check (`fabrication.preflight`)
 
-The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues. The query's `profile` is an id of the user's profile library (as for an export) or a whole profile; omitted, the project's own rules apply. A board without a fab profile is blocked (`rules.no_fab_profile`, not waivable).
+The check reports every project issue under the chosen fabrication profile. Overrides and net classes are kept; a profile that conflicts with an override is itself an error. It adds production findings to those issues. The query's `profile` is an id of the user's profile library or a built-in (as for an export) or a whole profile; omitted, the project's own rules apply. A board without a fab profile is blocked (`rules.no_fab_profile`, not waivable).
 
 **Errors** (they block export):
 - unrouted connections and unplaced parts;

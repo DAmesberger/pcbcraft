@@ -347,7 +347,7 @@ A plated hole that joins its net's copper on every copper layer it spans, placed
 The limits a board is checked and routed against: clearances between copper objects, board edges and holes, hole and via sizes, mask, silkscreen, paste, courtyard, fill and land-estimator values. A project's effective rules are its fab profile, then its rule overrides, then net classes and class-to-class clearances. Every finding names the rule, its value and where it came from.
 
 **Fab profile**:
-The file that holds a fabricator's design rules: a named, complete set of every rule, each citing its source (the fabricator's capability page and the date it was read). Sparksmith ships none; one is imported or saved by the user. A project keeps a snapshot of its fab profile, so a changed library profile does not change the project until it is switched. The rules themselves stay "design rules".
+The file that holds a fabricator's design rules: a named, complete set of every rule, each citing its source (the fabricator's capability page and the date it was read). Sparksmith has two built in, JLCPCB's 2-layer and 4-layer 1 oz, read-only; others are imported or saved by the user, and a user profile with a built-in's id takes its place. A project keeps a snapshot of its fab profile, so a changed library profile does not change the project until it is switched. The rules themselves stay "design rules".
 _Avoid_: Rule profile, fab preset
 
 **Rule override**:

@@ -365,6 +365,31 @@ fn file_new_opens_the_same_empty_project() -> Fallible {
     Ok(())
 }
 
+/// Run 4, finding 1: File › New without a default fab profile (Settings)
+/// asks for the board's profile on the PCB, JLCPCB 2-layer 1 oz
+/// preselected; one click on Use profile sets it. An opened file is not
+/// asked.
+#[test]
+fn a_new_project_asks_for_its_fab_profile_on_the_pcb() -> Fallible {
+    let mut ax = Ax::new(Workspace::Pcb)?;
+    assert!(!ax.has(Role::Button, "Use profile"), "an opened design");
+    // The document File › New opens for a user without a default.
+    ax.app.replace(Engine::default().to_file(), None, false);
+    ax.settle();
+    ax.button("Use profile")?;
+    ax.until("the profile", |ax| {
+        ax.app.engine.project().rules.profile.is_some()
+    })?;
+    let profile = ax.app.engine.project().rules.profile.as_ref();
+    assert_eq!(
+        profile.map(|p| p.id.as_str()),
+        Some(pcbcraft_io::rule_profiles::DEFAULT_BUILTIN)
+    );
+    ax.settle();
+    assert!(!ax.has(Role::Button, "Use profile"), "asked once");
+    Ok(())
+}
+
 /// The board selection filter is kept per user: a kind turned off in its
 /// popover stays off in the next session.
 #[test]

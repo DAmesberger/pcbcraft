@@ -6,9 +6,10 @@
 //! A project never reads this folder to evaluate its rules: it embeds a
 //! snapshot of its profile (`ProjectRules::profile`). The library supplies
 //! profiles to choose for a new board or to switch to: the ones a user
-//! imported, saved or wrote from a fabricator's published capabilities.
-//! Pcbcraft ships none; `examples/profiles/` holds sourced profile files to
-//! import.
+//! imported, saved or wrote from a fabricator's published capabilities,
+//! and the read-only [`builtins`]: the sourced JLCPCB files in
+//! `examples/profiles/`, compiled in as written. A user profile with a
+//! built-in's id takes its place.
 use crate::library_folder::{pretty, read_bounded};
 use crate::persistence::{atomic_create, atomic_write};
 use crate::settings::UserDirs;
@@ -35,11 +36,37 @@ pub struct Problem {
 }
 
 /// What [`ProfileLibrary::list`] found: the readable profiles, sorted by
-/// name, and every file it could not use.
+/// name, every file it could not use, and the built-ins no user profile
+/// replaces.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Listing {
     pub profiles: Vec<RuleProfile>,
     pub problems: Vec<Problem>,
+    pub builtins: Vec<RuleProfile>,
+}
+
+/// The built-in profile files: JLCPCB's published capabilities, every rule
+/// citing its row. The files stay in `examples/profiles/`, the one copy.
+const BUILTIN_FILES: [&str; 2] = [
+    include_str!("../../../examples/profiles/jlcpcb-2-layer-1oz.json"),
+    include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json"),
+];
+
+/// The built-in profile a new project is offered first.
+pub const DEFAULT_BUILTIN: &str = "jlcpcb-2-layer-1oz";
+
+/// The read-only profiles every install has, in file order. Each decodes
+/// like any profile file (a test holds them valid).
+pub fn builtins() -> Vec<RuleProfile> {
+    BUILTIN_FILES
+        .iter()
+        .filter_map(|text| decode(text.as_bytes()).ok())
+        .collect()
+}
+
+/// The built-in profile `id`, if there is one.
+pub fn builtin(id: &str) -> Option<RuleProfile> {
+    builtins().into_iter().find(|p| p.id == id)
 }
 
 /// The user profile library folder.
@@ -172,7 +199,7 @@ pub fn export_replacing(profile: &RuleProfile, path: &Path) -> Result<()> {
 
 fn not_found(id: &str) -> Error {
     Error::Document(pcbcraft_core::Error::NotFound(format!(
-        "no user fab profile {id}"
+        "no fab profile {id}"
     )))
 }
 
@@ -263,11 +290,27 @@ impl ProfileLibrary {
                 .cmp(&b.name.to_lowercase())
                 .then_with(|| a.id.cmp(&b.id))
         });
-        Ok(Listing { profiles, problems })
+        let builtins = builtins()
+            .into_iter()
+            .filter(|b| !profiles.iter().any(|p| p.id == b.id))
+            .collect();
+        Ok(Listing {
+            profiles,
+            problems,
+            builtins,
+        })
     }
 
-    /// One profile by id.
+    /// One profile by id: the user's, else the built-in.
     pub fn get(&self, id: &str) -> Result<RuleProfile> {
+        match self.user(id) {
+            Err(error) if error.code() == "not_found" => builtin(id).ok_or(error),
+            other => other,
+        }
+    }
+
+    /// One user profile by id.
+    fn user(&self, id: &str) -> Result<RuleProfile> {
         let path = self.path(id)?;
         if !path.is_file() {
             return Err(not_found(id));
@@ -322,7 +365,7 @@ impl ProfileLibrary {
     /// Replace an existing profile's content (same id).
     pub fn replace(&self, profile: &RuleProfile) -> Result<RuleProfile> {
         check(profile)?;
-        self.get(&profile.id)?;
+        self.user(&profile.id)?;
         let listing = self.list()?;
         self.check_name(&listing, &profile.name, &profile.id)?;
         atomic_write(&self.path(&profile.id)?, &encode(profile)?)?;
@@ -332,7 +375,7 @@ impl ProfileLibrary {
     /// Give a profile a new shown name; its id (and file) stays, so
     /// projects that snapshotted it keep naming the same lineage.
     pub fn rename(&self, id: &str, name: &str) -> Result<RuleProfile> {
-        let mut profile = self.get(id)?;
+        let mut profile = self.user(id)?;
         profile.name = name.trim().to_owned();
         self.replace(&profile)
     }
@@ -417,38 +460,36 @@ impl ProfileLibrary {
 }
 
 /// The profile a new board starts with: `choice` (a library id), else the
-/// user's default (`UserSettings::default_rule_profile`). With neither,
-/// `rules.no_fab_profile` says how to choose one: a board is never created
-/// without rules.
+/// user's default (`UserSettings::default_rule_profile`), else the
+/// built-in [`DEFAULT_BUILTIN`]: a board is never created without rules.
 pub fn for_new_board(
     library: &ProfileLibrary,
     choice: Option<&str>,
     default: Option<&str>,
 ) -> Result<RuleProfile> {
-    match choice.or(default) {
-        Some(id) => library.get(id),
-        None => Err(Error::Invalid(
-            "rules.no_fab_profile: a new board needs a fab profile: pass one from the profile \
-             library (fab-profile list), or set a default fab profile in Settings; import a \
-             fabricator's profile file first (examples/profiles/ has sourced ones)"
-                .into(),
-        )),
-    }
+    library.get(choice.or(default).unwrap_or(DEFAULT_BUILTIN))
+}
+
+/// The user's default fab profile id (Settings), if one is set.
+pub fn default_id_from_env() -> Result<Option<String>> {
+    let path = UserDirs::from_env()?.settings_path();
+    Ok(if path.is_file() {
+        crate::settings::read_settings(&path)?.default_rule_profile
+    } else {
+        None
+    })
 }
 
 /// [`for_new_board`] with the user's library and settings.
 pub fn for_new_board_from_env(choice: Option<&str>) -> Result<RuleProfile> {
-    let dirs = UserDirs::from_env()?;
-    let path = dirs.settings_path();
-    let settings = if path.is_file() {
-        crate::settings::read_settings(&path)?
-    } else {
-        crate::settings::UserSettings::default()
+    let default = match choice {
+        Some(_) => None,
+        None => default_id_from_env()?,
     };
     for_new_board(
-        &ProfileLibrary::from_dirs(&dirs),
+        &ProfileLibrary::from_dirs(&UserDirs::from_env()?),
         choice,
-        settings.default_rule_profile.as_deref(),
+        default.as_deref(),
     )
 }
 
@@ -533,7 +574,14 @@ mod tests {
     fn save_list_rename_delete_round_trip() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
-        assert_eq!(library.list()?, Listing::default(), "missing folder");
+        assert_eq!(
+            library.list()?,
+            Listing {
+                builtins: builtins(),
+                ..Listing::default()
+            },
+            "missing folder: only the built-ins"
+        );
         let fab = user("Example Fab 5 mil")?;
         let stored = library.save_as(&fab, "Example Fab 5 mil")?;
         assert_eq!(stored.id, "example-fab-5-mil");
@@ -654,21 +702,64 @@ mod tests {
     }
 
     #[test]
-    fn a_new_board_takes_the_choice_else_the_default_else_is_refused() -> Result<()> {
+    fn a_new_board_takes_the_choice_else_the_default_else_the_builtin() -> Result<()> {
         let dir = tempfile::tempdir()?;
         let library = ProfileLibrary::new(dir.path().to_path_buf());
         let a = library.save_as(&jlcpcb()?, "Fab A")?;
         let b = library.save_as(&jlcpcb()?, "Fab B")?;
         assert_eq!(for_new_board(&library, Some(&a.id), Some(&b.id))?, a);
         assert_eq!(for_new_board(&library, None, Some(&b.id))?, b);
-        let refused = for_new_board(&library, None, None).map_err(|e| e.to_string());
-        assert!(
-            refused
-                .as_ref()
-                .is_err_and(|e| e.contains("rules.no_fab_profile")),
-            "{refused:?}"
+        assert_eq!(for_new_board(&library, None, None)?, jlcpcb()?);
+        assert_eq!(
+            for_new_board(&library, Some("jlcpcb-4-layer-1oz"), None)?.name,
+            "JLCPCB 4-layer 1 oz"
         );
         assert!(for_new_board(&library, Some("no-such"), None).is_err());
+        Ok(())
+    }
+
+    /// The two sourced JLCPCB files are built in, listed after the user's
+    /// profiles and read-only; a user profile with a built-in's id takes
+    /// its place in the listing and in `get`.
+    #[test]
+    fn builtins_are_listed_read_only_and_a_user_profile_replaces_one() -> Result<()> {
+        let all = builtins();
+        assert_eq!(
+            all.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+            ["jlcpcb-2-layer-1oz", "jlcpcb-4-layer-1oz"]
+        );
+        assert!(all.iter().all(|p| p.source.publisher == "JLCPCB"));
+        assert_eq!(builtin(DEFAULT_BUILTIN), Some(jlcpcb()?));
+        let dir = tempfile::tempdir()?;
+        let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
+        assert_eq!(library.get(DEFAULT_BUILTIN)?, jlcpcb()?);
+        // Read-only: no rename or delete, and no file is written.
+        assert!(library.rename(DEFAULT_BUILTIN, "Mine").is_err());
+        assert!(library.delete(DEFAULT_BUILTIN).is_err());
+        assert!(!library.dir().exists());
+        // A saved copy is the user's own.
+        let copy = library.save_as(&jlcpcb()?, "JLCPCB copy")?;
+        assert_eq!(library.list()?.builtins.len(), 2);
+        assert_eq!(library.list()?.profiles, vec![copy]);
+        // An import of the same file keeps its id and replaces the built-in.
+        let mut edited = jlcpcb()?;
+        edited.name = "JLCPCB house rules".into();
+        export(&edited, &dir.path().join("house.json"))?;
+        let imported = library.import(&dir.path().join("house.json"))?;
+        assert_eq!(imported.id, DEFAULT_BUILTIN);
+        let listing = library.list()?;
+        assert_eq!(
+            listing
+                .builtins
+                .iter()
+                .map(|p| p.id.as_str())
+                .collect::<Vec<_>>(),
+            ["jlcpcb-4-layer-1oz"]
+        );
+        assert_eq!(library.get(DEFAULT_BUILTIN)?.name, "JLCPCB house rules");
+        // Deleting the user's copy brings the built-in back.
+        library.delete(DEFAULT_BUILTIN)?;
+        assert_eq!(library.get(DEFAULT_BUILTIN)?, jlcpcb()?);
         Ok(())
     }
 

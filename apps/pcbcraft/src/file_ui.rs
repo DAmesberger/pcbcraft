@@ -1269,11 +1269,15 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
 }
 /// The project a launch without a file and File › New open: empty, with
 /// no parts, library or drafts, on the user's default fab profile
-/// (Settings). Without one the board has no profile: the Design rules
-/// panel asks for one, and routing, fills and production files refuse
-/// until it is chosen.
+/// (Settings). Without one the board has no profile yet: the PCB editor
+/// asks for one (`PcbEditor::ask_for_profile`), JLCPCB 2-layer 1 oz
+/// preselected.
 pub(crate) fn new_project() -> Engine {
-    let Ok(profile) = pcbcraft_io::rule_profiles::for_new_board_from_env(None) else {
+    let Some(profile) = pcbcraft_io::rule_profiles::default_id_from_env()
+        .ok()
+        .flatten()
+        .and_then(|id| pcbcraft_io::rule_profiles::for_new_board_from_env(Some(&id)).ok())
+    else {
         return Engine::default();
     };
     let mut project = pcbcraft_core::Project::default();
