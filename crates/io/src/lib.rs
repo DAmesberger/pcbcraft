@@ -15,6 +15,7 @@ pub mod recovery;
 pub mod rule_profiles;
 pub mod schematic_pdf;
 pub mod settings;
+pub mod shipped;
 
 pub use persistence::{read_project, write_project};
 
