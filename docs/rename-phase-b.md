@@ -1,83 +1,30 @@
-# Rename to Sparksmith: phase B
+# Rename to Sparksmith
 
-Pcbcraft was renamed Sparksmith (sparksmith.io) to avoid confusion with tangency-labs' PCBCraft, a separate project. Phase A changed every name a person sees. The names come from one module, `pcbcraft_core::product` (`NAME`, `SHORT_NAME`, `BUNDLE_ID_PREFIX`, `BUNDLE_ID`, `WEBSITE`, and the `product_name!` and `product_short_name!` macros for compile-time text). `apps/pcbcraft/src/bundle_tests.rs` checks that `macos/Info.plist` agrees with it.
+Pcbcraft was renamed Sparksmith (sparksmith.io) to avoid confusion with tangency-labs' PCBCraft, a separate project. Phase A changed every name a person sees; phase B (13 November 2026) changed the rest. The product's names come from one module, `sparksmith_core::product`, and `apps/sparksmith/src/bundle_tests.rs` checks that `macos/Info.plist` agrees with it.
 
-Phase A covered:
+## Phase B, as done
 
-- the window title, app bar, About (crediting Solidcraft's engine), menus and the native macOS menu, toasts, dialogs and settings messages;
-- the bundle (`Sparksmith`, `io.sparksmith.app`, type `io.sparksmith.project`);
-- the per-user folders;
-- the CLI binary `sparksmith`;
-- the MCP server name, title, instructions and tool text;
-- the assistant's system prompt;
-- the headers of generated fabrication, PDF and firmware files;
-- the docs, README, licence notices and the prose in the skills.
+The founder's decisions of 12 November 2026 apply.
 
-Phase B is what remains. It waits until other branches land, because it touches paths and identifiers across the whole tree.
+- **Crates and paths.** Every package is `sparksmith-*` (the desktop package is `sparksmith`), every module path `sparksmith_*`, the apps live in `apps/sparksmith` and `apps/sparksmith-cli`, and the skills in `skills/sparksmith-*`. The xtask checks, `flake.nix` and the workspace keys follow.
+- **Binaries.** The CLI is `sparksmith`; the desktop binary is `sparksmith-desktop` (`CFBundleExecutable`), since two binaries of one workspace cannot share a name.
+- **Extension.** Projects are `.sparksmith` (MIME `application/x-sparksmith`).
+- **Names stored in files.** The library manifest `sparksmith-library.json`, the native-model metadata keys `org.sparksmith.electronics…`, appearance names, provenance text, the hash domains and the `convert-v1` provenance. The file format has one version and no released files, so nothing is migrated. The ESP32 dev board project changed only in its stored text (title block, rule sources) and the fill keys that hash it; its fabrication files only in the project id.
+- **Generator ABI.** The exports are `sparksmith_gen_*`, and the modules `sparksmith_gen_*.wasm`.
+- **Environment variables** are `SPARKSMITH_*`, with no fallback.
+- **MCP.** `sparksmith://` resources and `skill://sparksmith-*`.
+- **Internal names.** Thread names, egui ids, stderr prefixes and doc comments.
+- **Licence holder.** "Sparksmith contributors".
+- **Docs.** `docs/sparksmith-plan.md`.
 
-## Left for phase B
+## What still reads the former name
 
-1. **Crates and paths.**
-   - Package names: `pcbcraft-core`, `-io`, `-solidcraft`, `-automation`, `-firmware`, `-assist`, `-generator-abi`, `-generator-sdk`, `-generators`, `-generators-probe`, `-units-derive`, and the apps `pcbcraft` and `pcbcraft-cli`.
-   - Every `pcbcraft_*` module path.
-   - The directories `apps/pcbcraft` and `apps/pcbcraft-cli`.
-   - The xtask layer table and the `cargo xtask ci` check commands.
-   - The workspace dependency keys.
-   - `flake.nix` (`name = "pcbcraft"`).
-2. **The desktop binary** is still `pcbcraft` (`CFBundleExecutable`). Rename it with the app package. The CLI already builds as `sparksmith` through `[[bin]]` in `apps/pcbcraft-cli/Cargo.toml`, the second place that spells the short name.
-3. **The `.pcbcraft` extension** appears in:
-   - `format::EXTENSION`;
-   - the open and save filters;
-   - the Finder check in `open_documents.rs`;
-   - the bundle's `CFBundleTypeExtensions` and the MIME type `application/x-pcbcraft`;
-   - the container error message;
-   - examples, fixtures and docs.
+- **`.pcbcraft` files** hold the current format. They open through the same reader and version check, from the open dialog and from Finder. Save keeps the opened path. Save As and new projects write `.sparksmith`, and nothing renames a file silently. Drop `.pcbcraft` at the first release, unless released files exist by then.
+- **Recovery snapshots** named `*.pcbcraft-recovery` are still listed, restored and discarded. New ones are `*.sparksmith-recovery`.
+- **The keychain.** A key found only under the former service `pcbcraft-llm` is copied to `sparksmith-llm` when it is read. The former entry is kept until that connection's key is removed.
+- **The per-user folders** (`UserDirs::adopt_former`, `crates/io/src/former_name.rs`) are copied once from their former names. Remove this once every install has started under the new name. The repository cannot tell when that is, so the copy stays for now.
 
-   See the recommendation below.
-4. **Names stored in files.** Each of these changes what is written or hashed, so it needs the same care as a format change:
-   - the library folder manifest name `pcbcraft-library.json`;
-   - the native-model metadata keys `org.pcbcraft.electronics` and `org.pcbcraft.electronics.identity.`, with their messages ("Pcbcraft identity", "Pcbcraft source", "Pcbcraft kind");
-   - the appearance names `Pcbcraft <material>` written into `.solidcraft` models (`native.rs`);
-   - provenance text in definitions: "Built into Pcbcraft." for standard fields, "Generated by Pcbcraft from a part file", the "Pcbcraft starter table" notes and `starter::SOURCE_NAME`;
-   - the hash domains `pcbcraft project` (the Gerber project GUID) and `pcbcraft.project-lineage`;
-   - the `convert-v1` rule provenance strings.
-5. **ABI and generated code.** These are public contracts:
-   - the generator exports `pcbcraft_gen_abi`, `_alloc`, `_describe` and `_generate`, and the module file names `pcbcraft_gen_*.wasm`;
-   - the firmware C struct name `pcbcraft_pin`.
-6. **Environment variables.** Rename them with a one-release fallback, or all at once before release:
-   - user-facing: `PCBCRAFT_CONFIG_DIR`, `_CACHE_DIR`, `_RECOVERY_DIR`, `_CONTROL_TOKEN` and `_CONTROL_DIR`;
-   - developer and test: `PCBCRAFT_TIMINGS`, `_PICTURES`, `_PICTURES_ONLY`, `_TEXT_PICTURES`, `_REQUIRE_GPU`, `_TWEAK`, `_BENCH_VIAS`, `_MEMORY_EDITS`, `_BLESS` and `PCBCRAFT_CLI` (examples).
-7. **MCP identifiers:**
-   - the resource scheme `pcbcraft://` (catalog, project and live resources, and the golden file);
-   - `skill://pcbcraft-*`;
-   - the skill directories `skills/pcbcraft-*` with their frontmatter names, the `include_str!` path in `mcp/prompts.rs`, and the links in AGENTS.md.
-8. **The keychain service `pcbcraft-llm`.** Renaming it alone would hide every stored API key. Read the old entry when the new one is missing, write it under the new name, and keep the old entry.
-9. **Internal names:** thread names (`pcbcraft-fills` and others), egui ids, `pcbcraft:` prefixes on stderr lines, and about a hundred Rust doc comments that still say Pcbcraft.
-10. **Doc file names:** `docs/pcbcraft-plan.md` and the links to it.
-11. **The former-name folder copy** (`UserDirs::adopt_former`, `crates/io/src/former_name.rs`). Remove it once every install has started at least once under the new name.
+## Names that stay
 
-These stay as they are:
-
-- **Historical records.** The dated run reports (`docs/e2e-*.md`, `docs/datasheet-assistant-run1.md`, the VM measurements in `docs/3d-speed-profile.md`) keep the names they ran under, such as `Pcbcraft.app` and `pcbcraft-cli`.
-- **Other projects' names.** tangency-labs' PCBCraft (`tangency-labs/pcbcraft`) and the Solidcraft fork's branch names (`pcbcraft-smlib-open` and others) belong to those projects.
-
-## The file extension
-
-**Recommendation: `.sparksmith`.** It follows Solidcraft's `.solidcraft`, is unambiguous, and nothing else uses it. The type identifier is already `io.sparksmith.project`. Use `application/x-sparksmith` as the MIME type.
-
-**Should the new app open `.pcbcraft` files?** Yes, read-only by extension, for as long as the format has one version. AGENTS.md says that until the first release the file format has one version, with no migrations or legacy readers. A `.pcbcraft` file holds exactly the current format: the same ZIP container, `project.json` and format version, with no product name inside. Accepting the old extension adds no second reader and no migration. The same reader and the same version check run, and a file of any other version is refused as today. So it does not break the rule.
-
-Concretely:
-
-- the open dialog and the Finder association list both extensions;
-- Save keeps the path the person opened;
-- Save As and new projects write `.sparksmith`;
-- nothing renames files silently.
-
-Drop `.pcbcraft` from the filters at the first release, unless released files exist by then. After the first release, files carry explicit migrations anyway.
-
-## Founder decisions
-
-- **Copyright holder.** LICENSE-MIT and NOTICE still say "Copyright (c) 2026 Pcbcraft contributors", as instructed. Decide whether it becomes "Sparksmith contributors". That is a change of wording, not of holder.
-- **Extension.** Confirm `.sparksmith` and whether the app accepts `.pcbcraft` as above.
-- **Environment variables.** Rename them with a fallback, or switch them at once.
+- **Historical records.** The dated run reports (`docs/e2e-*.md`, `docs/datasheet-assistant-run1.md`, the VM measurements in `docs/3d-speed-profile.md`) keep the names they ran under. So do the recorded model replies (`examples/**/*.recording.jsonl`) and the first assistant run's project (`examples/esp32-s31-wroom-3/run1/esp32-s31-wroom-3.pcbcraft`, also a test that `.pcbcraft` files open).
+- **Other projects' names.** These belong to their projects: tangency-labs' PCBCraft (`tangency-labs/pcbcraft`), and the Solidcraft fork's branch and tag names (`pcbcraft-smlib-open`, `pcbcraft-via2`, `pcbcraft-product-look`, `pcbcraft-pre-part-templates`).
