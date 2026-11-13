@@ -1733,48 +1733,39 @@ pub fn refused(
     }
 }
 
-/// The preview of an update from `read`: applied on `fork` (a copy of the
-/// engine whose document is `project`) with the linked design winning
-/// every conflict, the rows that would change; when both files changed,
-/// both sides' changes and the conflicts to choose.
-pub fn preview(
-    project: &Project,
-    fork: &mut crate::Engine,
-    read: AssemblyRead,
-    evaluators: crate::Evaluators<'_>,
-) -> AssemblyPreview {
-    let revision = fork.revision();
-    let hash = read.file_sha256;
-    let conflicting = conflicts(project, &read);
-    let both = both_changed(project, &read);
-    let resolve = conflicting
+/// The resolutions an update preview applies: the linked design wins
+/// every item both changed, so the preview shows its changes.
+pub fn linked_design_wins(conflicts: &[Conflict]) -> Vec<Resolution> {
+    conflicts
         .iter()
         .map(|c| Resolution {
             item: c.item.clone(),
             wins: Side::LinkedDesign,
         })
-        .collect();
-    match fork.apply_hosted(
-        revision,
-        crate::Operation::Assembly(AssemblyCommand::RecordUpdate { read, resolve }),
-        evaluators,
-    ) {
-        Ok(_) => {
-            let mut preview = diff(project, fork.project(), revision, hash);
-            if both {
-                preview.board_changes = board_changes(project);
-                preview.conflicts = conflicting;
-                preview
-                    .findings
-                    .retain(|f| f.code != findings::ASSEMBLY_OLDER_BOARD);
-                preview
-                    .findings
-                    .insert(0, findings::assembly_both_changed());
-            }
-            preview
-        }
-        Err(error) => refused(project, revision, hash, &error),
+        .collect()
+}
+
+/// `preview` (an applied update's [`diff`]) with both sides' changes when
+/// both files changed since they last agreed (`conflicts` from
+/// [`conflicts`]): what the board changed, the items to choose, and the
+/// both-changed finding in place of the older-board one.
+pub fn with_both_sides(
+    project: &Project,
+    read: &AssemblyRead,
+    conflicts: Vec<Conflict>,
+    mut preview: AssemblyPreview,
+) -> AssemblyPreview {
+    if both_changed(project, read) {
+        preview.board_changes = board_changes(project);
+        preview.conflicts = conflicts;
+        preview
+            .findings
+            .retain(|f| f.code != findings::ASSEMBLY_OLDER_BOARD);
+        preview
+            .findings
+            .insert(0, findings::assembly_both_changed());
     }
+    preview
 }
 
 /// Validate a stored link (document decode and every edit).

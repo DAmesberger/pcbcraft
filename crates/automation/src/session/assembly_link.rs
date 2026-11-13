@@ -275,9 +275,7 @@ impl Session {
     /// a relink.
     pub(super) fn assembly_preview(&mut self, params: PreviewParams) -> Result<Value> {
         let read = self.update_read(&params.path, &params.design)?;
-        let mut fork = self.engine.fork();
-        let preview =
-            assembly_link::preview(self.engine.project(), &mut fork, read, super::hosted());
+        let preview = self.engine.assembly_preview(read, super::hosted());
         Ok(serde_json::to_value(preview)?)
     }
 

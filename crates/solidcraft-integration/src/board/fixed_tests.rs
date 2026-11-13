@@ -654,13 +654,7 @@ fn when_both_changed_the_user_chooses_which_side_wins() -> Fallible<()> {
 
     // The preview: both sides' changes, the conflict, and what the update
     // does with the linked design winning.
-    let mut fork = engine.fork();
-    let preview = assembly_link::preview(
-        engine.project(),
-        &mut fork,
-        both.clone(),
-        super::tests::hosted(),
-    );
+    let preview = engine.assembly_preview(both.clone(), super::tests::hosted());
     assert_eq!(preview.refused, None);
     assert_eq!(preview.conflicts, conflicts);
     assert_eq!(

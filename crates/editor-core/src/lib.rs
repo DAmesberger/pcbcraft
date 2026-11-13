@@ -1287,6 +1287,41 @@ impl Engine {
         Ok(outcomes)
     }
 
+    /// The preview of an assembly update from `read`, applied on a copy of
+    /// this engine with the linked design winning every item both changed:
+    /// the rows that would change, and, when both files changed since they
+    /// last agreed, both sides' changes and the items to choose
+    /// (`interface::assembly_link`). Changes nothing here.
+    pub fn assembly_preview(
+        &self,
+        read: interface::assembly_link::AssemblyRead,
+        evaluators: Evaluators<'_>,
+    ) -> interface::assembly_link::AssemblyPreview {
+        use interface::assembly_link as link;
+        let project = self.project();
+        let mut fork = self.fork();
+        let revision = fork.revision();
+        let hash = read.file_sha256;
+        let conflicts = link::conflicts(project, &read);
+        let resolve = link::linked_design_wins(&conflicts);
+        match fork.apply_hosted(
+            revision,
+            Operation::Assembly(link::AssemblyCommand::RecordUpdate {
+                read: read.clone(),
+                resolve,
+            }),
+            evaluators,
+        ) {
+            Ok(_) => link::with_both_sides(
+                project,
+                &read,
+                conflicts,
+                link::diff(project, fork.project(), revision, hash),
+            ),
+            Err(error) => link::refused(project, revision, hash, &error),
+        }
+    }
+
     /// A copy of this engine, history included, to try requests on without
     /// touching this one (an MCP `dry_run`). Documents share their sections,
     /// so the copy costs little.
