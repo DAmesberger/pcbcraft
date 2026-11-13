@@ -11,7 +11,7 @@ use egui::{Pos2, Shape, Stroke, Ui};
 use pcbcraft_core::layout::fill::FillCommand;
 use pcbcraft_core::library::{Outline, Segment};
 use pcbcraft_core::model::fill::{FillSettings, FillSpec};
-use pcbcraft_core::{Fill, Id, Operation, Point, Project, schematic};
+use pcbcraft_core::{Fill, Id, Operation, Point, Project};
 use pcbcraft_ui::theme::Tokens;
 
 /// Screen reach of a handle and of the first point when closing, points.
@@ -395,12 +395,7 @@ impl PcbEditor {
             .inner_margin(margin)
             .show(ui, |ui| {
                 kit::tool_card(ui, &card, |ui| {
-                    let mut nets = vec![(None, "No net".to_owned())];
-                    nets.extend(
-                        schematic::nets(project)
-                            .iter()
-                            .map(|net| (Some(net.id), net.name.clone())),
-                    );
+                    let nets = super::net_options(project, "No net");
                     if kit::choice_row(ui, "Net", &mut self.fill_draw.net, &nets) {
                         self.route_highlight(self.fill_draw.net);
                     }

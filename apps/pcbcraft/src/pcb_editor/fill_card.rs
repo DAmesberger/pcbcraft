@@ -12,7 +12,7 @@ use egui::Ui;
 use pcbcraft_core::layout::fill::{FillCommand, RefillTarget};
 use pcbcraft_core::model::fill::{FillRegion, Hatch, IslandRemoval};
 use pcbcraft_core::rules::{PadConnection, ThermalRelief};
-use pcbcraft_core::{Fill, Id, Operation, Project, schematic};
+use pcbcraft_core::{Fill, Id, Operation, Project};
 use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Why a locked fill's fields, Refill and Delete are disabled.
@@ -78,12 +78,7 @@ impl PcbEditor {
         kit::section(ui, "pcb-fill", "Fill", true, None, |ui| {
             ui.add_enabled_ui(!locked, |ui| {
                 kit::text_row(ui, "Name", &mut d.name);
-                let mut nets = vec![(None, "No net".to_owned())];
-                nets.extend(
-                    schematic::nets(project)
-                        .iter()
-                        .map(|net| (Some(net.id), net.name.clone())),
-                );
+                let nets = super::net_options(project, "No net");
                 kit::choice_row(ui, "Net", &mut d.net, &nets);
                 let layers = copper_options(&project.stackup.layers());
                 kit::choice_row(ui, "Layer", &mut d.layer, &layers);

@@ -5,7 +5,7 @@ use super::PcbEditor;
 use crate::kit::{self, ToolCard};
 use crate::refusal::{self, Origin};
 use egui::Ui;
-use pcbcraft_core::{Operation, Project, Via, ViaSpan, layout::LayoutCommand, schematic};
+use pcbcraft_core::{Operation, Project, Via, ViaSpan, layout::LayoutCommand};
 use pcbcraft_ui::ui_kit::{self, Button};
 
 /// Why a locked via's toggles and Delete are disabled.
@@ -97,12 +97,7 @@ impl PcbEditor {
             .inner_margin(margin)
             .show(ui, |ui| {
                 kit::tool_card(ui, &card, |ui| {
-                    let mut nets = vec![(None, "From the pad or track".to_owned())];
-                    nets.extend(
-                        schematic::nets(project)
-                            .iter()
-                            .map(|net| (Some(net.id), net.name.clone())),
-                    );
+                    let nets = super::net_options(project, "From the pad or track");
                     if kit::choice_row(ui, "Net", &mut self.net, &nets) {
                         self.route_highlight(self.net);
                     }

@@ -7,7 +7,7 @@ use super::{PcbEditor, copper_options};
 use crate::kit::{self, ToolCard};
 use egui::Ui;
 use pcbcraft_core::layout::{posture::Posture, router::RouteMode};
-use pcbcraft_core::{Operation, Project, layout, schematic};
+use pcbcraft_core::{Operation, Project, layout};
 
 /// Route widths the engine accepts (mm).
 const WIDTH_RANGE: std::ops::RangeInclusive<f64> = 0.05..=5.0;
@@ -117,12 +117,7 @@ impl PcbEditor {
         if kit::check_row(ui, "Tent vias", &mut tented) {
             self.via_tented = Some(tented);
         }
-        let mut nets = vec![(None, "From the first pad".to_owned())];
-        nets.extend(
-            schematic::nets(project)
-                .iter()
-                .map(|net| (Some(net.id), net.name.clone())),
-        );
+        let nets = super::net_options(project, "From the first pad");
         if kit::choice_row(ui, "Net", &mut self.net, &nets) {
             self.reset_route();
             self.route.via_draft = None;

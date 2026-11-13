@@ -759,6 +759,51 @@ pub fn default_name(id: Id) -> String {
     format!("N{id}")
 }
 
+/// Whether `net` still carries its automatic name (`N<id>`): nobody named it.
+pub fn auto_named(net: &Net) -> bool {
+    net.name == default_name(net.id)
+}
+
+/// Pins a [`described`] net lists before it counts the rest.
+const DESCRIBED_PINS: usize = 6;
+
+/// A net as a picker lists it: a named net by its name ("VBUS"), an
+/// automatically named one with the pins it joins, as designator and pin
+/// name ("N2 · J1 CC1, R3 2"), sorted, the first six and "+n more".
+pub fn described(project: &Project, net: &Net) -> String {
+    if !auto_named(net) {
+        return net.name.clone();
+    }
+    let mut pins: Vec<String> = net
+        .terminals
+        .iter()
+        .map(|e| {
+            let Some(instance) = project.instance(e.instance) else {
+                return format!("pin {}", e.terminal);
+            };
+            let name = project
+                .library
+                .component(instance.component)
+                .and_then(|c| c.definition.terminal(e.terminal))
+                .map(|t| t.name.trim())
+                .filter(|n| !n.is_empty())
+                .map_or_else(|| e.terminal.to_string(), str::to_owned);
+            format!("{} {name}", instance.designator)
+        })
+        .collect();
+    if pins.is_empty() {
+        return net.name.clone();
+    }
+    pins.sort();
+    let more = pins.len().saturating_sub(DESCRIBED_PINS);
+    pins.truncate(DESCRIBED_PINS);
+    let mut out = format!("{} · {}", net.name, pins.join(", "));
+    if more > 0 {
+        out.push_str(&format!(", +{more} more"));
+    }
+    out
+}
+
 pub fn name_valid(name: &str) -> bool {
     !name.trim().is_empty()
         && name.len() <= 64

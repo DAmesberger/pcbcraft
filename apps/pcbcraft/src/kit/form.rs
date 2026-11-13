@@ -411,7 +411,8 @@ pub fn pair_row(
 }
 
 /// A full-width dropdown with the kit chevron. `options` pairs values with
-/// labels; returns whether the value changed.
+/// labels; returns whether the value changed. A label too long for the
+/// dropdown, shown or in the menu, ends in "…" and shows whole on hover.
 pub fn dropdown<T: PartialEq + Clone>(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -423,14 +424,17 @@ pub fn dropdown<T: PartialEq + Clone>(
         .find(|(v, _)| v == value)
         .map_or("—", |(_, label)| label.as_str())
         .to_owned();
+    let width = ui.available_width().max(0.0);
     let mut changed = false;
     dropdown_menu(ui, id, &current, |ui| {
+        let room = width - 2.0 * ui.spacing().button_padding.x;
         for (option, label) in options {
-            if ui
-                .selectable_label(option == value, label.as_str())
-                .clicked()
-                && option != value
-            {
+            let (text, cut) = cut_to(ui, label, room);
+            let mut response = ui.selectable_label(option == value, text);
+            if cut {
+                response = response.on_hover_text(label.as_str());
+            }
+            if response.clicked() && option != value {
                 *value = option.clone();
                 changed = true;
             }
@@ -439,7 +443,18 @@ pub fn dropdown<T: PartialEq + Clone>(
     changed
 }
 
-/// A full-width dropdown whose menu the caller fills.
+/// `text` as button text on one line of at most `room` points, cut with
+/// "…", and whether it was cut.
+fn cut_to(ui: &Ui, text: &str, room: f32) -> (egui::WidgetText, bool) {
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    // The placeholder ink takes the widget's own text colour when painted.
+    let galley = super::text::one_line(ui, text, font, egui::Color32::PLACEHOLDER, room);
+    let cut = galley.elided;
+    (egui::WidgetText::Galley(galley), cut)
+}
+
+/// A full-width dropdown whose menu the caller fills. A `current` too
+/// long for it ends in "…" and shows whole on hover.
 pub fn dropdown_menu(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -447,16 +462,23 @@ pub fn dropdown_menu(
     add: impl FnOnce(&mut Ui),
 ) -> Response {
     let t = Tokens::get();
-    let response = egui::ComboBox::from_id_salt(ui.scope_id().with(id))
-        .width(ui.available_width().max(0.0))
+    let width = ui.available_width().max(0.0);
+    let spacing = ui.spacing();
+    let room = width - spacing.icon_width - spacing.item_spacing.x - 2.0 * spacing.button_padding.x;
+    let (text, cut) = cut_to(ui, current, room);
+    let mut response = egui::ComboBox::from_id_salt(ui.scope_id().with(id))
+        .width(width)
         .height(t.space_24 * 14.0)
-        .selected_text(current)
+        .selected_text(text)
         .icon(|ui, rect, _, _| {
             super::chevron(ui.painter(), rect, true, Tokens::get().text_dim);
         })
         .show_ui(ui, add)
         .response;
     t.button_bevel(ui, &response, false);
+    if cut {
+        response = response.on_hover_text(current);
+    }
     response
 }
 
