@@ -15,7 +15,10 @@ use crate::geometry::{Bounds, Point, Shape, Transform2, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 pub use crate::library::graphics::PlacedText;
-use crate::library::graphics::{PIN_NUMBER_ROOM, TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM};
+use crate::library::graphics::{
+    PIN_NUMBER_ADVANCE, PIN_NUMBER_CLEARANCE_MM, TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM,
+};
+use crate::library::templates::catalog::{FamilyKind, SkeletonHint};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
     PackageDefinition, Rotation, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit,
@@ -1388,14 +1391,14 @@ const NUMBER_MIN_SCALE: f64 = 0.75;
 /// body.
 const MIN_WRAP_COLUMNS: usize = 12;
 
-/// A pin number `text` that fits along a stub `length` long, with its
-/// height: as it is; else a little smaller; else, for stacked pads
+/// A pin number `text` that fits along a stub `length` long, clear of the
+/// pin end and the body ([`PIN_NUMBER_CLEARANCE_MM`]), with its height: as
+/// it is; else a little smaller; else, for stacked pads
 /// ("A4B9,B4A9"), the first pad and "…" ("A4B9…"), smaller as needed. The
 /// full designations stay in the pin mapping.
 fn fitted_number(text: String, length: f64, height: f64) -> (String, f64) {
-    let advance = TextMetric::default().advance;
-    let room = PIN_NUMBER_ROOM * length;
-    let width = |t: &str| t.chars().count() as f64 * advance;
+    let room = length - 2.0 * PIN_NUMBER_CLEARANCE_MM;
+    let width = |t: &str| t.chars().count() as f64 * PIN_NUMBER_ADVANCE;
     if room <= 0.0 || room.is_nan() || width(&text) * height <= room {
         return (text, height);
     }
@@ -1471,14 +1474,20 @@ fn draw(
     // The value slot (a `ComponentName` text) shows the instance's value
     // (`instances::value_text`, the value the BOM shows too), else the
     // Part's MPN, else the component name, which identifies an IC
-    // ("AP2112K-3.3") or a rail symbol ("GND"). A two-terminal part without
-    // a value shows none: its component name ("Chip capacitor 0603") is a
-    // description, never a value.
+    // ("AP2112K-3.3") or a rail symbol ("GND"). A two-terminal part or a
+    // connector (a header or receptacle package) without a value shows
+    // none: its component name ("Chip capacitor 0603", a receptacle's
+    // description) is never a value.
+    let connector = r
+        .physical
+        .is_some_and(|(_, p)| FamilyKind::default_skeleton(&p.form) == SkeletonHint::Connector);
     let value = r
         .value
         .clone()
         .or_else(|| r.mpn.clone().filter(|m| !m.trim().is_empty()))
-        .or_else(|| (component.terminals.len() != 2).then(|| r.component_name.to_owned()));
+        .or_else(|| {
+            (component.terminals.len() != 2 && !connector).then(|| r.component_name.to_owned())
+        });
     // Turned a quarter, the symbol keeps its designator and value upright
     // and beside the body, reading outward from it, instead of along the
     // pins where they would run over neighbouring pins and labels.
@@ -1609,8 +1618,7 @@ fn draw(
                 .filter(|_| pin.number.visible)
                 .map(|text| {
                     let (text, height) = fitted_number(text, pin.length_mm(), height);
-                    let width =
-                        text.chars().count() as f64 * TextMetric::default().advance * height;
+                    let width = text.chars().count() as f64 * PIN_NUMBER_ADVANCE * height;
                     let (at, rotation, justify) = pin.number_anchor(width);
                     place(None, text, at, height, rotation, justify)
                 });

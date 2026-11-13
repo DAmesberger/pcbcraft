@@ -1823,12 +1823,12 @@ fn fit_pin_numbers(
     number: impl Fn(TerminalId) -> Option<String>,
 ) -> Result<()> {
     const STEP: f64 = graphics::SYMBOL_MODULE_MM;
-    let width = graphics::TextMetric::default().advance * symbol.pin_text_height_nm.to_mm_f64();
+    let height = symbol.pin_text_height_nm.to_mm_f64();
     for pin in symbol.units.iter_mut().flat_map(|u| u.pins.iter_mut()) {
         let Some(text) = number(pin.terminal) else {
             continue;
         };
-        let need = text.chars().count() as f64 * width / graphics::PIN_NUMBER_ROOM;
+        let need = graphics::pin_number_need(text.chars().count(), height);
         let length = pin.length_nm.to_mm_f64();
         if need <= length {
             continue;

@@ -54,9 +54,21 @@ pub const SYMBOL_STROKE_MM: f64 = 0.25;
 /// Default pin name and number height: smaller than the symbol text, so
 /// pin numbers do not compete with the designator, name and value.
 pub const PIN_TEXT_HEIGHT_MM: f64 = 1.0;
-/// The share of its stub a pin number may take, so it keeps clear of the
-/// pin end's mark and of the body.
-pub const PIN_NUMBER_ROOM: f64 = 0.9;
+/// The length a pin number keeps clear at each end of its stub: past the
+/// pin end's ring (0.4 of the pin text height in radius) and, at the body,
+/// past half the outline's stroke with a visible gap.
+pub const PIN_NUMBER_CLEARANCE_MM: f64 = 0.4 * PIN_TEXT_HEIGHT_MM;
+/// A pin number's advance per character, in cap heights. Wider than
+/// [`TextMetric`]'s default: pin numbers are capitals and digits, which the
+/// drawn fonts set at up to about 0.9 of their cap height (the bundled IBM
+/// Plex Sans Medium on screen, Helvetica in the schematic PDF).
+pub const PIN_NUMBER_ADVANCE: f64 = 0.9;
+
+/// The stub length a pin number `chars` characters long needs at `height`:
+/// its width and the clearance at both ends.
+pub fn pin_number_need(chars: usize, height: f64) -> f64 {
+    chars as f64 * PIN_NUMBER_ADVANCE * height + 2.0 * PIN_NUMBER_CLEARANCE_MM
+}
 /// Default designator, name and value text height on symbols: half the
 /// 2.5 mm module, below the height of a two-terminal body.
 pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.25;
