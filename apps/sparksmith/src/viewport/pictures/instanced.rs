@@ -95,7 +95,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
             .into_iter()
             .filter(|g| g.place.is_none())
             .collect(),
-        &sparksmith_solidcraft::stack::Stack::default(),
+        &crate::test_stack()?,
     )?);
     aim(&mut bare, target, 4.0, 30.0, 50.0);
     let without = gpu.draw(&mut bare, w, h, 1.0).ok_or("no picture")?;

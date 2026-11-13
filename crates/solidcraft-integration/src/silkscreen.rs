@@ -11,7 +11,7 @@ use crate::Result;
 use crate::appearance::{self, Board, CAP_MARGIN_MM, Land, Path, Region, ViaMark, slab};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
-use crate::stack::{INK_MM, INK_SINK_SHARE, Slot};
+use crate::stack::{INK_SINK_SHARE, Slot};
 use sparksmith_core::geometry::Shape;
 use sparksmith_core::layout::{self, BoardDrawing, PlacedItem};
 use sparksmith_core::library::graphics::PlacedText;
@@ -97,7 +97,8 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
         } else {
             board.copper(side) + board.stack.finish_mm()
         };
-        let sink = INK_SINK_SHARE * INK_MM;
+        let ink = board.stack.ink_mm();
+        let sink = INK_SINK_SHARE * ink;
         let flat = Region {
             fills: loops.clone(),
             cuts: cuts.clone(),
@@ -110,7 +111,7 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
             layer,
             slab(&flat, z0, z1, FILM_TILE_MM),
         ))?;
-        let (c0, c1) = board.span(side, crown - sink, crown + INK_MM);
+        let (c0, c1) = board.span(side, crown - sink, crown + ink);
         for raised in raised(&loops, &covers(legend, side)) {
             display_only(appearance::push(
                 &mut films,

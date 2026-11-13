@@ -166,6 +166,8 @@ fn spans(title: &str) {
 #[test]
 #[ignore = "benchmark"]
 fn board_build_profile() {
+    // The 3D build reads the shipped material library.
+    sparksmith_automation::load_materials();
     let project = board();
     let sources = SourceCache::default();
     sparksmith_solidcraft::profile::set_enabled(true);
@@ -200,6 +202,8 @@ fn board_build_profile() {
 #[test]
 #[ignore = "benchmark"]
 fn extrusion_scaling() {
+    // The 3D build reads the shipped material library.
+    sparksmith_automation::load_materials();
     use sparksmith_core::library::{Outline, Segment};
     use sparksmith_solidcraft::native::{Native, ProfileBody};
     use sparksmith_solidcraft::pad_outline::Contour;

@@ -218,10 +218,10 @@ fn shoot(
     cameras: &[Camera],
     (w, h): (u32, u32),
 ) -> Result<Vec<Vec<u8>>, Box<dyn std::error::Error>> {
-    let stack = v
-        .model
-        .as_ref()
-        .map_or_else(Stack::none, |m| m.stack.clone());
+    let stack = match &v.model {
+        Some(m) => m.stack.clone(),
+        None => Stack::none()?,
+    };
     v.set_model(crate::model_scene::build(geometry, &stack)?);
     let mut out = vec![];
     for camera in cameras {
@@ -311,7 +311,7 @@ fn pad_views(gpu: &mut Gpu) -> Result<Vec<PadView>, Box<dyn std::error::Error>> 
     let gold = pads.first().ok_or("no pads")?.surface;
     let reference = surface([REFERENCE_F0; 3], 1.0, gold.roughness())?;
     let mut viewport = Viewport::detached();
-    viewport.set_model(crate::model_scene::build(pads.clone(), &Stack::none())?);
+    viewport.set_model(crate::model_scene::build(pads.clone(), &Stack::none()?)?);
     let target = viewport.bounds.center();
     let distance = 1.5 * viewport.bounds.diagonal();
     let angles: Vec<(f64, f64)> = (0..8)

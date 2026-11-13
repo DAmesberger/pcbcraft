@@ -48,8 +48,10 @@ fn near(actual: f64, expected: f64) {
 }
 
 /// The default pad finish's (ENIG's) thickness, mm.
+#[allow(clippy::expect_used)]
 fn enig() -> f64 {
-    crate::stack::finish_um(sparksmith_core::PadFinish::Enig) / 1000.0
+    let looks = crate::looks::get().expect("the repository's library/materials loads");
+    crate::stack::finish_um(looks, sparksmith_core::PadFinish::Enig) / 1000.0
 }
 
 fn fixture() -> Result<Project> {
@@ -694,7 +696,7 @@ fn looks_match_the_native_file(model: &NativeModel) -> Result<()> {
         let expected = material::material(
             geometry.kind,
             &Fabrication::default(),
-            &crate::stack::Stack::default(),
+            &crate::stack::Stack::standard()?,
         );
         assert_eq!(mesh.color, expected.srgb8(), "{}", mesh.name);
     }
@@ -752,7 +754,7 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
     let copper = material::material(
         BodyKind::PadCopper,
         &Fabrication::default(),
-        &crate::stack::Stack::default(),
+        &crate::stack::Stack::standard()?,
     )
     .surface()?;
     for source in model.sources.iter().filter(|s| s.pad.is_some()) {
@@ -1286,7 +1288,7 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
     looks_match_the_native_file(&styled)?;
     assert_eq!(plain.geometry.len(), styled.geometry.len());
     let mut restyled = 0;
-    let silver = crate::stack::finish_um(PadFinish::ImmersionSilver) / 1000.0;
+    let silver = crate::stack::finish_um(crate::looks::get()?, PadFinish::ImmersionSilver) / 1000.0;
     for (a, b) in plain.geometry.iter().zip(&styled.geometry) {
         assert_eq!((a.kind, a.item), (b.kind, b.item));
         // The finish is as thick as the pad finish is (ENIG to immersion
@@ -1306,7 +1308,7 @@ fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Re
             let expected = material::material(
                 b.kind,
                 &project.fabrication,
-                &crate::stack::Stack::of(&project.stackup, project.fabrication.pad_finish),
+                &crate::stack::Stack::of(&project.stackup, project.fabrication.pad_finish)?,
             )
             .surface()?;
             assert_eq!(b.surface, expected, "{:?}", b.kind);

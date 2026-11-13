@@ -57,11 +57,15 @@ fn time(name: &str, project: &Project, runs: usize) {
 #[test]
 #[ignore = "benchmark"]
 fn esp32_build_timing() {
+    // The 3D build reads the shipped material library.
+    sparksmith_automation::load_materials();
     time("esp32-s31-devboard", &esp32(), 4);
 }
 
 #[test]
 #[ignore = "benchmark"]
 fn showcase_build_timing() {
+    // The 3D build reads the shipped material library.
+    sparksmith_automation::load_materials();
     time("showcase", &showcase(), 4);
 }

@@ -3708,7 +3708,7 @@ mod tests {
             &sparksmith_solidcraft::stack::Stack::of(
                 &engine.project().stackup,
                 engine.project().fabrication.pad_finish,
-            ),
+            )?,
         )
         .surface()?;
         assert!(model.geometry.iter().any(|g| g.kind

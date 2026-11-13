@@ -176,6 +176,9 @@ impl Made {
 
 /// Build one job's display geometry and pick sources.
 fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
+    // Loaded once at start-up; this only reads it (and loads it for a
+    // test that builds without `main`).
+    sparksmith_automation::load_materials();
     match job {
         Job::Project(ticket, project, cancel) => {
             let started = std::time::Instant::now();
@@ -200,7 +203,7 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                 ),
             };
             how.report(ticket, started.elapsed(), &made);
-            let built = made.map(|model| {
+            let built = made.and_then(|model| {
                 // The drawn geometry shares the meshes; the model stays
                 // for the next edit to update, without the decals.
                 let mut geometry = model.geometry.clone();
@@ -212,12 +215,9 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                     eprintln!("sparksmith: instance {instance} shows no marking: {why}");
                 }
                 let sources = model.sources.clone();
+                let stack = Stack::of(&project.stackup, project.fabrication.pad_finish)?;
                 kept.board = Some((Arc::clone(&project), model));
-                (
-                    geometry,
-                    sources,
-                    Stack::of(&project.stackup, project.fabrication.pad_finish),
-                )
+                Ok((geometry, sources, stack))
             });
             (ticket, built.map_err(|e| e.to_string()))
         }
@@ -230,14 +230,14 @@ fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
                         &asset.bytes,
                         &ModelPlacement::default(),
                     )
-                    .map(|geometry| (geometry, Vec::new(), Stack::none()))
+                    .and_then(|geometry| Ok((geometry, Vec::new(), Stack::none()?)))
                 }
                 (PackageModel::PartFile(_), Some(asset)) => {
                     sparksmith_solidcraft::project::preview_part(&package, &asset.bytes)
-                        .map(|model| (model.geometry, model.sources, Stack::none()))
+                        .and_then(|model| Ok((model.geometry, model.sources, Stack::none()?)))
                 }
                 _ => sparksmith_solidcraft::project::preview(&package)
-                    .map(|model| (model.geometry, model.sources, Stack::none())),
+                    .and_then(|model| Ok((model.geometry, model.sources, Stack::none()?))),
             };
             (ticket, built.map_err(|e| e.to_string()))
         }

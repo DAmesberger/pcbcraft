@@ -557,7 +557,7 @@ fn native_heights_agree_with_the_stack() -> Result<()> {
     stackup.mask_um = 22.0;
     project.stackup = stackup.clone();
     let model = build(&project)?;
-    let stack = Stack::of(&stackup, project.fabrication.pad_finish);
+    let stack = Stack::of(&stackup, project.fabrication.pad_finish)?;
     assert_eq!(model.stack, stack);
     let mut seen = std::collections::BTreeSet::new();
     for g in model

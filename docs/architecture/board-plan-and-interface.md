@@ -226,7 +226,7 @@ And on the mapping itself:
 - Board edges and holes as dimension references: these are document entities (sketch curves, hole ids), not B-rep faces. A wall triangle must map back to its outline curve. `prism` already tags each wall with its outline index (`tri_face`); `slab` tags walls only by kind, so the mesher needs a per-wall source index. Small, but required.
 - Measuring between copper objects in 3D must use the exact 2D geometry and the stack heights, never the mesh. The 2D geometry is already the authority for clearance checks.
 
-**4. The realistic view and materials.** Looks are data (`material.rs`) applied per body kind; the viewport needs meshes with normals, not a kernel. Nothing in the realistic view depends on B-rep board bodies. One trap: today a body's kind is read back from the native file's metadata. Under option 3 the plan carries kind and look, and the exporter writes them. If the exporter kept its own table, looks would drift between view and file.
+**4. The realistic view and materials.** Looks are data (`library/materials/`, mapped by `material.rs`) applied per body kind; the viewport needs meshes with normals, not a kernel. Nothing in the realistic view depends on B-rep board bodies. One trap: today a body's kind is read back from the native file's metadata. Under option 3 the plan carries kind and look, and the exporter writes them. If the exporter kept its own table, looks would drift between view and file.
 
 **5. The browser.**
 

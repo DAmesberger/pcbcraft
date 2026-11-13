@@ -470,6 +470,7 @@ impl Builder {
         self.native.stage(crate::export::Stage::Building)?;
         self.native.activate_root()?;
         // Generated bodies already carry their materials' looks.
+        let stack = crate::stack::Stack::standard()?;
         for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
             let names: Vec<&str> = self
                 .bodies
@@ -482,11 +483,7 @@ impl Builder {
             if !names.is_empty() {
                 self.native.appearance(
                     &names,
-                    &material::material(
-                        kind,
-                        &Fabrication::default(),
-                        &crate::stack::Stack::default(),
-                    ),
+                    &material::material(kind, &Fabrication::default(), &stack),
                 )?;
             }
         }
@@ -684,7 +681,11 @@ fn finish_with(
             // Saved bodies' detail does not depend on the fabrication.
             (
                 saved,
-                crate::material::detail(kind, &sparksmith_core::Fabrication::default()),
+                crate::material::detail(
+                    kind,
+                    &sparksmith_core::Fabrication::default(),
+                    crate::looks::get()?,
+                ),
             )
         };
         let t = body.source_transform;
@@ -779,7 +780,7 @@ fn finish_with(
         plans: plan::Memo::default(),
         geometry,
         sources,
-        stack: crate::stack::Stack::none(),
+        stack: crate::stack::Stack::none()?,
         models,
         display: appearance::Memo::default(),
         native_bodies: geometry_len,
@@ -1622,7 +1623,7 @@ fn build_meshed(
         let pick = next_pick(&sources);
         sources.push(track_source(track, pick, NO_COMPONENT, &mut paths));
     }
-    let display = appearance::Board::of(project);
+    let display = appearance::Board::of(project)?;
     let none = vec![None; project.vias.len()];
     let marks = marks(project, &none, &none, &mut sources)?;
     for mark in &marks {
@@ -1689,7 +1690,7 @@ fn build_meshed(
         plans,
         geometry,
         sources,
-        stack: crate::stack::Stack::of(stackup, project.fabrication.pad_finish),
+        stack: crate::stack::Stack::of(stackup, project.fabrication.pad_finish)?,
         models,
         display: memo,
         world: None,
@@ -1941,7 +1942,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
         let pick = next_pick(&sources);
         sources.push(track_source(track, pick, created.component, &mut paths));
     }
-    let display = appearance::Board::of(project);
+    let display = appearance::Board::of(project)?;
     let marks = vias(&mut b, project, &mut styles, &mut sources)?;
     for mark in &marks {
         lands.extend(mark.lands(&display));
@@ -1988,7 +1989,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     model.geometry.extend(layers?);
     model.display = memo;
     model.plans = plans;
-    model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish);
+    model.stack = crate::stack::Stack::of(stackup, project.fabrication.pad_finish)?;
     Ok(model)
 }
 

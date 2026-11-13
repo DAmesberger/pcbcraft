@@ -219,7 +219,7 @@ These are never saved:
 - Exposed copper (tracks, pads, vias, fills, the foil lines at the edge) carries a native
   Cu2O film a few nanometres thick: F0 (0.955, 0.61, 0.41) instead of freshly polished
   copper's (0.955, 0.638, 0.538), whose cool pink read as pale salmon on the board. The
-  values and their source are at `COPPER_AIR` in `material.rs`; OSP keeps fresh copper
+  values and their source are the board looks' `copper` in `library/materials/board-looks.json`; OSP keeps fresh copper
   (`bare_copper_reads_as_copper`).
 - The Standard look draws every face in its plain colour under Solidcraft's modelling
   light, without the materials. With them, a metal had only the few fixed lights of

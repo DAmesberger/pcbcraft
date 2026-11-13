@@ -6,12 +6,20 @@
 //! constants; dielectrics use F0 = ((n−1)/(n+1))². Sources, estimates and the
 //! soldermask layer model are in `docs/materials.md`. No EDA tool, library or
 //! material file was consulted.
+//!
+//! The values are shipped data (`materials/board-looks.json` and
+//! `finishes.json`), carried by the board's [`Stack`] from the loaded
+//! [`crate::looks`]; this module maps body kinds and fabrication choices
+//! onto them and computes the soldermask layer model.
 use crate::geom::Vec3;
 use crate::stack::Stack;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use solidcraft_viewport::clear_coat::ClearCoat;
 use solidcraft_viewport::surface::OpaqueSurface;
+use sparksmith_core::materials::{
+    Look, Mask, MaskPigment, MaterialLibrary, PerMaskColour, PerPadFinish,
+};
 use sparksmith_core::{Fabrication, MaskColour, MaskFinish, PadFinish, SilkscreenColour};
 
 /// What a native body represents, stored per body in the model metadata so a
@@ -212,100 +220,67 @@ impl Detail {
     };
 }
 
-/// Bare copper F0, Johnson & Christy 1972 via Hoffman's table.
-const COPPER: [f64; 3] = [0.955, 0.638, 0.538];
-/// F0 of a board's exposed copper (tracks, pads, vias, fills and the foil
-/// lines at the edge): copper in air carries a native Cu2O film a few
-/// nanometres thick, so it is not the freshly polished metal of
-/// [`COPPER`], whose bright, cool pink read as pale salmon on the board.
-/// The film takes the blue down steeply, the green a little and leaves the
-/// red: at 440 nm normal reflectance falls from 54 % bare to 10 % under
-/// 10 nm of oxide, nearly linearly (about 41 % at 3 nm, from the
-/// patent's fit), at 560 nm it stays about 55–65 % under 5 nm, and 630 nm
-/// is insensitive to it (Powell, Settles and Kailasam, US 6,525,829 B1,
-/// Novellus Systems, 2003: modelled reflectance of Cu under Cu2O). So red
-/// keeps the bare value, green takes the middle of that range and blue
-/// the 3 nm value; the 3 nm film is **est.** (a native oxide after days in
-/// air). Fresh copper under OSP keeps [`COPPER`].
-const COPPER_AIR: [f64; 3] = [0.955, 0.61, 0.41];
-/// Natural FR-4 laminate albedo (est.).
-const FR4: [f64; 3] = [0.36, 0.32, 0.17];
-/// A soldermask's pigmented resin: per-pass transmittance through 20 µm,
-/// and light its own pigment scatters back over a black base. Every value
-/// is **est.** (see `docs/materials.md`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Pigment {
-    pub t20: [f64; 3],
-    pub scatter: [f64; 3],
+/// A soldermask's pigmented resin ([`MaskPigment`]): per-pass
+/// transmittance through 20 µm, and light its own pigment scatters back
+/// over a black base, from the shipped board looks.
+pub type Pigment = MaskPigment;
+
+/// One value of a per-colour record.
+fn of_colour<T>(values: &PerMaskColour<T>, colour: MaskColour) -> &T {
+    match colour {
+        MaskColour::Green => &values.green,
+        MaskColour::Blue => &values.blue,
+        MaskColour::Red => &values.red,
+        MaskColour::Purple => &values.purple,
+        MaskColour::Yellow => &values.yellow,
+        MaskColour::Black => &values.black,
+        MaskColour::White => &values.white,
+        MaskColour::Clear => &values.clear,
+    }
+}
+
+/// One value of a per-finish record.
+pub fn of_pad_finish<T>(values: &PerPadFinish<T>, finish: PadFinish) -> &T {
+    match finish {
+        PadFinish::Enig => &values.enig,
+        PadFinish::Hasl => &values.hasl,
+        PadFinish::LeadFreeHasl => &values.lead_free_hasl,
+        PadFinish::Osp => &values.osp,
+        PadFinish::ImmersionSilver => &values.immersion_silver,
+    }
 }
 
 /// The resin of each mask colour.
-pub fn pigment(colour: MaskColour) -> Pigment {
-    let (t20, scatter) = match colour {
-        MaskColour::Green => ([0.10, 0.45, 0.18], [0.010, 0.085, 0.030]),
-        MaskColour::Blue => ([0.03, 0.10, 0.35], [0.006, 0.025, 0.110]),
-        // Red and purple scatter more than green, so copper shows through
-        // less (about 1.6× and 1.8× against green's 2.1×). Red is a
-        // scarlet, not a maroon: most of its colour is pigment scatter.
-        MaskColour::Red => ([0.30, 0.03, 0.03], [0.280, 0.014, 0.012]),
-        MaskColour::Purple => ([0.14, 0.035, 0.22], [0.074, 0.008, 0.102]),
-        // Lemon-ochre yellow: mostly scatter, so traces barely lighten it.
-        MaskColour::Yellow => ([0.30, 0.26, 0.03], [0.600, 0.440, 0.022]),
-        // Black pigment in a resin still scatters a little: a dark grey
-        // body (about 2.4 % luminance), never a crushed black.
-        MaskColour::Black => ([0.011, 0.012, 0.015], [0.024, 0.024, 0.026]),
-        MaskColour::White => ([0.08, 0.087, 0.06], [0.70, 0.70, 0.66]),
-        MaskColour::Clear => ([0.92, 0.88, 0.87], [0.005, 0.011, 0.002]),
-    };
-    Pigment { t20, scatter }
+pub fn pigment(looks: &MaterialLibrary, colour: MaskColour) -> Pigment {
+    *of_colour(&looks.board.mask.colours, colour)
 }
 
 /// Perceptual roughness of a mask's lacquer surface, the clear coat that
-/// carries its gloss (est. from glossmeter readings: gloss masks 80–94 GU,
-/// matte 3–43). Clear resin has no pigment to break the surface; the yellow
-/// fabricators sell is semi-gloss at best; black matte is the flattest.
-///
-/// A glossmeter reads the specular peak through a small aperture; a mask
-/// cured over traces, weave and filler is not that flat across a
-/// reflected light, so a gloss board shows a light's reflection as a soft
-/// sheen, never a mirror image with hard edges. At 0.06 the studio's strip
-/// light lay on the board as a crisp-edged white shaft (VM check
-/// 13 Nov 2026); 0.16 keeps a clear gloss highlight with soft edges, and
-/// the other finishes keep their order above it.
-pub fn mask_coat_roughness(colour: MaskColour, finish: MaskFinish) -> f64 {
-    match (finish, colour) {
-        (MaskFinish::Gloss, MaskColour::Clear) => 0.12,
-        (MaskFinish::Gloss, MaskColour::Yellow) => 0.20,
-        (MaskFinish::Gloss, _) => 0.16,
-        (MaskFinish::Satin, _) => 0.26,
-        (MaskFinish::Matte, MaskColour::Black) => 0.45,
-        (MaskFinish::Matte, _) => 0.40,
-    }
+/// carries its gloss (values and sources in the shipped board looks).
+pub fn mask_coat_roughness(looks: &MaterialLibrary, colour: MaskColour, finish: MaskFinish) -> f64 {
+    let by_finish = &looks.board.mask.coat_roughness;
+    let by_colour = match finish {
+        MaskFinish::Gloss => &by_finish.gloss,
+        MaskFinish::Satin => &by_finish.satin,
+        MaskFinish::Matte => &by_finish.matte,
+    };
+    *of_colour(by_colour, colour)
 }
 
-/// How much of the laminate's glass weave shows through a mask colour
-/// (est.): fully under clear resin, faintly under the translucent
-/// pigments, not at all under the opaque ones (black, white, yellow: the
-/// pigments needing the most exposure energy, see `docs/materials.md`).
-pub fn weave_show_through(colour: MaskColour) -> f64 {
-    match colour {
-        MaskColour::Clear => 0.6,
-        MaskColour::Green => 0.12,
-        MaskColour::Purple => 0.10,
-        MaskColour::Blue | MaskColour::Red => 0.08,
-        MaskColour::Yellow | MaskColour::Black | MaskColour::White => 0.0,
-    }
+/// How much of the laminate's glass weave shows through a mask colour.
+pub fn weave_show_through(looks: &MaterialLibrary, colour: MaskColour) -> f64 {
+    pigment(looks, colour).weave_show_through
 }
 
 /// The procedural detail of `kind` on a board built to `fabrication`.
-pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
+pub fn detail(kind: BodyKind, fabrication: &Fabrication, looks: &MaterialLibrary) -> Detail {
     match kind {
         BodyKind::Substrate | BodyKind::OpenLaminate | BodyKind::EdgeDielectric => Detail {
             pattern: Pattern::Weave,
             strength: 1.0,
         },
         BodyKind::MaskTop | BodyKind::MaskBottom => {
-            match weave_show_through(fabrication.mask_colour) {
+            match weave_show_through(looks, fabrication.mask_colour) {
                 0.0 => Detail {
                     pattern: Pattern::MaskPeel,
                     strength: 1.0,
@@ -320,67 +295,13 @@ pub fn detail(kind: BodyKind, fabrication: &Fabrication) -> Detail {
             pattern: Pattern::MaskPeel,
             strength: 1.0,
         },
-        // Half strength: at full strength the ink's grain read as blotchy
-        // dirt at mid zoom (realism review v4).
         BodyKind::Silkscreen => Detail {
             pattern: Pattern::Silkscreen,
-            strength: SILK_GRAIN,
+            strength: looks.finishes.legend_ink.grain,
         },
         _ => Detail::NONE,
     }
 }
-
-/// How strongly silkscreen ink's grain shows (est.).
-const SILK_GRAIN: f64 = 0.5;
-
-/// Internal diffuse reflectance of the mask/air interface for n ≈ 1.52
-/// (first principles; Saunderson's k₂).
-const MASK_INTERNAL: f64 = 0.60;
-/// Normal-incidence reflectance of the mask surface, ((1.52−1)/(1.52+1))².
-const MASK_F0: f64 = 0.043;
-const MASK_IOR: f64 = 1.52;
-/// The pigmented body under a mask's lacquer has no interface of its own:
-/// the coat reflects at the air boundary, so the body takes IOR 1 and a
-/// fully rough, diffuse surface.
-const MASK_BODY_IOR: f64 = 1.0;
-const MASK_BODY_ROUGHNESS: f64 = 1.0;
-/// Silica-filled epoxy and glass-epoxy laminate index (handbook values).
-const EPOXY_IOR: f64 = 1.55;
-/// Metals ignore the dielectric IOR; Solidcraft still requires one in [1, 3].
-const METAL_IOR: f64 = 1.5;
-/// Tin F0 of a hot-air levelled pad, flat across the visible (est.; below
-/// polished tin, for its oxide film; Palik's Sn n, k to confirm).
-const TIN: [f64; 3] = [0.64, 0.64, 0.66];
-/// Tin F0 of plated terminations and reflowed solder joints (est.; the
-/// core's package tin, `materials::MaterialId::TinMatte`).
-const TIN_PLATED: [f64; 3] = [0.78, 0.78, 0.80];
-/// ENIG pad F0 (est.): the gold F0 (1.000, 0.782, 0.344; J&C/Hoffman)
-/// with a little nickel showing through the 0.04–0.10 µm immersion gold,
-/// kept saturated so the finish reads gold, not khaki.
-const ENIG: [f64; 3] = [1.0, 0.73, 0.30];
-/// Eutectic tin-lead (Sn63Pb37) F0: about 30 % lead by volume, which
-/// reflects less than tin (est.).
-const TIN_LEAD: [f64; 3] = [0.62, 0.62, 0.63];
-/// Silver F0 (Hoffman's table, from measured optical constants).
-const SILVER: [f64; 3] = [0.972, 0.960, 0.915];
-/// 96 % alumina substrate diffuse reflectance (est. from published
-/// 400–700 nm reflectance of thick-film substrates, 0.75–0.85).
-const ALUMINA: [f64; 3] = [0.78, 0.77, 0.73];
-/// Alumina refractive index (sapphire, n_o = 1.77; handbook value).
-const ALUMINA_IOR: f64 = 1.77;
-/// Sintered barium-titanate MLCC body, tan (est.).
-const MLCC: [f64; 3] = [0.32, 0.25, 0.15];
-/// Matte epoxy legend ink, diffuse reflectance (est.; TiO2-filled white,
-/// carbon black, chrome-free yellow) and its matte roughness (est.).
-const INK_WHITE: [f64; 3] = [0.85, 0.85, 0.83];
-const INK_BLACK: [f64; 3] = [0.03, 0.03, 0.03];
-const INK_YELLOW: [f64; 3] = [0.70, 0.52, 0.04];
-const INK_ROUGHNESS: f64 = 0.75;
-/// The inside of a narrow open drill as seen from outside: almost no light
-/// returns from a bore five or more diameters deep (est.).
-const BORE_SHADOW: [f64; 3] = [0.010, 0.009, 0.008];
-/// Barium titanate is n ≈ 2.4; Solidcraft's dielectric IOR is at most 3.
-const MLCC_IOR: f64 = 2.4;
 
 /// Reflectance of a `pigment` layer `thickness_um` thick over a diffuse
 /// substrate of reflectance `under` (two-flux layer with a Saunderson
@@ -388,20 +309,22 @@ const MLCC_IOR: f64 = 2.4;
 ///
 /// ρ = ρ_scatter + (1 − F0)(1 − ρ_i) · T²R / (1 − ρ_i R),  T = exp(−σd),
 /// σ = −ln(T₂₀) / 20 µm.
-pub fn mask_over(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 3] {
+pub fn mask_over(mask: &Mask, pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 3] {
     std::array::from_fn(|c| {
         let sigma = -pigment.t20[c].ln() / 20.0;
         let t = (-sigma * thickness_um).exp();
         let r = under[c];
-        let body = (1.0 - MASK_F0) * (1.0 - MASK_INTERNAL) * t * t * r / (1.0 - MASK_INTERNAL * r);
+        let internal = mask.internal_reflectance;
+        let body = (1.0 - mask.surface_f0) * (1.0 - internal) * t * t * r / (1.0 - internal * r);
         (pigment.scatter[c] + body).clamp(0.0, 1.0)
     })
 }
 
 /// A mask layer's body under its coat: [`mask_over`] with the air-to-resin
 /// Fresnel transmission taken out, since the coat applies it (counted once).
-pub fn mask_body(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 3] {
-    mask_over(pigment, under, thickness_um).map(|c| (c / (1.0 - MASK_F0)).clamp(0.0, 1.0))
+pub fn mask_body(mask: &Mask, pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 3] {
+    mask_over(mask, pigment, under, thickness_um)
+        .map(|c| (c / (1.0 - mask.surface_f0)).clamp(0.0, 1.0))
 }
 
 /// The physical look of `kind` on a board built to `fabrication` with
@@ -410,8 +333,9 @@ pub fn mask_body(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 
 /// every fabrication. A mask's colour depends on its thickness: the
 /// stack's mask over laminate, and the stackup's mask over copper.
 pub fn material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Material {
-    let mut look = base_material(kind, fabrication, stack);
-    look.detail = detail(kind, fabrication);
+    let looks = stack.looks();
+    let mut look = base_material(kind, fabrication, stack, looks);
+    look.detail = detail(kind, fabrication, looks);
     look
 }
 
@@ -421,99 +345,97 @@ pub fn mask_um(stack: &Stack) -> [f64; 2] {
     [stack.mask_laminate_mm() * 1000.0, stack.mask_mm() * 1000.0]
 }
 
-fn base_material(kind: BodyKind, fabrication: &Fabrication, stack: &Stack) -> Material {
-    let [over_laminate, over_copper] = mask_um(stack);
-    let pigment = pigment(fabrication.mask_colour);
-    let lacquer = Coat {
-        weight: 1.0,
-        roughness: mask_coat_roughness(fabrication.mask_colour, fabrication.mask_finish),
-        ior: MASK_IOR,
-    };
-    let metal = |name, base_linear, roughness| Material {
-        name,
-        base_linear,
-        metallic: 1.0,
-        roughness,
-        ior: METAL_IOR,
+/// A shipped look in this crate's look type.
+fn plain(look: &'static Look) -> Material {
+    Material {
+        name: &look.name,
+        base_linear: look.base_linear,
+        metallic: look.metallic,
+        roughness: look.roughness,
+        ior: look.ior,
         coat: None,
         detail: Detail::NONE,
+    }
+}
+
+fn base_material(
+    kind: BodyKind,
+    fabrication: &Fabrication,
+    stack: &Stack,
+    looks: &'static MaterialLibrary,
+) -> Material {
+    let board = &looks.board;
+    let mask_look = &board.mask;
+    let [over_laminate, over_copper] = mask_um(stack);
+    let pigment = pigment(looks, fabrication.mask_colour);
+    let lacquer = Coat {
+        weight: 1.0,
+        roughness: mask_coat_roughness(looks, fabrication.mask_colour, fabrication.mask_finish),
+        ior: mask_look.ior,
     };
-    let dielectric = |name, base_linear, roughness, ior| Material {
+    let mask = |name: &'static str, base_linear| Material {
         name,
         base_linear,
         metallic: 0.0,
-        roughness,
-        ior,
-        coat: None,
+        roughness: mask_look.body_roughness,
+        ior: mask_look.body_ior,
+        coat: Some(lacquer),
         detail: Detail::NONE,
     };
-    let mask = |name, base_linear| Material {
-        coat: Some(lacquer),
-        ..dielectric(name, base_linear, MASK_BODY_ROUGHNESS, MASK_BODY_IOR)
-    };
     match kind {
-        BodyKind::Substrate | BodyKind::OpenLaminate => {
-            dielectric("FR-4 laminate", FR4, 0.60, EPOXY_IOR)
-        }
+        BodyKind::Substrate | BodyKind::OpenLaminate => plain(&board.laminate),
         BodyKind::MaskTop | BodyKind::MaskBottom => mask(
-            "Soldermask over laminate",
-            mask_body(pigment, FR4, over_laminate),
+            &mask_look.over_laminate_name,
+            mask_body(
+                mask_look,
+                pigment,
+                board.laminate.base_linear,
+                over_laminate,
+            ),
         ),
         BodyKind::MaskCap => mask(
-            "Soldermask over copper",
-            mask_body(pigment, COPPER, over_copper),
+            &mask_look.over_copper_name,
+            mask_body(mask_look, pigment, mask_look.copper_under, over_copper),
         ),
         BodyKind::CopperTrack
         | BodyKind::PadCopper
         | BodyKind::ViaCopper
         | BodyKind::FillCopper
-        | BodyKind::EdgeCopper => metal("Copper", COPPER_AIR, 0.30),
-        // The routed edge of the laminate; its weave is the detail.
-        BodyKind::EdgeDielectric => dielectric("FR-4 laminate edge", FR4, 0.60, EPOXY_IOR),
-        BodyKind::ViaBore => dielectric("Shadowed drill", BORE_SHADOW, 0.90, EPOXY_IOR),
-        BodyKind::Silkscreen => dielectric(
-            "Epoxy legend ink",
-            match fabrication.silkscreen_colour {
-                SilkscreenColour::White => INK_WHITE,
-                SilkscreenColour::Black => INK_BLACK,
-                SilkscreenColour::Yellow => INK_YELLOW,
-            },
-            INK_ROUGHNESS,
-            EPOXY_IOR,
-        ),
-        BodyKind::PadFinish => match fabrication.pad_finish {
-            // 85 % Au F0 (1.000, 0.782, 0.344) over 15 % Ni F0 (0.660, 0.609,
-            // 0.526): the immersion gold is only 1–2 penetration depths thick.
-            PadFinish::Enig => metal("ENIG gold", ENIG, 0.28),
-            // Eutectic tin-lead freezes bright; lead-free tin alloys freeze
-            // duller and grainier.
-            PadFinish::Hasl => metal("HASL tin-lead", TIN_LEAD, 0.16),
-            PadFinish::LeadFreeHasl => metal("Lead-free HASL tin", TIN, 0.20),
-            // A sub-micrometre transparent film over micro-etched copper.
-            PadFinish::Osp => metal("OSP copper", COPPER, 0.35),
-            // Immersion silver is many optical penetration depths thick.
-            PadFinish::ImmersionSilver => metal("Immersion silver", SILVER, 0.20),
-        },
+        | BodyKind::EdgeCopper => plain(&board.copper),
+        BodyKind::EdgeDielectric => plain(&board.laminate_edge),
+        BodyKind::ViaBore => plain(&board.via_bore),
+        BodyKind::Silkscreen => {
+            let ink = &looks.finishes.legend_ink;
+            Material {
+                name: &ink.name,
+                base_linear: match fabrication.silkscreen_colour {
+                    SilkscreenColour::White => ink.colours.white,
+                    SilkscreenColour::Black => ink.colours.black,
+                    SilkscreenColour::Yellow => ink.colours.yellow,
+                },
+                metallic: 0.0,
+                roughness: ink.roughness,
+                ior: ink.ior,
+                coat: None,
+                detail: Detail::NONE,
+            }
+        }
+        BodyKind::PadFinish => {
+            plain(&of_pad_finish(&looks.finishes.pad, fabrication.pad_finish).look)
+        }
         // Generated bodies take their recorded material's look; these are
         // only the family defaults' stand-ins.
-        BodyKind::Termination | BodyKind::ModelLead => metal("Matte tin", TIN_PLATED, 0.40),
-        // Reflowed lead-free SAC solder freezes satin, not mirror-bright.
-        BodyKind::Solder => metal("Reflowed solder", TIN_PLATED, 0.38),
-        BodyKind::PackageBody | BodyKind::PartBody | BodyKind::ModelBody => dielectric(
-            "Epoxy mould compound",
-            [0.022, 0.022, 0.024],
-            0.45,
-            EPOXY_IOR,
-        ),
-        BodyKind::ChipResistor => dielectric("Alumina ceramic", ALUMINA, 0.55, ALUMINA_IOR),
-        BodyKind::ChipCapacitor => dielectric("MLCC ceramic", MLCC, 0.55, MLCC_IOR),
-        // Glass or epoxy overcoat with a black marking layer.
-        BodyKind::Overcoat => {
-            dielectric("Resistor overcoat", [0.025, 0.025, 0.027], 0.30, EPOXY_IOR)
+        BodyKind::Termination | BodyKind::ModelLead => plain(&board.termination),
+        BodyKind::Solder => plain(&board.solder),
+        BodyKind::PackageBody | BodyKind::PartBody | BodyKind::ModelBody => {
+            plain(&board.package_body)
         }
+        BodyKind::ChipResistor => plain(&board.chip_resistor),
+        BodyKind::ChipCapacitor => plain(&board.chip_capacitor),
+        BodyKind::Overcoat => plain(&board.overcoat),
         // A stand-in only: a decal takes its finish's cited look
         // (`marking::finish_surface`).
-        BodyKind::Marking => dielectric("Laser marking", [0.16, 0.16, 0.17], 0.70, EPOXY_IOR),
+        BodyKind::Marking => plain(&board.marking),
     }
 }
 
@@ -572,6 +494,37 @@ mod tests {
     use super::*;
     use sparksmith_core::SilkscreenColour;
 
+    /// The shipped values these tests pin (`library/materials/`).
+    const COPPER: [f64; 3] = [0.955, 0.638, 0.538];
+    const FR4: [f64; 3] = [0.36, 0.32, 0.17];
+    const TIN_PLATED: [f64; 3] = [0.78, 0.78, 0.80];
+    const MASK_F0: f64 = 0.043;
+    const MASK_IOR: f64 = 1.52;
+    const SILK_GRAIN: f64 = 0.5;
+
+    /// The repository's material library.
+    #[allow(clippy::expect_used)]
+    fn lib() -> &'static MaterialLibrary {
+        crate::looks::get().expect("the repository's library/materials loads")
+    }
+
+    #[allow(clippy::expect_used)]
+    fn stack() -> Stack {
+        Stack::standard().expect("the repository's library/materials loads")
+    }
+
+    fn pigment(colour: MaskColour) -> Pigment {
+        super::pigment(lib(), colour)
+    }
+
+    fn mask_over(pigment: Pigment, under: [f64; 3], thickness_um: f64) -> [f64; 3] {
+        super::mask_over(&lib().board.mask, pigment, under, thickness_um)
+    }
+
+    fn weave_show_through(colour: MaskColour) -> f64 {
+        super::weave_show_through(lib(), colour)
+    }
+
     const COLOURS: [MaskColour; 8] = [
         MaskColour::Green,
         MaskColour::Blue,
@@ -617,15 +570,15 @@ mod tests {
 
     /// The default stack's mask over laminate and over copper, µm.
     fn over_laminate() -> f64 {
-        mask_um(&Stack::default())[0]
+        mask_um(&stack())[0]
     }
 
     fn over_copper() -> f64 {
-        mask_um(&Stack::default())[1]
+        mask_um(&stack())[1]
     }
 
     fn default_look(kind: BodyKind) -> Material {
-        material(kind, &Fabrication::default(), &Stack::default())
+        material(kind, &Fabrication::default(), &stack())
     }
 
     fn luminance(c: [f64; 3]) -> f64 {
@@ -644,7 +597,7 @@ mod tests {
         assert_eq!(all.len(), 8 * 3 * 5 * 3);
         for fabrication in &all {
             for kind in BodyKind::ALL {
-                let m = material(kind, fabrication, &Stack::default());
+                let m = material(kind, fabrication, &stack());
                 let surface = m.surface()?;
                 assert!(surface.roughness() >= 0.045, "{kind:?} {fabrication:?}");
                 assert!(
@@ -664,7 +617,7 @@ mod tests {
             for kind in BodyKind::ALL {
                 if !kind.is_appearance() {
                     assert_eq!(
-                        material(kind, &fabrication, &Stack::default()),
+                        material(kind, &fabrication, &stack()),
                         default_look(kind),
                         "{kind:?}"
                     );
@@ -686,7 +639,7 @@ mod tests {
                     pad_finish,
                     ..Fabrication::default()
                 },
-                &Stack::default(),
+                &stack(),
             );
             (m.metallic, m.base_linear, m.roughness)
         };
@@ -728,7 +681,7 @@ mod tests {
     fn srgb8_round_trips_within_one_step() {
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
-                let m = material(kind, &fabrication, &Stack::default());
+                let m = material(kind, &fabrication, &stack());
                 for (c, linear) in m.srgb8().into_iter().zip(m.base_linear) {
                     let back = srgb8_to_linear(c);
                     let step =
@@ -836,7 +789,7 @@ mod tests {
                     mask_over(p, COPPER, over_copper()),
                 ),
             ] {
-                let body = material(kind, &fabrication, &Stack::default()).base_linear;
+                let body = material(kind, &fabrication, &stack()).base_linear;
                 for c in 0..3 {
                     assert!(
                         (got[c] - expected[c]).abs() <= 0.0006,
@@ -849,8 +802,8 @@ mod tests {
                 }
             }
             assert_eq!(
-                material(BodyKind::MaskBottom, &fabrication, &Stack::default()),
-                material(BodyKind::MaskTop, &fabrication, &Stack::default())
+                material(BodyKind::MaskBottom, &fabrication, &stack()),
+                material(BodyKind::MaskTop, &fabrication, &stack())
             );
         }
     }
@@ -909,7 +862,7 @@ mod tests {
                         mask_finish,
                         ..Fabrication::default()
                     },
-                    &Stack::default(),
+                    &stack(),
                 )
             };
             let rough = |finish| look(finish).coat.map_or(f64::NAN, |c| c.roughness);
@@ -938,7 +891,7 @@ mod tests {
     fn mask_layers_are_coated_and_nothing_else_is() -> Result<()> {
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
-                let m = material(kind, &fabrication, &Stack::default());
+                let m = material(kind, &fabrication, &stack());
                 let coat = m.surface()?.clear_coat();
                 let is_mask = matches!(
                     kind,
@@ -967,7 +920,7 @@ mod tests {
                     mask_colour: colour,
                     ..Fabrication::default()
                 },
-                &Stack::default(),
+                &stack(),
             )
             .detail
         };

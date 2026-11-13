@@ -172,7 +172,8 @@ fn legend_over_a_track_stands_on_its_mask_cap() -> Result<()> {
     let crown = 1.6 + 0.035 + project.stackup.mask_um / 1000.0;
     let raised: Vec<&&Geometry> = films
         .iter()
-        .filter(|g| (g.max[2] - (crown + INK_MM)).abs() < 1e-9)
+        // 15 µm of legend ink (the shipped finishes).
+        .filter(|g| (g.max[2] - (crown + 0.015)).abs() < 1e-9)
         .collect();
     assert_eq!(raised.len(), 1, "one raised piece, over the track only");
     let piece = raised[0];

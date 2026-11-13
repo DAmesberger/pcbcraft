@@ -1,6 +1,19 @@
 # Physical looks of the PCB 3D model
 
-The PCB 3D view and the saved `.solidcraft` model use the same physical looks. The board's [fabrication attributes](#fabrication-presets) (mask colour and finish, pad finish, silkscreen colour) are saved in the Sparksmith design and change only the display-only layers; the saved `.solidcraft` model is the same for every choice. Each native body (laminate, copper, package envelopes) stores a Solidcraft appearance (`appearance.assign` with `pbr: {metallic, roughness, dielectric_ior}`). The viewport reads that stored look back, so it shows exactly what the file holds. Display-only layers (soldermask and via tents, plated finish, open-via bores, silkscreen, edge stackup bands, terminations, overcoat, solder) take their look from the same table; they are not saved (see below). The values live in `crates/solidcraft-integration/src/material.rs`.
+The PCB 3D view and the saved `.solidcraft` model use the same physical looks. The board's [fabrication attributes](#fabrication-presets) (mask colour and finish, pad finish, silkscreen colour) are saved in the Sparksmith design and change only the display-only layers; the saved `.solidcraft` model is the same for every choice. Each native body (laminate, copper, package envelopes) stores a Solidcraft appearance (`appearance.assign` with `pbr: {metallic, roughness, dielectric_ior}`). The viewport reads that stored look back, so it shows exactly what the file holds. Display-only layers (soldermask and via tents, plated finish, open-via bores, silkscreen, edge stackup bands, terminations, overcoat, solder) take their look from the same table; they are not saved (see below). The values are shipped data in `library/materials/` (see [data files](#data-files)); `crates/solidcraft-integration/src/material.rs` maps body kinds and fabrication choices onto them and computes the soldermask layer model.
+
+## Data files
+
+The program holds none of these values in code ([shipped library](shipped-library.md)). `sparksmith-io` reads the `materials/` shelf once per process (`materials::load`, at start-up and before the first automation request) into a `sparksmith_core::materials::MaterialLibrary`, which `sparksmith_solidcraft::looks` keeps. The board's layer stack (`stack::Stack`) carries it, so the live 3D view, the board plan and the exact export read the same loaded values, and no build reloads them. A missing or broken file is an error naming it, returned by the first build that needs the data; there is no fallback in code.
+
+| File | Holds |
+|---|---|
+| `package-materials.json` | The package material table: one entry per `MaterialId` (base colour, metallic, roughness, IOR, optional coat, transmission, pattern and density) with its sources; `revision` must equal the program's `BUILTIN_REVISION`. |
+| `board-looks.json` | Laminate, laminate edge, exposed copper, via bore, and the stand-ins for terminations, solder, package bodies, chip bodies, overcoat and marking; the soldermask layer model (resin IOR, surface F0, internal reflectance, body IOR and roughness, bare copper under the mask), each colour's pigment and weave show-through, and the lacquer's roughness per finish and colour. |
+| `finishes.json` | Each pad finish's look and plated layers with the published thickness ranges (drawn at the middle), and the legend ink's colours, roughness, grain and thickness. |
+| `appearance.json` | Sizes of the display-only layers: termination growth and bands, overcoat, solder fillets, gull-wing toe and heel fillets, header pin cones and via tents. |
+
+Every look carries a `note` with its source or estimate; every record is complete (one field per mask colour, finish and pad finish), and an unknown or missing field is refused.
 
 ## Conventions
 
@@ -81,7 +94,7 @@ Every display layer carries the copper layer it lies on, or the side a mask or l
 
 ## Package materials
 
-Generated and envelope package models name a physical material per body (`MaterialId`), never a colour. The table is core data (`crates/editor-core/src/materials.rs`, `materials::builtin`), revisioned with the app (`BUILTIN_REVISION`); a project stores only the ids, and the saved `.solidcraft` model carries each body's opaque projection, so a project reopens with the same native looks even after a later table revision. User materials, once they exist, will be a revisioned library definition kind snapshotted like other definitions. The integration crate keeps its `BodyKind` looks (above) and maps body kinds to these ids; the values shared with the table above are the same numbers, and a core test (`materials::tests::cited_values_match_docs`) checks them.
+Generated and envelope package models name a physical material per body (`MaterialId`), never a colour. The table is shipped data (`library/materials/package-materials.json`, read into `materials::MaterialTable`), revisioned with the app (`BUILTIN_REVISION`); a project stores only the ids, and the saved `.solidcraft` model carries each body's opaque projection, so a project reopens with the same native looks even after a later table revision. User materials, once they exist, will be a revisioned library definition kind snapshotted like other definitions. The integration crate keeps its `BodyKind` looks (above) and maps body kinds to these ids; the values shared with the table above are the same numbers, and a core test (`materials::tests::cited_values_match_docs`) checks them.
 
 Every value carries a source key: `johnson-christy-1972`, `rakic-1998`, `hoffman`, `palik-crc` (see [sources](#sources)) or `est`. A material with any `est` source is flagged `estimated`. Metals are metallic 1 with IOR 1.5 (ignored). Densities are handbook values for the elements, alumina, barium titanate and borosilicate glass, and typical grade values (**est.**) for compounds and plastics.
 
@@ -170,7 +183,7 @@ Show-through is **est.** No measured print-through value was found in public sou
 
 ### Pad finishes
 
-Each finish's 3D thickness is the middle of the range a fabricator publishes (`stack::finish_um`):
+Each finish's 3D thickness is the middle of the range a fabricator publishes (`stack::finish_um`, from `finishes.json`):
 
 | Pad finish | Published range | 3D thickness | Source |
 |---|---|---|---|

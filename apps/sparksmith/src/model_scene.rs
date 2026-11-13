@@ -295,7 +295,7 @@ fn stream_shaded(g: &Geometry, stack: &Stack) -> bool {
 /// more than once.
 /// [`instance`] for bodies drawn beside a model (Component 3D decals).
 pub fn instance_bodies(geometry: &[Geometry]) -> Result<Vec<Instanced>, String> {
-    instance(geometry, &Stack::none())
+    instance(geometry, &Stack::none().map_err(|e| e.to_string())?)
 }
 
 /// Grouped as [`instance_bodies`] says, in the stack's draw order
@@ -1389,7 +1389,7 @@ pub(crate) mod tests {
             }
         }
         let started = std::time::Instant::now();
-        let scene = build(geometry, &Stack::default())?;
+        let scene = build(geometry, &crate::test_stack()?)?;
         let built = started.elapsed();
         let placed = vias * bodies.len();
         assert_eq!(

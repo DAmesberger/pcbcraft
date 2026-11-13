@@ -340,10 +340,14 @@ fn evaluate(session: &Session) -> Result<(Vec<Item>, Vec<Geometry>)> {
             surface: crate::material::material(
                 kind,
                 &sparksmith_core::Fabrication::default(),
-                &crate::stack::Stack::default(),
+                &crate::stack::Stack::standard()?,
             )
             .surface()?,
-            detail: crate::material::detail(kind, &sparksmith_core::Fabrication::default()),
+            detail: crate::material::detail(
+                kind,
+                &sparksmith_core::Fabrication::default(),
+                crate::looks::get()?,
+            ),
             mesh: body.mesh(),
             place: None,
             volume: crate::scene::Volume::known(m.volume),

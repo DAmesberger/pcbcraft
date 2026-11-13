@@ -1090,6 +1090,8 @@ impl Session {
     /// Execute one typed request.
     pub fn execute(&mut self, request: Request) -> Result<Value> {
         self.ensure_generators();
+        // Once per process; later calls only read it.
+        crate::load_materials();
         // The one revision check of every document-changing request.
         if let Some(expected) = request.expected_revision() {
             self.engine.check_revision(expected)?;

@@ -836,10 +836,14 @@ impl App {
             }
             let mut view = self.pcb.layer_view();
             let project = self.engine.project();
-            let stack = sparksmith_solidcraft::stack::Stack::of(
+            // Without the material data there is no 3D model to peel; the
+            // view shows why.
+            let Ok(stack) = sparksmith_solidcraft::stack::Stack::of(
                 &project.stackup,
                 project.fabrication.pad_finish,
-            );
+            ) else {
+                return;
+            };
             let follow_label =
                 self.with_shortcut("Follow net (see-through)", AppCommand::ToggleFollowNet);
             let mut follow = self.scene.viewport.follow_net();

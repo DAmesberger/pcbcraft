@@ -45,6 +45,17 @@ fn wroom3() -> PackageDefinition {
 #[test]
 #[ignore = "timings"]
 fn part_file_timings() {
+    // The repository's shipped material library (the program loads it
+    // through sparksmith-io at start-up).
+    let materials =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
+    sparksmith_solidcraft::looks::ensure(|| {
+        sparksmith_core::materials::MaterialLibrary::load(|name| {
+            std::fs::read_to_string(materials.join(name))
+                .map_err(|e| sparksmith_core::Error::Invalid(e.to_string()))
+        })
+    })
+    .unwrap();
     let bytes = &std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../library/parts/esp32-s31-wroom-3.solidcraft"

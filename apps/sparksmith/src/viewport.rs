@@ -83,12 +83,12 @@ struct ShadowLayers {
 }
 
 impl ShadowLayers {
-    fn of(view: &LayerView, stack: &sparksmith_solidcraft::stack::Stack) -> Self {
+    /// `stack` is the model's (`None` before there is one).
+    fn of(view: &LayerView, stack: Option<&sparksmith_solidcraft::stack::Stack>) -> Self {
         use sparksmith_core::Layer;
-        let board = if stack.dielectrics().is_empty() {
-            view.visible(ViewLayer::Substrate)
-        } else {
-            view.shows_laminate(stack)
+        let board = match stack {
+            Some(stack) if !stack.dielectrics().is_empty() => view.shows_laminate(stack),
+            _ => view.visible(ViewLayer::Substrate),
         };
         let bodies = view.visible(ViewLayer::Bodies);
         let side = |side| bodies && (board || view.visible(ViewLayer::Mask(side)));
@@ -468,12 +468,10 @@ impl Viewport {
     /// Show or hide the whole laminate: every dielectric of the model's
     /// stack ([`LayerView::set_laminate`]).
     pub fn set_laminate(&mut self, visible: bool) {
-        let stack = self
-            .model
-            .as_ref()
-            .map_or_else(sparksmith_solidcraft::stack::Stack::none, |m| {
-                m.stack.clone()
-            });
+        // Without a model there is no laminate to show or hide.
+        let Some(stack) = self.model.as_ref().map(|m| m.stack.clone()) else {
+            return;
+        };
         let mut layers = self.layers.clone();
         layers.set_laminate(&stack, visible);
         self.set_layers(layers);
@@ -664,8 +662,7 @@ impl Viewport {
     }
 
     fn current_shadow_view(&self) -> ShadowView {
-        let none = sparksmith_solidcraft::stack::Stack::none();
-        let stack = self.model.as_ref().map_or(&none, |m| &m.stack);
+        let stack = self.model.as_ref().map(|m| &m.stack);
         (
             theme::is_dark(),
             self.camera.pitch < 0.0,
@@ -1972,10 +1969,7 @@ mod tests {
         viewport.shadow_view = Some((
             !dark,
             false,
-            ShadowLayers::of(
-                &LayerView::default(),
-                &sparksmith_solidcraft::stack::Stack::default(),
-            ),
+            ShadowLayers::of(&LayerView::default(), Some(&crate::test_stack()?)),
         ));
         viewport.publish_shadows();
         let after = (viewport.key, viewport.hl_key, viewport.sketch_key);

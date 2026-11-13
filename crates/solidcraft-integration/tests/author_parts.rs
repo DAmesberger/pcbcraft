@@ -923,6 +923,17 @@ pub fn author_usb4105() -> Vec<u8> {
 #[test]
 #[ignore = "writes library/parts/*.solidcraft and the examples' part files"]
 fn author_parts() {
+    // The repository's shipped material library (the program loads it
+    // through sparksmith-io at start-up).
+    let materials =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
+    sparksmith_solidcraft::looks::ensure(|| {
+        sparksmith_core::materials::MaterialLibrary::load(|name| {
+            std::fs::read_to_string(materials.join(name))
+                .map_err(|e| sparksmith_core::Error::Invalid(e.to_string()))
+        })
+    })
+    .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     type Author = fn() -> Vec<u8>;
     let parts: [(&str, &str, Author); 6] = [

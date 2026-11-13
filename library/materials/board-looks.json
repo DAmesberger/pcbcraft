@@ -1,0 +1,117 @@
+{
+  "about": "Physical looks of the board's bodies and display layers: linear-sRGB reflectance (F0 for metals), metallic, perceptual roughness and IOR in Solidcraft's opaque-surface convention; metals store IOR 1.5, which Solidcraft requires and ignores. Sources and the soldermask layer model are in docs/materials.md; est. marks an estimate. The bodies the native model saves look the same for every fabrication; only the mask, finish and legend follow the board's fabrication choices.",
+  "laminate": {
+    "name": "FR-4 laminate",
+    "base_linear": [0.36, 0.32, 0.17],
+    "metallic": 0.0,
+    "roughness": 0.6,
+    "ior": 1.55,
+    "note": "Natural FR-4 laminate albedo (est.); silica-filled epoxy and glass-epoxy laminate index 1.55 (handbook values: Palik, CRC). Also the laminate a mask opening leaves bare."
+  },
+  "laminate_edge": {
+    "name": "FR-4 laminate edge",
+    "base_linear": [0.36, 0.32, 0.17],
+    "metallic": 0.0,
+    "roughness": 0.6,
+    "ior": 1.55,
+    "note": "The routed edge of the laminate, as the laminate; its weave is the detail."
+  },
+  "copper": {
+    "name": "Copper",
+    "base_linear": [0.955, 0.61, 0.41],
+    "metallic": 1.0,
+    "roughness": 0.3,
+    "ior": 1.5,
+    "note": "F0 of a board's exposed copper (tracks, pads, vias, fills and the foil lines at the edge): copper in air carries a native Cu2O film a few nanometres thick, so it is not the freshly polished metal (0.955, 0.638, 0.538; Johnson & Christy 1972 via Hoffman's table), whose bright, cool pink read as pale salmon on the board. The film takes the blue down steeply, the green a little and leaves the red: at 440 nm normal reflectance falls from 54 % bare to 10 % under 10 nm of oxide, nearly linearly (about 41 % at 3 nm, from the patent's fit), at 560 nm it stays about 55-65 % under 5 nm, and 630 nm is insensitive to it (Powell, Settles and Kailasam, US 6,525,829 B1, Novellus Systems, 2003: modelled reflectance of Cu under Cu2O). So red keeps the bare value, green takes the middle of that range and blue the 3 nm value; the 3 nm film is est. (a native oxide after days in air). Exposed only when the mask is hidden; under the mask it is covered by the mask cap."
+  },
+  "via_bore": {
+    "name": "Shadowed drill",
+    "base_linear": [0.01, 0.009, 0.008],
+    "metallic": 0.0,
+    "roughness": 0.9,
+    "ior": 1.55,
+    "note": "The inside of a narrow open drill as seen from outside: almost no light returns from a bore five or more diameters deep (est.). The 3D view computes no occlusion, so a plated bore would otherwise light up like an open copper face."
+  },
+  "termination": {
+    "name": "Matte tin",
+    "base_linear": [0.78, 0.78, 0.8],
+    "metallic": 1.0,
+    "roughness": 0.4,
+    "ior": 1.5,
+    "note": "Tin F0 of plated terminations (est.; the package table's matte tin). Generated bodies take their recorded material's look; this is only the family defaults' stand-in."
+  },
+  "solder": {
+    "name": "Reflowed solder",
+    "base_linear": [0.78, 0.78, 0.8],
+    "metallic": 1.0,
+    "roughness": 0.38,
+    "ior": 1.5,
+    "note": "Reflowed lead-free SAC solder: the plated tin F0 (est.); it freezes satin, not mirror-bright."
+  },
+  "package_body": {
+    "name": "Epoxy mould compound",
+    "base_linear": [0.022, 0.022, 0.024],
+    "metallic": 0.0,
+    "roughness": 0.45,
+    "ior": 1.55,
+    "note": "A placed package's moulded envelope: the package table's epoxy mould compound (est. colour; n from the filler and resin indices, Palik, CRC)."
+  },
+  "chip_resistor": {
+    "name": "Alumina ceramic",
+    "base_linear": [0.78, 0.77, 0.73],
+    "metallic": 0.0,
+    "roughness": 0.55,
+    "ior": 1.77,
+    "note": "96 % alumina substrate diffuse reflectance (est. from published 400-700 nm reflectance of thick-film substrates, 0.75-0.85); n from sapphire, n_o = 1.77 (handbook value)."
+  },
+  "chip_capacitor": {
+    "name": "MLCC ceramic",
+    "base_linear": [0.32, 0.25, 0.15],
+    "metallic": 0.0,
+    "roughness": 0.55,
+    "ior": 2.4,
+    "note": "Sintered barium-titanate MLCC body, tan (est.); barium titanate is n = 2.4 (Palik, CRC)."
+  },
+  "overcoat": {
+    "name": "Resistor overcoat",
+    "base_linear": [0.025, 0.025, 0.027],
+    "metallic": 0.0,
+    "roughness": 0.3,
+    "ior": 1.55,
+    "note": "Glass or epoxy overcoat with a black marking layer (est.)."
+  },
+  "marking": {
+    "name": "Laser marking",
+    "base_linear": [0.16, 0.16, 0.17],
+    "metallic": 0.0,
+    "roughness": 0.7,
+    "ior": 1.55,
+    "note": "A stand-in only (est.): a marking decal takes its finish's cited look."
+  },
+  "mask": {
+    "ior": 1.52,
+    "surface_f0": 0.043,
+    "internal_reflectance": 0.6,
+    "body_ior": 1.0,
+    "body_roughness": 1.0,
+    "copper_under": [0.955, 0.638, 0.538],
+    "over_laminate_name": "Soldermask over laminate",
+    "over_copper_name": "Soldermask over copper",
+    "colours": {
+      "green": {"t20": [0.1, 0.45, 0.18], "scatter": [0.01, 0.085, 0.03], "weave_show_through": 0.12},
+      "blue": {"t20": [0.03, 0.1, 0.35], "scatter": [0.006, 0.025, 0.11], "weave_show_through": 0.08},
+      "red": {"t20": [0.3, 0.03, 0.03], "scatter": [0.28, 0.014, 0.012], "weave_show_through": 0.08},
+      "purple": {"t20": [0.14, 0.035, 0.22], "scatter": [0.074, 0.008, 0.102], "weave_show_through": 0.1},
+      "yellow": {"t20": [0.3, 0.26, 0.03], "scatter": [0.6, 0.44, 0.022], "weave_show_through": 0.0},
+      "black": {"t20": [0.011, 0.012, 0.015], "scatter": [0.024, 0.024, 0.026], "weave_show_through": 0.0},
+      "white": {"t20": [0.08, 0.087, 0.06], "scatter": [0.7, 0.7, 0.66], "weave_show_through": 0.0},
+      "clear": {"t20": [0.92, 0.88, 0.87], "scatter": [0.005, 0.011, 0.002], "weave_show_through": 0.6}
+    },
+    "coat_roughness": {
+      "gloss": {"green": 0.16, "blue": 0.16, "red": 0.16, "purple": 0.16, "yellow": 0.2, "black": 0.16, "white": 0.16, "clear": 0.12},
+      "satin": {"green": 0.26, "blue": 0.26, "red": 0.26, "purple": 0.26, "yellow": 0.26, "black": 0.26, "white": 0.26, "clear": 0.26},
+      "matte": {"green": 0.4, "blue": 0.4, "red": 0.4, "purple": 0.4, "yellow": 0.4, "black": 0.45, "white": 0.4, "clear": 0.4}
+    },
+    "note": "Two-flux soldermask layer with a Saunderson interface correction (docs/materials.md, soldermask layer model). The resin is n = 1.52, so the surface reflects ((1.52-1)/(1.52+1))^2 = 0.043 at normal incidence and its internal diffuse reflectance is 0.60 (first principles; Saunderson's k2). The pigmented body under the lacquer has no interface of its own: the coat reflects at the air boundary, so the body takes IOR 1 and a fully rough, diffuse surface; a mask over copper covers bare copper (Johnson & Christy 1972 via Hoffman's table). Pigments: per-pass transmittance through 20 um (t20) and the light the pigment scatters back over a black base, all est. Red and purple scatter more than green, so copper shows through less (about 1.6x and 1.8x against green's 2.1x); red is a scarlet, not a maroon: most of its colour is pigment scatter. Yellow is a lemon-ochre, mostly scatter, so traces barely lighten it. Black pigment in a resin still scatters a little: a dark grey body (about 2.4 % luminance), never a crushed black. Weave show-through (est.): fully under clear resin, faintly under the translucent pigments, not at all under the opaque ones (black, white, yellow: the pigments needing the most exposure energy). Coat roughness (est. from glossmeter readings: gloss masks 80-94 GU, matte 3-43): clear resin has no pigment to break the surface; the yellow fabricators sell is semi-gloss at best; black matte is the flattest. A glossmeter reads the specular peak through a small aperture; a mask cured over traces, weave and filler is not that flat across a reflected light, so a gloss board shows a light's reflection as a soft sheen, never a mirror image with hard edges. At 0.06 the studio's strip light lay on the board as a crisp-edged white shaft (VM check 13 Nov 2026); 0.16 keeps a clear gloss highlight with soft edges, and the other finishes keep their order above it."
+  }
+}

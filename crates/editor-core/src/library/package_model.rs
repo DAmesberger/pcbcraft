@@ -242,10 +242,11 @@ impl PackageModel {
     /// A short description for update diffs and the inspector.
     pub fn describe(&self) -> String {
         match self {
+            // The material's id in words: its display name is shipped
+            // data, which the core does not hold.
             Self::Envelope { material } => format!(
                 "approximate envelope ({})",
-                crate::materials::builtin(*material)
-                    .map_or_else(|_| "unknown material".into(), |m| m.name)
+                material.key().replace('_', " ")
             ),
             Self::Generated { family_rev, .. } => format!("generated (builder rev {family_rev})"),
             Self::Library(library) => format!("library model {}", library.model),
