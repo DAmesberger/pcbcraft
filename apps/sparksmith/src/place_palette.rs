@@ -2404,7 +2404,7 @@ mod tests {
     /// template rows, and library folders last, whatever the search ranked.
     #[test]
     fn the_list_keeps_its_order() -> Result<(), Box<dyn std::error::Error>> {
-        let mut engine = Engine::default();
+        let mut engine = Engine::profiled()?;
         let found = template_gallery::find_generic(&engine, "resistor 0603");
         let request = found.first().and_then(|c| c.would_create.clone());
         let request = request.ok_or("a request")?;

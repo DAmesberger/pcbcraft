@@ -273,7 +273,7 @@ mod tests {
         let source = sparksmith_core::catalog::synthetic::project_with_parts(4, &board)?.library;
         let mut file = EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: Default::default(),
+            project: sparksmith_core::Project::new(&board),
             drafts: Default::default(),
         };
         let mut next = 1000;
