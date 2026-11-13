@@ -110,12 +110,12 @@ pub struct UserSettings {
     /// Row density, reduced motion and saved list filters.
     #[serde(default, skip_serializing_if = "ListSettings::is_default")]
     pub lists: ListSettings,
-    /// The 3D view meshes the board's flat bodies (laminate and copper)
-    /// straight from the board plan instead of building them in the
-    /// kernel (off by default: the exact build stays the live path until
-    /// the direct mesh has replaced it).
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub mesh_board_directly: bool,
+    /// The former "Mesh the board directly" setting. The direct mesh is
+    /// now the 3D view's only way to draw the board, so the setting means
+    /// nothing: a settings file that turned it on still reads, and the
+    /// next save leaves it out.
+    #[serde(default, rename = "mesh_board_directly", skip_serializing)]
+    pub former_mesh_board_directly: serde::de::IgnoredAny,
 }
 
 /// Saved list filters kept.
@@ -273,7 +273,7 @@ impl Default for UserSettings {
             default_rule_profile: None,
             selection_filter: SelectionFilter::default(),
             lists: ListSettings::default(),
-            mesh_board_directly: false,
+            former_mesh_board_directly: serde::de::IgnoredAny,
         }
     }
 }
@@ -912,6 +912,26 @@ mod tests {
             full.save_filter("pcb.parts", &format!("x>{i}"))?;
         }
         assert!(full.save_filter("pcb.parts", "y>1").is_err());
+        Ok(())
+    }
+
+    /// A settings file written while "Mesh the board directly" was a
+    /// setting still reads (the setting is gone: the 3D view always meshes
+    /// the board), and is saved without it.
+    #[test]
+    fn the_former_direct_mesh_setting_reads_and_is_not_saved() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join(SETTINGS_FILE);
+        let mut written = serde_json::to_value(UserSettings::default())?;
+        if let Some(map) = written.as_object_mut() {
+            map.insert("mesh_board_directly".into(), serde_json::json!(true));
+        }
+        std::fs::write(&path, serde_json::to_vec(&written)?)?;
+        let read = read_settings(&path)?;
+        assert_eq!(read, UserSettings::default());
+        write_settings(&path, &read)?;
+        let saved = std::fs::read_to_string(&path)?;
+        assert!(!saved.contains("mesh_board_directly"), "{saved}");
         Ok(())
     }
 

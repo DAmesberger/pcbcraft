@@ -2,10 +2,9 @@
 //! board into pieces of at most one cell each, each piece a body of its
 //! own. Extruding one planar profile costs more than linearly in its
 //! edges, and a pour holds thousands; in tiles the cost of a fill is about
-//! linear in its edges. A refill that changes the copper near a part
-//! changes only the tiles there, and an update builds only those again
-//! ([`crate::native::Native::unit`]): a tile is known by its fill, its cell
-//! and its place in the cell, and by a digest of its outline.
+//! linear in its edges. A tile is known by its fill, its cell and its
+//! place in the cell; the plan's memo keeps a fill's tiles while its copper
+//! is unchanged.
 //!
 //! The cut is exact on a nanometre grid (`i_overlay`'s integer overlay, so
 //! a cell's pieces depend only on the copper inside it, whatever the fill
@@ -22,8 +21,8 @@ use pcbcraft_core::model::fill::FilledRegion;
 
 /// The side of a tile's cell, mm. A cell of the ESP32 example's pours
 /// holds up to about 400 edges, extruded in about 0.1 s. On that board
-/// 12 mm built the model and its refill faster than 4 or 8 mm: more tiles
-/// cost Solidcraft more bookkeeping than their smaller extrusions save.
+/// 12 mm built the exact model faster than 4 or 8 mm: more tiles cost
+/// Solidcraft more bookkeeping than their smaller extrusions save.
 pub(in crate::project) const TILE_MM: f64 = 12.0;
 
 /// Grid units per millimetre: a nanometre.

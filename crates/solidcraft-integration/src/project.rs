@@ -11,7 +11,7 @@
 use crate::appearance::{self, Body, Land, Part, Path, ViaMark};
 use crate::geom::prelude::*;
 use crate::material::{self, BodyKind, Detail};
-use crate::models::imported::{LibraryDefinition, SourceCache};
+use crate::models::imported::SourceCache;
 use crate::models::{self, ModelDefinition, look};
 use crate::native::{
     self, BoardJoint, BoxBody, Created, Expr, JointFrame, Mount, Native, ProfileBody,
@@ -108,18 +108,10 @@ pub struct NativeModel {
     /// The generated package-model definitions, one per package revision
     /// (a library model's bodies with built-in materials among them).
     pub models: Vec<ModelDefinition>,
-    /// The library-model definitions, each with a digest of the model and
-    /// use it was built from, for an update to reuse.
-    libraries: Vec<(u64, LibraryDefinition)>,
-    /// What an update can reuse of this model's native geometry.
-    reuse: Reused,
-    /// Commands the update that made this model ran; `None` when it was
-    /// built anew.
-    updated: Option<usize>,
     /// The display layers made for this model, for an update to reuse.
     display: appearance::Memo,
     /// The evaluated bodies [`Geometry::volume`] measures: geometry
-    /// reaches them only while this model (or a snapshot of it) lives.
+    /// reaches them only while this model lives.
     /// `None` for a meshed model, whose part bodies its designs hold.
     world: Option<std::sync::Arc<solidcraft_engine::doc::ModelState>>,
 }
@@ -127,23 +119,13 @@ pub struct NativeModel {
 /// How [`update`] made its model.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Rebuilt {
-    /// The previous model, updated in place by this many native commands
-    /// (a meshed model, from what it kept, by none).
-    InPlace(usize),
-    /// Built anew, and why: the board changed in more than values, or the
-    /// update failed (`None`: nothing was built before).
+    /// A meshed model made from what the previous one kept (its meshes,
+    /// fill plans, display layers and part designs), running no native
+    /// command but those of a part design it did not hold.
+    InPlace,
+    /// Built anew, and why: the previous model was the exact one (built,
+    /// never updated), or the update failed.
     Anew(Option<String>),
-}
-
-/// The identity of each native body's geometry ([`Geometry`] in model
-/// order, native bodies first), so an update reuses the meshes and measures
-/// of every body it did not change. A laminate slab is also known by its
-/// inputs: re-evaluated after an edit before it, it is the same solid.
-#[derive(Clone, Default)]
-struct Reused {
-    keys: Vec<Option<u64>>,
-    /// Laminate slabs: name → (input digest, geometry index).
-    slabs: BTreeMap<String, (u64, usize)>,
 }
 
 impl NativeModel {
@@ -188,28 +170,6 @@ impl NativeModel {
     pub fn part_designs(&self) -> usize {
         self.designs.len()
     }
-
-    /// A copy of this model that stays as it is while this one is updated
-    /// ([`update`] takes the model it updates), sharing its evaluated
-    /// design and meshes: an earlier board kept for an undo back to it.
-    pub fn snapshot(&self) -> Self {
-        Self {
-            native: self.native.as_ref().map(Native::snapshot),
-            flat: self.flat,
-            meshes: self.meshes.clone(),
-            designs: self.designs.clone(),
-            plans: self.plans.clone(),
-            geometry: self.geometry.clone(),
-            sources: self.sources.clone(),
-            stack: self.stack.clone(),
-            models: self.models.clone(),
-            libraries: self.libraries.clone(),
-            reuse: self.reuse.clone(),
-            updated: self.updated,
-            display: self.display.clone(),
-            world: self.world.clone(),
-        }
-    }
 }
 
 #[cfg(test)]
@@ -226,30 +186,6 @@ pub(crate) fn no_design() -> Error {
     Error::Verification("a meshed model has no design of the board".into())
 }
 
-/// The previous model's geometry by identity, for [`finish_with`].
-struct Previous {
-    geometry: Vec<Geometry>,
-    by_key: std::collections::HashMap<u64, usize>,
-    /// Laminate slabs: name → (input digest, geometry index).
-    slabs: BTreeMap<String, (u64, usize)>,
-}
-
-impl Previous {
-    fn of(geometry: Vec<Geometry>, reuse: Reused) -> Self {
-        let by_key = reuse
-            .keys
-            .iter()
-            .enumerate()
-            .filter_map(|(index, key)| key.map(|key| (key, index)))
-            .collect();
-        Self {
-            geometry,
-            by_key,
-            slabs: reuse.slabs,
-        }
-    }
-}
-
 /// A native design under construction, recording each body's kind.
 struct Builder {
     native: Native,
@@ -260,26 +196,12 @@ struct Builder {
     models: Vec<ModelDefinition>,
     /// Definitions whose first occurrence an instance already holds.
     placed: BTreeSet<String>,
-    /// Replaying: the definitions the previous build made.
-    known: Vec<ModelDefinition>,
-    /// Library-model definitions built so far, by digest of their model
-    /// and use ([`NativeModel::libraries`]).
-    libraries: Vec<(u64, LibraryDefinition)>,
-    /// Replaying: the library-model definitions the previous build made.
-    known_libraries: Vec<(u64, LibraryDefinition)>,
     /// Library-model bodies with one of the model's own materials, by body
     /// name: drawn with that material's look (the file keeps its opaque
     /// projection).
     custom_looks: BTreeMap<String, (OpaqueSurface, Detail)>,
     /// Library model files read by earlier builds.
     sources: SourceCache,
-    /// Each laminate slab's input digest, by body name.
-    slabs: BTreeMap<String, u64>,
-    /// Each laminate slab: its name, input digest and the native step
-    /// that extruded it.
-    laminate: Vec<(String, u64, usize)>,
-    /// Replaying: the previous model's geometry.
-    previous: Option<Previous>,
     /// Display layers made before ([`appearance::Memo`]).
     display: appearance::Memo,
 }
@@ -291,86 +213,35 @@ impl Builder {
 
     /// A build that continues `native`, after what it holds already (the
     /// slots of an exported board interface).
-    fn on(mut native: Native, sources: &SourceCache) -> Self {
-        native.record();
+    fn on(native: Native, sources: &SourceCache) -> Self {
         Self {
             native,
             plans: plan::Memo::default(),
             bodies: BTreeMap::new(),
             models: Vec::new(),
             placed: BTreeSet::new(),
-            known: Vec::new(),
-            libraries: Vec::new(),
-            known_libraries: Vec::new(),
             custom_looks: BTreeMap::new(),
             sources: sources.clone(),
-            slabs: BTreeMap::new(),
-            laminate: Vec::new(),
-            previous: None,
             display: appearance::Memo::default(),
         }
     }
 
-    /// A build of an edited board replayed against `native`, the model
-    /// `known` and `previous` came from ([`Native::replaying`]).
-    fn replaying(
-        native: Native,
-        plans: plan::Memo,
-        known: Vec<ModelDefinition>,
-        known_libraries: Vec<(u64, LibraryDefinition)>,
-        previous: Previous,
-        display: appearance::Memo,
-        sources: &SourceCache,
-    ) -> Self {
-        Self {
-            native,
-            plans,
-            bodies: BTreeMap::new(),
-            models: Vec::new(),
-            placed: BTreeSet::new(),
-            known,
-            libraries: Vec::new(),
-            known_libraries,
-            custom_looks: BTreeMap::new(),
-            sources: sources.clone(),
-            slabs: BTreeMap::new(),
-            laminate: Vec::new(),
-            previous: Some(previous),
-            display,
-        }
-    }
-
     /// Build the generated definition `stem` of `package` unless it is
-    /// built. Replaying, the previous build's definition of the same
-    /// immutable package revision is taken as it is.
+    /// built.
     fn define(&mut self, stem: &str, package: &PackageDefinition) -> Result<()> {
         if self.models.iter().any(|d| d.component == stem) {
             return Ok(());
         }
-        let definition = if self.native.is_replaying() {
-            match self.known.iter().find(|d| d.component == stem).cloned() {
-                Some(definition) if self.native.pass(stem) => definition,
-                _ => {
-                    return Err(Error::Verification(format!(
-                        "the board's model {stem} is new"
-                    )));
-                }
-            }
-        } else {
-            // The model's own design, built once per process and inserted
-            // like a part file: its face names are the design's, and
-            // dimension references are traced on the same build.
-            let design = models::named::generated(package)?;
-            let start = self.native.step();
-            let definition = models::part_file::insert_design(
-                &mut self.native,
-                stem,
-                design.source(),
-                &design.generated,
-            )?;
-            self.native.mark(stem, start);
-            definition
-        };
+        // The model's own design, built once per process and inserted
+        // like a part file: its face names are the design's, and
+        // dimension references are traced on the same build.
+        let design = models::named::generated(package)?;
+        let definition = models::part_file::insert_design(
+            &mut self.native,
+            stem,
+            design.source(),
+            &design.generated,
+        )?;
         for body in &definition.bodies {
             self.record(&body.name, body.kind())?;
         }
@@ -380,8 +251,7 @@ impl Builder {
 
     /// Build the library-model definition `stem` (`model` with its asset
     /// `bytes`, used as `use_`) unless it is built; bounds and lead contacts
-    /// are rechecked when built. Replaying, the previous build's definition
-    /// of the same model and use is taken as it is.
+    /// are rechecked when built.
     fn define_library(
         &mut self,
         stem: &str,
@@ -390,34 +260,14 @@ impl Builder {
         if self.models.iter().any(|d| d.component == stem) {
             return Ok(());
         }
-        let key = digest(&(stem, model, use_));
-        let built = if self.native.is_replaying() {
-            match self
-                .known_libraries
-                .iter()
-                .find(|(k, d)| *k == key && d.component == stem)
-                .map(|(_, d)| d.clone())
-            {
-                Some(built) if self.native.pass(stem) => built,
-                _ => {
-                    return Err(Error::Verification(format!(
-                        "the board's library model {stem} is new"
-                    )));
-                }
-            }
-        } else {
-            let start = self.native.step();
-            let built = models::imported::build_library_model_cached(
-                &mut self.native,
-                stem,
-                model,
-                use_,
-                bytes,
-                &self.sources,
-            )?;
-            self.native.mark(stem, start);
-            built
-        };
+        let built = models::imported::build_library_model_cached(
+            &mut self.native,
+            stem,
+            model,
+            use_,
+            bytes,
+            &self.sources,
+        )?;
         for body in &built.bodies {
             self.record(&body.name, body.kind())?;
             if matches!(
@@ -429,7 +279,6 @@ impl Builder {
             }
         }
         self.models.push(built.generated());
-        self.libraries.push((key, built));
         Ok(())
     }
 
@@ -437,8 +286,7 @@ impl Builder {
     /// it is built, and return its name (`pkgp<key>`: packages with equal
     /// file and values share it). The part is evaluated through the
     /// process-wide cache, checked, and compared with what the package
-    /// stored (`part_file.stale`). Replaying, the previous build's definition of
-    /// the same key is taken as it is.
+    /// stored (`part_file.stale`).
     fn define_part(
         &mut self,
         package: &str,
@@ -460,21 +308,7 @@ impl Builder {
         if self.models.iter().any(|d| d.component == stem) {
             return Ok(stem);
         }
-        let definition = if self.native.is_replaying() {
-            match self.known.iter().find(|d| d.component == stem).cloned() {
-                Some(definition) if self.native.pass(&stem) => definition,
-                _ => {
-                    return Err(Error::Verification(format!(
-                        "the board's part model {stem} is new"
-                    )));
-                }
-            }
-        } else {
-            let start = self.native.step();
-            let definition = part_file::insert(&mut self.native, &stem, &part)?;
-            self.native.mark(&stem, start);
-            definition
-        };
+        let definition = part_file::insert(&mut self.native, &stem, &part)?;
         for body in &definition.bodies {
             self.record(&body.name, body.kind())?;
         }
@@ -548,131 +382,12 @@ impl Builder {
         Ok(())
     }
 
-    /// After an update, name each laminate slab's pieces as evaluated. A
-    /// replayed slab's pieces are the previous build's reply, and a slab
-    /// whose holes the edit moved can fall into more or fewer pieces (a
-    /// drill splitting off a sliver of laminate): the body kinds, the
-    /// identity saved in the design (from `recorded_at`) and the recorded
-    /// extrusion replies are made what a fresh build of the edited board
-    /// records, with the laminate's look (the commands at `looks`)
-    /// assigned to the pieces as made. A body of no slab that no build
-    /// recorded is still refused ([`finish_with`]).
-    fn repiece(
-        &mut self,
-        sources: &[Source],
-        looks: std::ops::Range<usize>,
-        recorded_at: usize,
-    ) -> Result<()> {
-        let world = self.native.world_state()?;
-        // Every evaluated body name once, in the design's order.
-        let mut seen = BTreeSet::new();
-        let made: Vec<&str> = world
-            .bodies
-            .iter()
-            .map(|b| b.definition_name())
-            .filter(|n| seen.insert(*n))
-            .collect();
-        let mut changed = false;
-        for (slab, inputs, step) in &self.laminate {
-            // The slab's body and its pieces: `Substrate 2`, `Substrate 2 (2)`, …
-            let family = |name: &str| {
-                name == slab
-                    || name
-                        .strip_prefix(slab.as_str())
-                        .and_then(|rest| rest.strip_prefix(" ("))
-                        .and_then(|rest| rest.strip_suffix(')'))
-                        .is_some_and(|n| n.parse::<u64>().is_ok())
-            };
-            let recorded: BTreeSet<String> = self
-                .bodies
-                .iter()
-                .filter(|(name, kind)| **kind == BodyKind::Substrate && family(name))
-                .map(|(name, _)| name.clone())
-                .collect();
-            let pieces: Vec<&str> = made.iter().copied().filter(|n| family(n)).collect();
-            if pieces.len() == recorded.len() && pieces.iter().all(|p| recorded.contains(*p)) {
-                continue;
-            }
-            if pieces.is_empty() {
-                return Err(Error::Verification(format!("slab {slab} made no body")));
-            }
-            if pieces
-                .iter()
-                .any(|p| self.bodies.contains_key(*p) && !recorded.contains(*p))
-            {
-                return Err(Error::Verification(format!(
-                    "slab {slab}'s pieces take another body's name"
-                )));
-            }
-            changed = true;
-            for gone in &recorded {
-                self.bodies.remove(gone);
-                self.slabs.remove(gone);
-            }
-            for piece in &pieces {
-                self.bodies.insert((*piece).to_owned(), BodyKind::Substrate);
-                self.slabs.insert((*piece).to_owned(), *inputs);
-            }
-            // A piece no longer made keeps no look of its own (Solidcraft's
-            // `appearance.assign` takes only bodies that are there).
-            let gone: Vec<&String> = recorded
-                .iter()
-                .filter(|g| !pieces.contains(&g.as_str()))
-                .collect();
-            if !gone.is_empty() {
-                let looks = &mut self.native.session_mut().doc_mut().appearances.bodies;
-                for name in gone {
-                    looks.remove(name);
-                }
-            }
-            let (_, mut reply) = self.native.recorded(*step).ok_or_else(|| {
-                Error::Verification(format!("slab {slab} has no recorded extrusion"))
-            })?;
-            if let Some(map) = reply.as_object_mut() {
-                map.insert("created_bodies".into(), json!(pieces));
-            }
-            self.native
-                .amend(*step, "solid.extrude", None, Some(reply))?;
-        }
-        if !changed {
-            return Ok(());
-        }
-        // The laminate's look, assigned to its pieces as a fresh build
-        // assigns it: the same chunks of the same names.
-        let names: Vec<&str> = self
-            .bodies
-            .iter()
-            .filter(|(_, k)| **k == BodyKind::Substrate)
-            .map(|(name, _)| name.as_str())
-            .collect();
-        let chunks: Vec<&[&str]> = names.chunks(crate::native::APPEARANCE_CHUNK).collect();
-        if chunks.len() != looks.len() {
-            return Err(Error::Verification(
-                "the laminate's pieces take another number of look assignments".into(),
-            ));
-        }
-        for (step, chunk) in looks.zip(chunks) {
-            let (mut params, _) = self
-                .native
-                .recorded(step)
-                .ok_or_else(|| Error::Verification("the laminate's look is not recorded".into()))?;
-            if let Some(map) = params.as_object_mut() {
-                map.insert("bodies".into(), json!(chunk));
-            }
-            self.native.run_unrecorded("appearance.assign", &params)?;
-            self.native
-                .amend(step, "appearance.assign", Some(params), None)?;
-        }
-        identity::rewrite(&mut self.native, recorded_at, sources, &self.bodies)
-    }
-
     /// Store each kind's physical look (one assignment per kind) and the
     /// body → kind map, then evaluate.
     fn finish(mut self, sources: Vec<Source>) -> Result<NativeModel> {
         self.native.evaluate_deferred()?;
         self.native.activate_root()?;
         // Generated bodies already carry their materials' looks.
-        let mut laminate_looks = 0..0;
         for kind in BodyKind::ALL.into_iter().filter(|k| !k.is_generated()) {
             let names: Vec<&str> = self
                 .bodies
@@ -683,10 +398,6 @@ impl Builder {
             // Saved bodies look the same for every fabrication; only the
             // display-only layers take the project's mask and finish.
             if !names.is_empty() {
-                let start = self.native.step();
-                if kind == BodyKind::Substrate {
-                    laminate_looks = start..start;
-                }
                 self.native.appearance(
                     &names,
                     &material::material(
@@ -695,34 +406,12 @@ impl Builder {
                         &crate::stack::Stack::default(),
                     ),
                 )?;
-                if kind == BodyKind::Substrate {
-                    laminate_looks.end = self.native.step();
-                }
             }
         }
-        let recorded_at = self.native.step();
         identity::write(&mut self.native, &sources, &self.bodies)?;
         models::record(&mut self.native, &self.models)?;
-        let updated = self
-            .native
-            .is_replaying()
-            .then(|| self.native.settle())
-            .transpose()?;
-        if updated.is_some() {
-            self.repiece(&sources, laminate_looks, recorded_at)?;
-        }
         self.native.forget_history();
-        let mut model = finish_with(
-            self.native,
-            sources,
-            self.models,
-            &self.custom_looks,
-            self.previous,
-            &self.slabs,
-        )?;
-        model.updated = updated;
-        model.libraries = self.libraries;
-        Ok(model)
+        finish_with(self.native, sources, self.models, &self.custom_looks)
     }
 }
 
@@ -810,14 +499,7 @@ fn shared_picks(native: &Native, sources: &[Source]) -> Result<BTreeMap<usize, u
 
 #[cfg(test)]
 fn finish(native: Native, sources: Vec<Source>) -> Result<NativeModel> {
-    finish_with(
-        native,
-        sources,
-        Vec::new(),
-        &BTreeMap::new(),
-        None,
-        &BTreeMap::new(),
-    )
+    finish_with(native, sources, Vec::new(), &BTreeMap::new())
 }
 
 /// A definition body's measure at one placement: volume, box (low, high)
@@ -828,16 +510,12 @@ type Measured = (Volume, [f64; 3], [f64; 3], [f64; 3]);
 type ViaKey = (u64, u64);
 
 /// [`finish`] for a model whose generated definitions are `models` and
-/// whose library-model bodies with their own materials look `custom`. The
-/// geometry of a body `previous` holds (the same evaluated body where it
-/// was, or a laminate slab of the same inputs `slabs`) is taken from it.
+/// whose library-model bodies with their own materials look `custom`.
 fn finish_with(
     native: Native,
     sources: Vec<Source>,
     models: Vec<ModelDefinition>,
     custom: &BTreeMap<String, (OpaqueSurface, Detail)>,
-    previous: Option<Previous>,
-    slabs: &BTreeMap<String, u64>,
 ) -> Result<NativeModel> {
     if let Some(error) = native.evaluation_error() {
         return Err(Error::Verification(error));
@@ -859,27 +537,14 @@ fn finish_with(
     // each definition body is measured once, at its first placement.
     let mut measured: BTreeMap<(u64, String), Measured> = BTreeMap::new();
     let mut geometry = vec![];
-    // Every display mesh not taken from `previous` at once, on all cores
-    // (each the mesh it makes alone). A placement of a definition shares
-    // the definition's mesh, so only that is made, never a moved copy.
+    // Every display mesh at once, on all cores (each the mesh it makes
+    // alone). A placement of a definition shares the definition's mesh, so
+    // only that is made, never a moved copy.
     let world = native.world_state()?;
-    let bodies = &world.bodies;
-    let kept = |key: Option<u64>, name: &str| {
-        previous.as_ref().is_some_and(|p| {
-            key.is_some_and(|k| p.by_key.contains_key(&k))
-                || slabs
-                    .get(name)
-                    .is_some_and(|d| p.slabs.get(name).is_some_and(|(at, _)| at == d))
-        })
-    };
-    let cold: Vec<_> = bodies
-        .iter()
-        .filter(|b| !kept(b.geometry_key(), b.definition_name()))
-        .collect();
-    on_threads(&cold, |body| {
+    let bodies: Vec<_> = world.bodies.iter().collect();
+    on_threads(&bodies, |body| {
         body.mesh_in_place();
     });
-    let mut reuse = Reused::default();
     // A body's lazy volume reaches it through the model, never holding it.
     let reach = std::sync::Arc::downgrade(&world);
     let lazy_volume = |index: usize| {
@@ -906,16 +571,6 @@ fn finish_with(
         let kind = *kinds
             .get(name)
             .ok_or_else(|| Error::Verification(format!("body {name} has no Pcbcraft kind")))?;
-        let identity = body.geometry_key();
-        let slab = (kind == BodyKind::Substrate)
-            .then(|| slabs.get(name).copied())
-            .flatten();
-        reuse.keys.push(identity);
-        if let Some(digest) = slab {
-            reuse
-                .slabs
-                .insert(name.to_owned(), (digest, geometry.len()));
-        }
         let item = shared
             .get(&index)
             .copied()
@@ -926,25 +581,6 @@ fn finish_with(
                 .and_then(|s| s.layer)
                 .and_then(|layer| body_layer(name, layer))
         };
-        // The same body where it was, or a slab of the same inputs.
-        let same = previous.as_ref().and_then(|p| {
-            let at = identity
-                .and_then(|k| p.by_key.get(&k).copied())
-                .or_else(|| {
-                    let (digest, at) = p.slabs.get(name)?;
-                    (Some(*digest) == slab).then_some(*at)
-                })?;
-            p.geometry.get(at).filter(|g| g.kind == kind)
-        });
-        if let Some(same) = same {
-            geometry.push(Geometry {
-                item,
-                layer: layer(kind),
-                volume: same.volume.or_measured_by(|| lazy_volume(index)),
-                ..same.clone()
-            });
-            continue;
-        }
         let saved = doc
             .model_body_look(body)
             .ok_or_else(|| Error::Verification(format!("body {name} has no look")))?
@@ -1059,9 +695,6 @@ fn finish_with(
         sources,
         stack: crate::stack::Stack::none(),
         models,
-        libraries: Vec::new(),
-        reuse,
-        updated: None,
         display: appearance::Memo::default(),
         world: Some(world),
     })
@@ -1759,19 +1392,16 @@ pub fn build_flat(
 }
 
 /// The model of `project`, made from `previous` (a model of an earlier
-/// state of the same board) when the board changed only in values: the
-/// previous design is updated in place ([`Native::replaying`]: changed
-/// parameters, redrawn sketches, moved via placements), its evaluation
-/// keeps every feature the edit did not reach, and every body it did not
-/// change keeps its mesh. Otherwise the board is built anew. The result is
-/// the model [`build`] makes of `project`. An update (comparing, then
-/// changing a few features) always finishes; a build anew stops with
-/// [`Error::Cancelled`] at its next native command once `cancel` is set.
+/// state of the same board).
 ///
-/// A meshed model ([`Flat::Meshed`]) has no design to update: it is made
-/// again from what the previous one kept (the meshes, fill plans, display
-/// layers and part designs it can reuse), running no native command but
-/// those of a part design it does not hold.
+/// A meshed model ([`Flat::Meshed`], the live view's) is made again from
+/// what the previous one kept (the meshes, fill plans, display layers and
+/// part designs it can reuse), running no native command but those of a
+/// part design it does not hold: the board after any edit, undo or redo
+/// costs about as much as the edit changed, and nothing else is kept for
+/// it. The exact model ([`Flat::Native`]) is built for export and as the
+/// test reference, never updated: it is built anew, stopping with
+/// [`Error::Cancelled`] at its next native command once `cancel` is set.
 pub fn update(
     previous: NativeModel,
     project: &Project,
@@ -1779,21 +1409,15 @@ pub fn update(
     cancel: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 ) -> Result<(NativeModel, Rebuilt)> {
     let NativeModel {
-        native,
         flat,
         meshes,
         designs,
         plans,
-        geometry,
-        models,
-        libraries,
-        reuse,
         display,
         ..
     } = previous;
-    let mut why = None;
-    match native {
-        None => {
+    let why = match flat {
+        Flat::Meshed => {
             let kept = Kept {
                 meshes,
                 plans,
@@ -1804,42 +1428,17 @@ pub fn update(
             let made = build_meshed(project, kept, sources, cancel.as_ref());
             sources.sweep();
             match made {
-                Ok(model) => return Ok((model, Rebuilt::InPlace(0))),
+                Ok(model) => return Ok((model, Rebuilt::InPlace)),
                 // Refused or cancelled, it would be anew.
                 Err(error @ (Error::Invalid(_) | Error::Cancelled)) => return Err(error),
-                Err(error) => why = Some(error.to_string()),
+                Err(error) => error.to_string(),
             }
         }
-        Some(native) => {
-            if let Some(native) = native.replaying() {
-                let b = Builder::replaying(
-                    native,
-                    plans,
-                    models,
-                    libraries,
-                    Previous::of(geometry, reuse),
-                    display,
-                    sources,
-                );
-                sources.begin();
-                let updated = build_on(b, project);
-                sources.sweep();
-                match updated {
-                    Ok(model) => {
-                        let ran = model.updated.unwrap_or(0);
-                        return Ok((model, Rebuilt::InPlace(ran)));
-                    }
-                    // Refused, it would be refused anew.
-                    Err(error @ Error::Invalid(_)) => return Err(error),
-                    // Changed in more than values, or the update failed.
-                    Err(error) => why = Some(error.to_string()),
-                }
-            }
-        }
-    }
+        Flat::Native => "the exact model is built, never updated".to_owned(),
+    };
     Ok((
         build_flat(project, sources, cancel, flat)?,
-        Rebuilt::Anew(why),
+        Rebuilt::Anew(Some(why)),
     ))
 }
 
@@ -1979,15 +1578,12 @@ fn build_meshed(
         sources,
         stack: crate::stack::Stack::of(stackup, project.fabrication.pad_finish),
         models,
-        libraries: Vec::new(),
-        reuse: Reused::default(),
-        updated: None,
         display: memo,
         world: None,
     })
 }
 
-/// Build `project` with `b`: a new design, or one replayed.
+/// Build `project`'s exact model with `b`.
 fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     pcbcraft_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     let stackup = &project.stackup;
@@ -2205,9 +1801,6 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             None => Mount::Height(inner_base(stackup, track.layer)?.into()),
         };
         let prefix = format!("trace_{}", track.id);
-        // A track added or removed is a unit of its own: an update makes or
-        // deletes it alone.
-        b.native.unit(&prefix, None)?;
         let created = b.native.component(&prefix, false)?;
         let angle = format!("atan2({prefix}_y1-{prefix}_y0; {prefix}_x1-{prefix}_x0)");
         // The stadium in the track's frame: start at the origin, along +x.
@@ -2218,7 +1811,6 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
             height: copper_param(track.layer).into(),
         })?;
         b.record(&prefix, BodyKind::CopperTrack)?;
-        b.native.unit_end()?;
         joints.push((
             BoardJoint {
                 board,
@@ -2822,12 +2414,6 @@ fn laminate(b: &mut Builder, project: &Project, slabs: &[plan::PlanBody]) -> Res
     // A sketched board's outline; a rectangular one's follows the size
     // parameters ([`Native::board_slab`]).
     let shaped = !project.board_shape.is_rectangle();
-    // What every slab's solid depends on besides its holes and heights.
-    let outline = slabs
-        .first()
-        .and_then(|slab| slab.loops.first())
-        .filter(|_| shaped);
-    let base = digest(&(stackup, project.board_size, &outline));
     for slab in slabs {
         let plan::Origin::Laminate(level) = slab.source else {
             return Err(Error::Verification(format!(
@@ -2869,9 +2455,8 @@ fn laminate(b: &mut Builder, project: &Project, slabs: &[plan::PlanBody]) -> Res
             contours: holes,
             height: height.as_str().into(),
         };
-        let inputs = digest(&(base, body.name, &body.offset, &body.height, body.contours));
         // A slab in pieces (laminate left in a fill's clearance) is one
-        // body per piece, each a slab of these inputs.
+        // body per piece.
         let made = if shaped {
             b.native.outlined_slab(body, outer)?
         } else {
@@ -2883,11 +2468,7 @@ fn laminate(b: &mut Builder, project: &Project, slabs: &[plan::PlanBody]) -> Res
                 slab.name
             )));
         }
-        // The slab's extrusion is the last command it ran.
-        let step = b.native.step().saturating_sub(1);
-        b.laminate.push((slab.name.clone(), inputs, step));
         for piece in made {
-            b.slabs.insert(piece.clone(), inputs);
             b.record(&piece, BodyKind::Substrate)?;
         }
     }

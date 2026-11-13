@@ -12,8 +12,7 @@ use std::sync::{Arc, OnceLock};
 ///
 /// A lazy volume never holds the body it measures: its measure reaches
 /// the body through the model that made it, so geometry handed to the
-/// screen (or kept by a later model) does not keep an evaluated B-rep
-/// alive. Once that model is gone, an unmeasured volume reads NaN.
+/// screen does not keep an evaluated B-rep alive. Once that model is gone, an unmeasured volume reads NaN.
 #[derive(Clone)]
 pub struct Volume {
     cell: Arc<OnceLock<f64>>,
@@ -35,16 +34,6 @@ impl Volume {
         Self {
             cell: Arc::new(OnceLock::new()),
             measure: Some(Arc::new(measure)),
-        }
-    }
-
-    /// This volume if it is known or measured, else `again`: a model that
-    /// takes this geometry from an earlier one measures it on its own body.
-    pub fn or_measured_by(&self, again: impl FnOnce() -> Self) -> Self {
-        if self.measure.is_none() || self.cell.get().is_some() {
-            self.clone()
-        } else {
-            again()
         }
     }
 

@@ -17,7 +17,7 @@
 //! against the plan.
 use super::Source;
 use super::plan::{BoardPlan, Origin, PlanBody};
-use crate::appearance::{Region, prism, slab};
+use crate::appearance::{Region, SMOOTH_TURN, prism, prism_points, slab};
 use crate::geom::prelude::*;
 use crate::geom::{Mesh, Vec3};
 use crate::material;
@@ -274,9 +274,15 @@ fn make(body: &PlanBody, name: &str) -> Result<Made> {
         .ok_or_else(|| Error::Verification(format!("plan body {name} has no loop")))?;
     let (z0, z1) = (body.z[0], body.z[1]);
     let mesh = if holes.is_empty() && convex(outer) {
-        prism(outer, z0, z1)
+        let mut mesh = prism(outer, z0, z1);
+        let corners = prism_points(outer);
+        let walls = (0..corners.len())
+            .map(|i| 2 + u32::try_from(i).unwrap_or(u32::MAX - 2))
+            .collect::<Vec<_>>();
+        add_edges(&mut mesh, &corners, &walls, [z0, z1]);
+        mesh
     } else {
-        slab(
+        let mut mesh = slab(
             &Region {
                 fills: vec![outer.clone()],
                 cuts: holes.to_vec(),
@@ -284,7 +290,13 @@ fn make(body: &PlanBody, name: &str) -> Result<Made> {
             z0,
             z1,
             TILE_MM,
-        )
+        );
+        // The slab mesher makes every wall face 2.
+        for points in &loops {
+            let corners = prism_points(points);
+            add_edges(&mut mesh, &corners, &vec![2; corners.len()], [z0, z1]);
+        }
+        mesh
     };
     let volume = mesh.measure().volume;
     if mesh.triangles.is_empty() || !(volume > 0.0 && volume.is_finite()) {
@@ -302,6 +314,83 @@ fn make(body: &PlanBody, name: &str) -> Result<Made> {
             / 2.0,
         perimeter: loops.iter().map(|l| length(l)).sum(),
     })
+}
+
+/// The edges of a prism's loop `points` (corner `i` to the next is wall
+/// face `walls[i]`; the top is face 0, the bottom face 1) from `z[0]` up
+/// to `z[1]`, as the kernel's B-rep edges of the same extrusion: the top
+/// and bottom outlines, one polyline per run of walls joined at a smooth
+/// turn (a flattened arc is one edge), and an upright edge at each sharp
+/// corner. Each edge names the faces it bounds, so picks and highlights
+/// reach the board's outline as on the exact model.
+fn add_edges(mesh: &mut Mesh, points: &[Point], walls: &[u32], z: [f64; 2]) {
+    let n = points.len();
+    if n < 3 || walls.len() != n {
+        return;
+    }
+    let direction = |i: usize| {
+        let (a, b) = (points[i % n], points[(i + 1) % n]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let l = dx.hypot(dy);
+        if l > 0.0 {
+            [dx / l, dy / l]
+        } else {
+            [0.0, 0.0]
+        }
+    };
+    // Corner `i` is sharp where the walls either side of it turn more than
+    // the smooth turn.
+    let sharp = |i: usize| {
+        let (a, b) = (direction(i + n - 1), direction(i));
+        a[0] * b[0] + a[1] * b[1] < SMOOTH_TURN.cos()
+    };
+    let corners: Vec<usize> = (0..n).filter(|&i| sharp(i)).collect();
+    // Runs of walls between sharp corners; one closed run where there are
+    // none (a round hole).
+    let runs: Vec<(usize, usize)> = if corners.is_empty() {
+        vec![(0, n)]
+    } else {
+        corners
+            .iter()
+            .enumerate()
+            .map(|(k, &start)| {
+                let next = corners[(k + 1) % corners.len()];
+                let len = (next + n - start - 1) % n + 1;
+                (start, len)
+            })
+            .collect()
+    };
+    for (start, len) in runs {
+        let faces: Vec<u32> = (start..start + len).map(|i| walls[i % n]).collect();
+        for (cap, height) in [(0u32, z[1]), (1u32, z[0])] {
+            let polyline = (start..=start + len)
+                .map(|i| {
+                    let p = points[i % n];
+                    Vec3::new(p[0], p[1], height)
+                })
+                .collect();
+            let mut bounds = vec![cap];
+            for face in &faces {
+                if !bounds.contains(face) {
+                    bounds.push(*face);
+                }
+            }
+            mesh.edges.push(polyline);
+            mesh.edge_faces.push(bounds);
+        }
+    }
+    for i in corners {
+        let p = points[i];
+        let mut bounds = vec![walls[(i + n - 1) % n]];
+        if !bounds.contains(&walls[i]) {
+            bounds.push(walls[i]);
+        }
+        mesh.edges.push(vec![
+            Vec3::new(p[0], p[1], z[0]),
+            Vec3::new(p[0], p[1], z[1]),
+        ]);
+        mesh.edge_faces.push(bounds);
+    }
 }
 
 /// The board's flat bodies of `plan`, meshed: each plan body but the

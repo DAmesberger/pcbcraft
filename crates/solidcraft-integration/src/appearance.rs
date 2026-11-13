@@ -59,8 +59,9 @@ const FILLET_MIN_TOE_MM: f64 = 0.02;
 const ARC_STEPS: usize = 8;
 const FILLET_STEPS: usize = 24;
 const FILLET_ACROSS_STEPS: usize = 24;
-/// Adjacent prism walls turning less than this share a smoothed normal.
-const SMOOTH_TURN: f64 = 0.55;
+/// Adjacent prism walls turning less than this (radians) share a smoothed
+/// normal, and the plan mesher draws no edge between them.
+pub(crate) const SMOOTH_TURN: f64 = 0.55;
 
 /// A tented via's mask sags this far into the drill it bridges (est.; LPI
 /// tents over a 0.3 mm hole dip into it as a visible dimple). 8 µm read as
@@ -1111,10 +1112,10 @@ fn fillet(
     mesh
 }
 
-/// A closed prism over a convex outline from `z0` up to `z1`, outward
-/// wound. Walls meeting at a gentle turn share a normal, so round ends shade
-/// smoothly.
-pub fn prism(outline: &[Point], z0: f64, z1: f64) -> Mesh {
+/// The corners [`prism`] walls `outline` with, in its order: repeated
+/// points (and a closing one) dropped, counter-clockwise. Its wall `i`
+/// runs from corner `i` to the next and is face `2 + i` (top 0, bottom 1).
+pub fn prism_points(outline: &[Point]) -> Vec<Point> {
     let mut points: Vec<Point> = outline.to_vec();
     points.dedup_by(|a, b| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-9);
     if points.len() > 1
@@ -1132,6 +1133,14 @@ pub fn prism(outline: &[Point], z0: f64, z1: f64) -> Mesh {
     if area < 0.0 {
         points.reverse();
     }
+    points
+}
+
+/// A closed prism over a convex outline from `z0` up to `z1`, outward
+/// wound. Walls meeting at a gentle turn share a normal, so round ends shade
+/// smoothly.
+pub fn prism(outline: &[Point], z0: f64, z1: f64) -> Mesh {
+    let points = prism_points(outline);
     let n = points.len();
     let mut mesh = Mesh::default();
     if n < 3 || !positive(z1 - z0) {

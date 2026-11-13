@@ -635,32 +635,6 @@ pub(super) fn write(
     Ok(())
 }
 
-/// Record `sources` and `bodies` again after an update: in the design,
-/// removing record values left over from what was recorded before, and in
-/// the command stream at `step` (the [`write`] the update replayed), as a
-/// fresh build records them.
-pub(super) fn rewrite(
-    native: &mut Native,
-    step: usize,
-    sources: &[Source],
-    bodies: &BTreeMap<String, BodyKind>,
-) -> Result<()> {
-    let values = values(sources, bodies)?;
-    let mut changes = values.clone();
-    for key in native.session().doc.metadata.0.keys() {
-        if key.starts_with(RECORDS_KEY) && !values.contains_key(key) {
-            changes.insert(key.clone(), Value::Null);
-        }
-    }
-    native.run_unrecorded("document.metadata.set", &json!({ "values": changes }))?;
-    native.amend(
-        step,
-        "document.metadata.set",
-        Some(json!({ "values": values })),
-        None,
-    )
-}
-
 /// The saved sources (in pick order) and body → kind map of `native`.
 pub(super) fn read(native: &Native) -> Result<(Vec<Source>, BTreeMap<String, BodyKind>)> {
     read_values(&native.session().doc.metadata.0)

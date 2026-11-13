@@ -370,3 +370,33 @@ Same host (18 cores), `ci` profile, load average 5–9 (other agents' builds). S
 | …the same where the refill left the copper as it was | 2.4 s | 138–144 ms |
 
 Target for the last two rows: under 150 ms. Each meshed model is 40–60 ms of update and 80–90 ms of packing for the GPU (`model_scene::build`, unchanged and the same for both paths); the first, before this work, showed the refilled board 442 ms after the refill, because the edit's own model was packed and shown first. A meshed model whose next request is already waiting is now kept for that request to update and not packed. Packing is now the largest part; repacking only the changed bodies would be the next step.
+
+## Update, 13 November 2026: the live native board removed (stage A4)
+
+Same host (18 cores), `ci` profile, load average 6–8 (other agents' builds). The direct mesh is now the 3D view's only path: the setting is gone, the model worker keeps the last board model only and makes every next board (an edit, an undo, a redo, a refill) from what it kept (`project::update` on a meshed model: meshes, fill plans, display layers and part designs). No native design of the board is made for the view, and no earlier model is kept for undo. The exact build runs for export and `cargo xtask board-parity` only and is never updated in place, so the in-place update machinery is removed: the command log and replay (`native/replay.rs`), replay units for tracks and fill tiles, laminate re-piecing, the identity rewrite and the previous-geometry reuse (about 3,100 lines net). The exact build's command stream is unchanged; the fill tiles stay in the plan, so the saved model and STEP keep them.
+
+**Memory** (`apps/pcbcraft/src/scene/memory_tests.rs`, `esp32_memory_over_board_edits`: SceneController and FillWorker as the app runs them, no window; live heap from `heap -s`, resident size from `ps`):
+
+| ESP32 board | Before (11 November, exact build live, one earlier model kept) | After |
+| --- | --- | --- |
+| File read | — | live 2 MB; RSS 55 MB |
+| 3D open | live 1.77 GB; RSS about 2.9 GB | **live 218–220 MB**; RSS 318–321 MB |
+| 12 board-size edits, each settled with its refill | live 1.80 GB; RSS 2.92 GB | live 220–241 MB; RSS 468–670 MB |
+| …then 4 undos | live up to 1.82 GB; RSS 3.40 GB | live 239–244 MB; RSS 566–635 MB |
+| Workers dropped | — | live 38–39 MB |
+
+Two runs; the second after the meshed bodies gained their outline edges (below). The gate's target, 3D open on the ESP32 board under 300 MB, is met on live heap (218–220 MB) and missed by about 20 MB on resident size (318–321 MB, which also counts allocator pages not returned and the test binary). The resident size then rises with edits while the live heap stays flat: it is the allocator keeping freed pages, not held models. Each edit and each undo settled in 1.6–1.8 s, of which the benchmark's own wait for a second of quiet frames is 1 s.
+
+**Timings** (`edit_timing_tests`, two runs each, `PCBCRAFT_TIMINGS=1`):
+
+| ESP32 board | A2, direct mesh behind the setting | After |
+| --- | --- | --- |
+| Open in 3D (model made, then packed) | 3.7–3.9 s (parts in one native design) | **1.04–1.15 s** with cold part designs; 0.51–0.55 s with the process's part designs warm |
+| Flat bodies meshed (916 bodies, 358 meshes) | 6.4–7.2 ms | 5.9–7.2 ms |
+| A track 0.05 mm narrower: its board shown, from the edit | 0.17–0.26 s | 0.27 s |
+| …the refilled board shown, from the refill's stored copper | 153 ms | 158–162 ms |
+| J1's dimension 0 → 1 mm: its board shown / the refilled board shown | — | 142–144 ms / 292–296 ms |
+
+Each update from the last model takes 40–60 ms (the edit's board, then the refilled one). The refilled board's 158–162 ms is still just above the A2 target of 150 ms; as A2 found, packing for the GPU (`model_scene::build`, 80–90 ms) is the larger part, and repacking only the changed bodies is the next step.
+
+**Edges of the meshed bodies.** With the direct mesh as the only live path, the 3D dimension tool could no longer reach the board's edges: the kernel's laminate had B-rep edges along the outline, the meshed one none (`dimension_3d_tests`). Each meshed plan body now carries a prism's edges (top and bottom outlines, one polyline per run of walls joined at a smooth turn, an upright edge at each sharp corner, each naming the faces it bounds; `the_meshed_laminate_has_the_board_outlines_edges`). It cost nothing measurable above: the second run's numbers include it.

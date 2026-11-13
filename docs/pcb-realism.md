@@ -492,6 +492,12 @@ model that has finished.
 
 ### Edits update the model in place
 
+**Superseded (stage A4, 13 November 2026).** The live view no longer builds the board
+natively: it meshes the board plan, the replay described here (`native/replay.rs`) and the
+kept undo models are removed, and the exact build runs only for export. This section
+records how the in-place update worked and what it measured; see
+[3D speed profile](3d-speed-profile.md) for the live path.
+
 The model worker keeps the last board model it made (its native session, geometry and
 display layers). `project::update` builds the edited board against it: every native
 command the build issues is compared with the one recorded at that step and answered with

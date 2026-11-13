@@ -59,10 +59,6 @@ pub(crate) struct SettingsWindow {
     /// [`Self::show`] and keeps them when `lists_changed`.
     pub lists: pcbcraft_io::settings::ListSettings,
     pub lists_changed: bool,
-    /// The 3D view's "Mesh the board directly": the app sets it before
-    /// [`Self::show`] and applies it when `mesh_changed`.
-    pub mesh_board_directly: bool,
-    pub mesh_changed: bool,
 }
 
 impl SettingsWindow {
@@ -231,19 +227,6 @@ impl SettingsWindow {
                         ui,
                         "Require a reason to waive errors",
                         require_waiver_reason,
-                    );
-                });
-                kit::section(ui, "settings-3d", "3D view", true, None, |ui| {
-                    self.mesh_changed = kit::check_row(
-                        ui,
-                        "Mesh the board directly",
-                        &mut self.mesh_board_directly,
-                    );
-                    kit::hint(
-                        ui,
-                        "Faster 3D after edits",
-                        "Draws the laminate and copper from the board plan; \
-                         exports still build the exact model.",
                     );
                 });
                 kit::section(ui, "settings-lists", "Lists", true, None, |ui| {
@@ -532,8 +515,6 @@ impl super::App {
         let mut default_profile = self.sources.default_rule_profile();
         self.settings_window.lists = self.sources.list_settings().clone();
         self.settings_window.lists_changed = false;
-        self.settings_window.mesh_board_directly = self.sources.mesh_board_directly();
-        self.settings_window.mesh_changed = false;
         let (action, reveal_changed, waiver_changed, profile_changed) = self.settings_window.show(
             ctx,
             &self.registry,
@@ -549,11 +530,6 @@ impl super::App {
             let lists = std::mem::take(&mut self.settings_window.lists);
             self.sources.set_list_settings(lists);
             self.list_prefs(ctx);
-        }
-        if self.settings_window.mesh_changed {
-            let on = self.settings_window.mesh_board_directly;
-            self.sources.set_mesh_board_directly(on);
-            self.scene.set_flat(flat(on));
         }
         if reveal_changed && let Err(reason) = self.sources.set_keyboard(keyboard) {
             self.say(crate::kit::severity::Level::Warning, reason);
@@ -624,15 +600,6 @@ fn profile_choices() -> Vec<(Option<String>, String)> {
         out.extend(listing.profiles.into_iter().map(|p| (Some(p.id), p.name)));
     }
     out
-}
-
-/// How board models hold the flat bodies for the direct-mesh setting.
-pub(crate) fn flat(mesh_board_directly: bool) -> pcbcraft_solidcraft::project::Flat {
-    if mesh_board_directly {
-        pcbcraft_solidcraft::project::Flat::Meshed
-    } else {
-        pcbcraft_solidcraft::project::Flat::Native
-    }
 }
 
 #[cfg(test)]

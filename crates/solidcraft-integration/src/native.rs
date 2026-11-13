@@ -47,9 +47,8 @@ impl From<String> for Expr {
 
 /// `value` millimetres as a Solidcraft expression, such as `3.1 mm`: the one
 /// formatter for lengths written into expressions. A negative zero, which
-/// rounding a tiny negative offset gives, is written as `0 mm`. Otherwise an
-/// expression that means the same would read as changed, and an edit that
-/// could update the model in place would rebuild it.
+/// rounding a tiny negative offset gives, is written as `0 mm`, so equal
+/// lengths always read as the same expression in the saved model.
 pub fn mm(value: f64) -> String {
     format!("{} mm", value + 0.0)
 }
@@ -193,16 +192,7 @@ pub struct Native {
     session: Session,
     /// Set by another thread to stop a build at its next command.
     cancel: Option<Arc<AtomicBool>>,
-    /// Every command a build ran, when it records them ([`Self::record`]),
-    /// so a later build of an edited board can update this one in place.
-    log: Option<replay::Log>,
-    /// A build of an edited board compared with [`Self::log`] instead of
-    /// run ([`replay`]).
-    replay: Option<replay::Replay>,
 }
-
-mod replay;
-use replay::Log;
 
 /// MEASUREMENT SWITCH (repin-smlib): when SMLib's full check runs on Pcbcraft's native builds.
 /// Off by default on this branch, Solidcraft's `Validation::Off`; set
@@ -222,8 +212,6 @@ impl Native {
         let mut native = Self {
             session,
             cancel: None,
-            log: None,
-            replay: None,
         };
         if cfg!(test) {
             native.session.param_check = solidcraft_engine::schema::ParamCheck::Strict;
@@ -248,141 +236,6 @@ impl Native {
     /// Stop at the next command once `cancel` is set ([`Error::Cancelled`]).
     pub fn cancel_with(&mut self, cancel: Arc<AtomicBool>) {
         self.cancel = Some(cancel);
-    }
-
-    /// Record every command from now on, for [`Self::replaying`].
-    pub(crate) fn record(&mut self) {
-        self.log = Some(Log::default());
-    }
-
-    /// This design (built with [`Self::record`]) for a build of an edited
-    /// board: every command the build issues is compared with the one the
-    /// design was built with at that step and answered with its recorded
-    /// reply, nothing runs, until [`Self::settle`] applies what changed.
-    /// A command that differs in more than values (a parameter's
-    /// expression, a sketch's drawing, where a placement stands, recorded
-    /// metadata) fails the build with [`Error::Verification`]: the board
-    /// is then built anew.
-    pub(crate) fn replaying(mut self) -> Option<Self> {
-        let log = self.log.take()?;
-        self.replay = Some(replay::Replay::new(log));
-        // The flag that could stop the build this design came from.
-        self.cancel = None;
-        Some(self)
-    }
-
-    /// A copy of this design sharing its document and evaluated model
-    /// (Solidcraft's `Session::scratch`), with the commands it was built
-    /// with, so a later build of an edited board can update the copy in
-    /// place as it could this design.
-    pub(crate) fn snapshot(&self) -> Self {
-        Self {
-            session: self.session.scratch(),
-            cancel: None,
-            log: self.log.clone(),
-            replay: None,
-        }
-    }
-
-    /// Whether this design is being replayed ([`Self::replaying`]).
-    pub(crate) fn is_replaying(&self) -> bool {
-        self.replay.is_some()
-    }
-
-    /// The position in the command stream (recorded or replayed).
-    pub(crate) fn step(&self) -> usize {
-        match (&self.replay, &self.log) {
-            (Some(replay), _) => replay.step(),
-            (None, Some(log)) => log.len(),
-            (None, None) => 0,
-        }
-    }
-
-    /// Mark the commands from `start` to now as the definition `name`.
-    pub(crate) fn mark(&mut self, name: &str, start: usize) {
-        let end = self.step();
-        if let Some(log) = &mut self.log {
-            log.mark(name, start, end);
-        }
-        if let Some(replay) = &mut self.replay {
-            replay.mark(name, start, end);
-        }
-    }
-
-    /// Replaying, pass over the commands that built the definition `name`
-    /// (built from the same immutable source, so they are the same);
-    /// `false` if they are not next.
-    pub(crate) fn pass(&mut self, name: &str) -> bool {
-        self.replay.as_mut().is_some_and(|r| r.pass(name))
-    }
-
-    /// End a replay: apply what changed to the design (the changed
-    /// parameters in one command, each changed sketch redrawn, each moved
-    /// placement moved) and keep the new command stream. Recording, does
-    /// nothing. Returns how many commands the update ran.
-    pub(crate) fn settle(&mut self) -> Result<usize> {
-        let Some(replay) = self.replay.take() else {
-            return Ok(0);
-        };
-        // An update is short and leaves the design consistent only once
-        // done: a newer request does not stop it.
-        self.cancel = None;
-        // Every result the update's commands evaluate is kept until it is
-        // done (Solidcraft's `Model::keep`): a redefined extrusion is
-        // evaluated on a trial copy of the design, and the evaluation that
-        // rolls the history forward takes it from there. The evaluation
-        // cache alone holds only the last few states of a board this size,
-        // so each would be evaluated again.
-        let kept = self.session.model.kept();
-        self.session.model.keep(Some(std::sync::Arc::new(
-            solidcraft_engine::doc::KeptResults::default(),
-        )));
-        let applied = replay.apply(self);
-        self.session.model.keep(kept);
-        let (log, ran) = applied?;
-        self.log = Some(log);
-        Ok(ran)
-    }
-
-    /// The parameters and reply recorded at `step` (not while replaying).
-    pub(crate) fn recorded(&self, step: usize) -> Option<(Value, Value)> {
-        let (params, reply) = self.log.as_ref()?.get(step)?;
-        Some((params.clone(), reply.clone()))
-    }
-
-    /// Correct the recorded `command` at `step` after an update learned what
-    /// a fresh build would have recorded there (the pieces a laminate slab
-    /// fell into, the identity naming them), so the next update compares
-    /// against that.
-    pub(crate) fn amend(
-        &mut self,
-        step: usize,
-        command: &str,
-        params: Option<Value>,
-        reply: Option<Value>,
-    ) -> Result<()> {
-        let amended = self
-            .log
-            .as_mut()
-            .is_some_and(|log| log.amend(step, command, params, reply));
-        if amended {
-            Ok(())
-        } else {
-            Err(Error::Verification(format!(
-                "native step {step} is not a recorded {command}"
-            )))
-        }
-    }
-
-    /// Run `command` on the design without recording it; refused while
-    /// replaying, when every command is compared with the recorded ones.
-    pub(crate) fn run_unrecorded(&mut self, command: &str, params: &Value) -> Result<Value> {
-        if self.is_replaying() {
-            return Err(Error::Verification(format!(
-                "{command} cannot run unrecorded during a replay"
-            )));
-        }
-        self.run(command, params)
     }
 
     /// Drop the design's undo history: a built model is never undone, and
@@ -410,11 +263,7 @@ impl Native {
     /// Put off evaluating the design after each command until [`Native::evaluate_deferred`]
     /// (Solidcraft's `Session::defer_evaluation`): a board built in hundreds of commands is
     /// evaluated a few times instead of after every one.
-    /// Replaying ([`Self::replaying`]), nothing runs and nothing is put off.
     pub fn defer_evaluation(&mut self) -> Result<()> {
-        if self.is_replaying() {
-            return Ok(());
-        }
         self.session
             .defer_evaluation()
             .map_err(|error| Error::Engine {
@@ -426,9 +275,6 @@ impl Native {
     /// Evaluate what [`Native::defer_evaluation`] put off, as one undo step; fails, leaving the
     /// design as it was before, when a feature added meanwhile fails.
     pub fn evaluate_deferred(&mut self) -> Result<()> {
-        if self.is_replaying() {
-            return Ok(());
-        }
         self.session
             .evaluate_deferred()
             .map_err(|error| Error::Engine {
@@ -439,9 +285,7 @@ impl Native {
 
     /// The session itself, for adding an import feature from bytes
     /// already read (`models::imported`): Solidcraft's import commands
-    /// read files by path, and a packed library asset has none. What it
-    /// changes is not recorded ([`Self::record`]): a replay passes over the
-    /// whole definition built with it ([`Self::pass`]).
+    /// read files by path, and a packed library asset has none.
     pub(crate) fn session_mut(&mut self) -> &mut Session {
         &mut self.session
     }
@@ -562,9 +406,8 @@ impl Native {
     }
 
     /// A sketched board's slab: [`Self::batched_body`]'s holes inside
-    /// `outline`, drawn in a command of its own so that redrawing the holes
-    /// (an update) keeps the outline's curves, by which the extrusion picks
-    /// its profile.
+    /// `outline`, the outline drawn in a command of its own after the
+    /// holes.
     pub fn outlined_slab(
         &mut self,
         body: ProfileBody<'_>,
@@ -1123,159 +966,10 @@ impl Native {
         {
             return Err(Error::Cancelled);
         }
-        if let Some(replay) = &mut self.replay {
-            let replay::Next {
-                before,
-                reply,
-                instead,
-            } = replay.next(command, params.clone())?;
-            if !before.is_empty() || reply.is_none() {
-                self.run_live(before)?;
-            }
-            if let Some(reply) = reply {
-                return Ok(reply);
-            }
-            if let Some(instead) = instead {
-                let reply = self.run(command, &instead)?;
-                return match &mut self.replay {
-                    Some(replay) => {
-                        replay.count(1);
-                        replay.complete(reply)
-                    }
-                    None => Ok(reply),
-                };
-            }
-            let reply = self.run(command, &params)?;
-            if let Some(replay) = &mut self.replay {
-                replay.count(1);
-                replay.ran(command, params, reply.clone());
-            }
-            return Ok(reply);
-        }
-        let reply = self.run(command, &params)?;
-        if let Some(log) = &mut self.log {
-            log.push(command, params, reply.clone());
-        }
-        Ok(reply)
+        self.run(command, &params)
     }
 
-    /// Replaying, run `commands` on the design (a unit added or removed),
-    /// its evaluation put off until the replay is settled ([`Self::settle`]):
-    /// a feature added at the end of the history is then evaluated once,
-    /// reading nothing evaluated before.
-    fn run_live(&mut self, commands: Vec<(String, Value)>) -> Result<()> {
-        let first = self.replay.as_mut().is_some_and(|r| !r.go_live());
-        if first {
-            self.defer()?;
-        }
-        let mut changed_active = false;
-        for (command, mut params) in commands {
-            changed_active |= command == "component.delete";
-            // Features already deleted with their component are passed over.
-            if command == "timeline.delete" {
-                let features: Vec<Value> = params
-                    .get("features")
-                    .and_then(Value::as_array)
-                    .map(|f| {
-                        f.iter()
-                            .filter(|id| {
-                                id.as_u64()
-                                    .is_some_and(|id| self.session.doc.feature(id).is_some())
-                            })
-                            .cloned()
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                if features.is_empty() {
-                    continue;
-                }
-                params = json!({ "features": features });
-            }
-            self.delete_rolled_back(&command, &params)?;
-            self.run(&command, &params)?;
-            if let Some(replay) = &mut self.replay {
-                replay.count(1);
-            }
-        }
-        if changed_active && let Some(replay) = &mut self.replay {
-            replay.unsynced();
-        }
-        Ok(())
-    }
-
-    /// Before a command that deletes features (`timeline.delete`, or
-    /// `component.delete` with the component's features), roll the history
-    /// back to the first of them unless it is: a deletion evaluates the
-    /// design again from where it deleted, and every feature after a
-    /// deleted one evaluates anew (its input state changed). Rolled back,
-    /// the deletions, and features added at the marker, are evaluated once,
-    /// when the history is rolled forward ([`replay::Replay::apply`]).
-    fn delete_rolled_back(&mut self, command: &str, params: &Value) -> Result<()> {
-        let features = &self.session.doc.features;
-        let from = match command {
-            "timeline.delete" => {
-                let ids: std::collections::BTreeSet<u64> = params
-                    .get("features")
-                    .and_then(Value::as_array)
-                    .map(|f| f.iter().filter_map(Value::as_u64).collect())
-                    .unwrap_or_default();
-                features.iter().position(|f| ids.contains(&f.id))
-            }
-            "component.delete" => {
-                let component = params.get("component").and_then(Value::as_u64);
-                features.iter().position(|f| Some(f.component) == component)
-            }
-            _ => None,
-        };
-        let marker = self.session.doc.marker.unwrap_or(features.len());
-        if let Some(from) = from.filter(|from| *from < marker) {
-            self.run("timeline.rollback", &json!({ "position": from }))?;
-        }
-        Ok(())
-    }
-
-    /// Put off evaluating the design after each command (Solidcraft's
-    /// `Session::defer_evaluation`), replaying or not.
-    fn defer(&mut self) -> Result<()> {
-        self.session
-            .defer_evaluation()
-            .map_err(|error| Error::Engine {
-                command: "defer evaluation".into(),
-                message: error.to_string(),
-            })
-    }
-
-    /// Mark the commands from now to [`Self::unit_end`] as the ones that
-    /// build the object `name` (unique in the build). Replaying, an object
-    /// the recorded build did not make runs on the design, and recorded
-    /// objects the build passes over are deleted. With `content` (a digest
-    /// of what it builds), a recorded object of another content is deleted
-    /// and built again rather than updated in place.
-    pub(crate) fn unit(&mut self, name: &str, content: Option<u64>) -> Result<()> {
-        if let Some(log) = &mut self.log {
-            log.begin_unit(name, content);
-        }
-        if let Some(replay) = &mut self.replay {
-            let first = replay.begin_unit(name, content)?;
-            if !first.is_empty() {
-                self.run_live(first)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// End the object begun by [`Self::unit`].
-    pub(crate) fn unit_end(&mut self) -> Result<()> {
-        if let Some(log) = &mut self.log {
-            log.end_unit();
-        }
-        if let Some(replay) = &mut self.replay {
-            replay.end_unit()?;
-        }
-        Ok(())
-    }
-
-    /// Run one command on the session, unrecorded.
+    /// Run one command on the session.
     fn run(&mut self, command: &str, params: &Value) -> Result<Value> {
         self.session
             .execute(command, params)
