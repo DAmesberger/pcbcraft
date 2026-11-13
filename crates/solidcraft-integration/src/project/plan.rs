@@ -13,6 +13,7 @@
 //! The plan reads only the document: no native session, no files, so it
 //! builds for the web as the rest of this crate does.
 use super::fill::{self, MODEL_CHORD_MM, TILE_MM, Tile};
+use super::fit;
 use super::{
     MAX_DRILLS, PlacedPad, mm_slug, other, placed_pads, polygon, track_outline, without_nested,
 };
@@ -816,19 +817,15 @@ impl Compared {
         }
     }
 
-    /// Whether built body `built` is this plan body.
-    fn holds(&self, built: &Self) -> bool {
-        let corners = self
-            .min
+    /// How far `built`'s box lies from this one's: its farthest corner
+    /// coordinate, mm.
+    fn box_off(&self, built: &Self) -> f64 {
+        self.min
             .iter()
             .chain(&self.max)
             .zip(built.min.iter().chain(&built.max))
-            .all(|(a, b)| (a - b).abs() <= PARITY_MM);
-        let volume = match (self.volume, built.volume) {
-            (Some(a), Some(b)) => (a - b).abs() <= PARITY_VOLUME * a.abs().max(b.abs()),
-            _ => true,
-        };
-        corners && volume
+            .map(|(a, b)| (a - b).abs())
+            .fold(0.0, f64::max)
     }
 }
 
@@ -885,15 +882,72 @@ impl From<Object> for Source {
 pub struct Measure {
     pub min: [f64; 3],
     pub max: [f64; 3],
-    /// mm³; `None` where the plan states none (a laminate slab).
+    /// mm³; `None` where it is not compared (a laminate slab, whose
+    /// outline is).
     pub volume: Option<f64>,
+}
+
+/// How a built body fits a plan body ([`check`]): its top and bottom
+/// faces against the plan's loops, its heights against the plan's, its
+/// holes, and its volume as one more sign.
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub struct Fit {
+    /// The area inside exactly one of the plan's outline and the built
+    /// face (the larger of the top and bottom faces'), mm².
+    pub area_mm2: f64,
+    /// What `area_mm2` may be for the same exact curves, each outline
+    /// sampled to [`fit::CHORD_MM`]: their length times both tolerances.
+    pub allowed_area_mm2: f64,
+    /// The farthest a point of either outline lies from the other (of
+    /// both faces), mm; at most [`fit::SEARCH_MM`].
+    pub deviation_mm: f64,
+    /// Holes in the plan's outline.
+    pub planned_holes: usize,
+    /// Holes in the built top and bottom faces.
+    pub built_holes: [usize; 2],
+    /// Bottom and top heights, mm.
+    pub planned_z: [f64; 2],
+    pub built_z: [f64; 2],
+    /// The built volume's change from the plan's, as a fraction, where
+    /// both are known (not a laminate slab's).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_change: Option<f64>,
+}
+
+impl Fit {
+    /// The faces lie on the plan's outline: within [`PARITY_MM`] at every
+    /// point, the area between them what sampling the same curves leaves.
+    pub fn outline_fits(&self) -> bool {
+        self.deviation_mm <= PARITY_MM && self.area_mm2 <= self.allowed_area_mm2
+    }
+
+    pub fn holes_fit(&self) -> bool {
+        self.built_holes.iter().all(|h| *h == self.planned_holes)
+    }
+
+    /// Thickness and position within [`PARITY_MM`].
+    pub fn heights_fit(&self) -> bool {
+        self.planned_z
+            .iter()
+            .zip(&self.built_z)
+            .all(|(a, b)| (a - b).abs() <= PARITY_MM)
+    }
+
+    /// The volume within [`PARITY_VOLUME`], where it is compared.
+    pub fn volume_fits(&self) -> bool {
+        self.volume_change.is_none_or(|c| c.abs() <= PARITY_VOLUME)
+    }
+
+    pub fn fits(&self) -> bool {
+        self.outline_fits() && self.holes_fit() && self.heights_fit() && self.volume_fits()
+    }
 }
 
 /// How a built body and the plan disagree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Problem {
-    /// The plan holds the body; the build made none like it.
+    /// The plan holds the body; the build made none that fits it.
     PlannedNotBuilt,
     /// The build made a flat body the plan does not hold.
     BuiltNotPlanned,
@@ -916,6 +970,10 @@ pub struct Difference {
     /// body took (planned, not built): what was built instead.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub instead: Vec<Measure>,
+    /// How the nearest body built of that object, kind and layer fits the
+    /// planned one (planned, not built; `None` when none was built).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fit: Option<Fit>,
 }
 
 impl Difference {
@@ -927,7 +985,7 @@ impl Difference {
             Problem::BuiltNotPlanned => "built, not planned",
         };
         format!(
-            "{what}: {} {:?} {:?} {:?} box {:?}–{:?} volume {:?}; built of that object instead: {:?}",
+            "{what}: {} {:?} {:?} {:?} box {:?}–{:?} volume {:?}; nearest built fit: {:?}; built of that object instead: {:?}",
             self.body.as_deref().unwrap_or("-"),
             self.kind,
             self.source,
@@ -935,6 +993,7 @@ impl Difference {
             self.measure.min,
             self.measure.max,
             self.measure.volume,
+            self.fit,
             self.instead
                 .iter()
                 .map(|m| (m.min, m.max, m.volume))
@@ -950,6 +1009,10 @@ pub struct Check {
     pub planned: usize,
     /// Flat bodies the build made (a slab cut into pieces counted once).
     pub built: usize,
+    /// Of the bodies that fit, the farthest any outline lay from its
+    /// plan, mm, and the largest area between them, mm².
+    pub max_deviation_mm: f64,
+    pub max_area_mm2: f64,
     /// Where they differ; empty when they agree.
     pub differences: Vec<Difference>,
 }
@@ -964,18 +1027,60 @@ pub fn parity(plan: &BoardPlan, model: &super::NativeModel) -> Result<Vec<String
         .collect())
 }
 
-/// Where `model`'s flat bodies differ from `plan`'s: each plan body must be
-/// built once, of its kind, object and layer, its box within
-/// [`PARITY_MM`] and its volume (where the plan states one) within
-/// [`PARITY_VOLUME`], and no flat body may be built that the plan lacks.
-/// A slab the kernel cut into pieces (laminate left standing in a fill's
-/// clearance) counts as the one body it was planned as. The build files
-/// a via's bodies under no layer (a via shows with every layer), so a
-/// via ring's layer is not compared.
+/// A built flat body: as compared, and its top and bottom faces' outlines
+/// (prepared when first compared).
+struct Built {
+    compared: Compared,
+    top: fit::Rings,
+    bottom: fit::Rings,
+    prepared: Option<(fit::Prepared, fit::Prepared)>,
+}
+
+impl Built {
+    fn faces(&mut self) -> &(fit::Prepared, fit::Prepared) {
+        let (top, bottom) = (&self.top, &self.bottom);
+        self.prepared
+            .get_or_insert_with(|| (top.prepare(), bottom.prepare()))
+    }
+}
+
+/// How `built` fits `planned`, whose outline is `outline`.
+fn fit_of(planned: &Compared, z: [f64; 2], outline: &fit::Prepared, built: &mut Built) -> Fit {
+    let volume_change = match (planned.volume, built.compared.volume) {
+        (Some(a), Some(b)) if a.abs() > 0.0 => Some((b - a) / a),
+        _ => None,
+    };
+    let built_z = [built.compared.min[2], built.compared.max[2]];
+    let (top, bottom) = built.faces();
+    let (up, down) = (outline.apart(top), outline.apart(bottom));
+    Fit {
+        area_mm2: up.area.max(down.area),
+        allowed_area_mm2: up.allowed_area.min(down.allowed_area),
+        deviation_mm: up.deviation.max(down.deviation),
+        planned_holes: outline.holes,
+        built_holes: [top.holes, bottom.holes],
+        planned_z: z,
+        built_z,
+        volume_change,
+    }
+}
+
+/// Where `model`'s flat bodies differ from `plan`'s, by geometry fit:
+/// each plan body must be built once, of its kind, object and layer, its
+/// top and bottom faces on the plan's loops (every point within
+/// [`PARITY_MM`], the area between them no more than sampling the same
+/// curves leaves: [`fit`]), with the plan's holes, between the plan's
+/// heights (within [`PARITY_MM`]) and its volume, where both say one,
+/// within [`PARITY_VOLUME`]; and no flat body may be built that the plan
+/// lacks. Laminate slabs are compared by outline, not volume. A slab the
+/// kernel cut into pieces (laminate left standing in a fill's clearance)
+/// counts as the one body it was planned as, its pieces' faces together.
+/// The build files a via's bodies under no layer (a via shows with every
+/// layer), so a via ring's layer is not compared.
 ///
-/// `step` runs before each built body is measured (its volume is measured
-/// here, on first use), so a caller can count and stop a long check; its
-/// error ends the check.
+/// `step` runs before each built body is measured (its faces read here,
+/// and its volume on first use), so a caller can count and stop a long
+/// check; its error ends the check.
 pub fn check(
     plan: &BoardPlan,
     model: &super::NativeModel,
@@ -1001,42 +1106,59 @@ pub fn check(
             _ => Object::Board,
         }
     };
-    let mut built: Vec<Compared> = Vec::new();
-    for g in natives.iter().filter(|g| FLAT.contains(&g.kind)) {
+    let mut built: Vec<Built> = Vec::new();
+    for (index, g) in natives.iter().enumerate() {
+        if !FLAT.contains(&g.kind) {
+            continue;
+        }
         step()?;
-        let body = Compared {
+        let exact = model.native_body(index).ok_or_else(|| {
+            Error::Verification(format!("flat body {index} has no evaluated body"))
+        })?;
+        let top = fit::face_rings(exact, g.max[2])?;
+        let bottom = fit::face_rings(exact, g.min[2])?;
+        let compared = Compared {
             kind: g.kind,
             object: object(g.item),
             layer: g.layer,
             min: g.min,
             max: g.max,
-            // The plan states no slab's volume, so a slab is not measured.
+            // A slab's outline is compared, not its volume (measuring it
+            // costs more than building it).
             volume: (g.kind != BodyKind::Substrate).then(|| g.volume.get()),
         };
         // The pieces of one slab share its z span; slabs differ in it.
         let piece_of = built.iter_mut().find(|s| {
-            body.kind == BodyKind::Substrate
-                && s.kind == BodyKind::Substrate
-                && (s.min[2] - body.min[2]).abs() <= PARITY_MM
-                && (s.max[2] - body.max[2]).abs() <= PARITY_MM
+            compared.kind == BodyKind::Substrate
+                && s.compared.kind == BodyKind::Substrate
+                && (s.compared.min[2] - compared.min[2]).abs() <= PARITY_MM
+                && (s.compared.max[2] - compared.max[2]).abs() <= PARITY_MM
         });
         match piece_of {
             Some(slab) => {
                 for i in 0..3 {
-                    slab.min[i] = slab.min[i].min(body.min[i]);
-                    slab.max[i] = slab.max[i].max(body.max[i]);
+                    slab.compared.min[i] = slab.compared.min[i].min(compared.min[i]);
+                    slab.compared.max[i] = slab.compared.max[i].max(compared.max[i]);
                 }
+                slab.top.extend(top);
+                slab.bottom.extend(bottom);
             }
-            None => built.push(body),
+            None => built.push(Built {
+                compared,
+                top,
+                bottom,
+                prepared: None,
+            }),
         }
     }
     let built_count = built.len();
-    let mut groups: std::collections::BTreeMap<_, Vec<Compared>> = Default::default();
+    let mut groups: std::collections::BTreeMap<_, Vec<Built>> = Default::default();
     for body in built {
-        groups.entry(body.key()).or_default().push(body);
+        groups.entry(body.compared.key()).or_default().push(body);
     }
     let mut planned_count = 0;
     let mut missing = Vec::new();
+    let (mut max_deviation, mut max_area) = (0.0_f64, 0.0_f64);
     for body in plan.bodies() {
         planned_count += 1;
         let (min, max) = body.bounds()?;
@@ -1052,20 +1174,58 @@ pub fn check(
             volume: body.volume(),
         };
         let group = groups.entry(planned.key()).or_default();
-        match group.iter().position(|b| planned.holds(b)) {
-            Some(at) => {
+        let mut outline = None;
+        let mut taken = None;
+        // A fit is worked out only for a body whose box is the plan's: a
+        // body that fits has it.
+        for (at, candidate) in group.iter_mut().enumerate() {
+            if planned.box_off(&candidate.compared) > PARITY_MM {
+                continue;
+            }
+            let outline = match &outline {
+                Some(o) => o,
+                None => outline.insert(fit::plan_rings(&body.board_loops())?.prepare()),
+            };
+            let fit = fit_of(&planned, body.z, outline, candidate);
+            if fit.fits() {
+                taken = Some((at, fit));
+                break;
+            }
+        }
+        match taken {
+            Some((at, fit)) => {
+                max_deviation = max_deviation.max(fit.deviation_mm);
+                max_area = max_area.max(fit.area_mm2);
                 group.swap_remove(at);
             }
-            None => missing.push((body.name.clone(), planned)),
+            None => {
+                // How the nearest body of the object was built instead.
+                let nearest = group.iter_mut().min_by(|a, b| {
+                    planned
+                        .box_off(&a.compared)
+                        .total_cmp(&planned.box_off(&b.compared))
+                });
+                let fit = match nearest {
+                    Some(candidate) => {
+                        let outline = match &outline {
+                            Some(o) => o,
+                            None => outline.insert(fit::plan_rings(&body.board_loops())?.prepare()),
+                        };
+                        Some(fit_of(&planned, body.z, outline, candidate))
+                    }
+                    None => None,
+                };
+                missing.push((body.name.clone(), planned, fit));
+            }
         }
     }
     let mut differences = Vec::new();
-    for (name, planned) in missing {
+    for (name, planned, fit) in missing {
         let instead = groups
             .get(&planned.key())
             .into_iter()
             .flatten()
-            .map(Compared::measure)
+            .map(|b| b.compared.measure())
             .collect();
         differences.push(Difference {
             problem: Problem::PlannedNotBuilt,
@@ -1075,22 +1235,26 @@ pub fn check(
             body: Some(name),
             measure: planned.measure(),
             instead,
+            fit,
         });
     }
     for body in groups.into_values().flatten() {
         differences.push(Difference {
             problem: Problem::BuiltNotPlanned,
-            kind: body.kind,
-            source: body.object.into(),
-            layer: body.layer,
+            kind: body.compared.kind,
+            source: body.compared.object.into(),
+            layer: body.compared.layer,
             body: None,
-            measure: body.measure(),
+            measure: body.compared.measure(),
             instead: Vec::new(),
+            fit: None,
         });
     }
     Ok(Check {
         planned: planned_count,
         built: built_count,
+        max_deviation_mm: max_deviation,
+        max_area_mm2: max_area,
         differences,
     })
 }

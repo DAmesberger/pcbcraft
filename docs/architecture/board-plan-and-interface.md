@@ -599,6 +599,7 @@ Stages A are option 3; stages B are the interface (2.8). Hours are estimates.
 | 7 | B4, B5 | Assembly link and two-way check | 20–24 | Acceptance 6, 7; conflict table |
 | 8 | B6 | UI | 10–12 | VM review |
 | 9 | A5 (built) | Export tiers, progress and cancel, the per-export volume check | 8–10 | A full export reports any body that differs from the plan (`export::tests::a_full_export_reports_a_body_that_differs_from_the_plan`) |
+| 9a | G1 (built) | The volume check replaced by a geometry-fit check: each body's top and bottom faces against the plan's loops (exact difference area, maximum deviation), its holes and heights, volume only as one more sign; laminate slabs checked by outline; an unfit export refused unless written anyway | 6–8 | A dropped or moved laminate hole is caught and refused (`export::tests::a_dropped_or_moved_laminate_hole_is_caught`, `an_export_that_does_not_fit_is_refused_unless_written_anyway`); every example board fits (`cargo xtask board-parity`) |
 | 10 | B7, B9 | Live channel; VM run and measurements | 14–17 | Acceptance 9 |
 | Later | A6 | Scale: lazy inner layers, compact meshes, the laminate's tile size following hole density; then lift `MAX_TRACKS` | 10–16 | 20,000 vias and 60,000 tracks under 1 GB and 1 s (target) |
 | Later | A7 | Persisted part cache (mesh, face table, datums) | 10–14 | A board opens in 3D with no kernel call |

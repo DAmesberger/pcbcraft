@@ -50,7 +50,7 @@ const USAGE: &str = concat!(
                                    from the fab profile library (else the default)
   parts NEW_FILE.pcbcraft          write a synthetic catalog of 24 invented EX- parts
   sample-library NEW_DIR [NAME]    write the synthetic catalog as a library folder
-  export FILE.pcbcraft NEW_FILE.solidcraft [--tier mechanical|full]
+  export FILE.pcbcraft NEW_FILE.solidcraft [--tier mechanical|full] [--write-anyway]
                                    export the board as a native Solidcraft model:
                                    laminate, pads and parts (the default), or with
                                    every copper body; its bodies are checked
@@ -265,18 +265,29 @@ fn run() -> Result<()> {
             sample_library(path, rest.first().map_or("Example library", String::as_str))
         }
         [command, source, target, rest @ ..] if command == "export" => {
-            let tier = match rest {
-                [] => "mechanical",
-                [flag, tier] if flag == "--tier" && (tier == "mechanical" || tier == "full") => {
-                    tier.as_str()
+            let mut tier = "mechanical";
+            let mut write_anyway = false;
+            let mut flags = rest.iter();
+            while let Some(flag) = flags.next() {
+                match (flag.as_str(), flags.clone().next().map(String::as_str)) {
+                    ("--tier", Some(t @ ("mechanical" | "full"))) => {
+                        tier = t;
+                        flags.next();
+                    }
+                    ("--write-anyway", _) => write_anyway = true,
+                    _ => {
+                        return Err(
+                            "export: use --tier mechanical or --tier full, and --write-anyway"
+                                .into(),
+                        );
+                    }
                 }
-                _ => return Err("export: use --tier mechanical or --tier full".into()),
-            };
+            }
             let mut session = open(Some(source))?;
             print(&execute(
                 &mut session,
                 json!({"command": "project.export_native",
-                       "params": {"path": target, "tier": tier}}),
+                       "params": {"path": target, "tier": tier, "write_anyway": write_anyway}}),
             )?)
         }
         [command, source, target, rest @ ..] if command == "export-schematic-pdf" => {

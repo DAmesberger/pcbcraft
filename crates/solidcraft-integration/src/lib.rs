@@ -114,6 +114,14 @@ pub enum Error {
     /// A newer request replaced this build; nothing was produced.
     #[error("the build was cancelled")]
     Cancelled,
+    /// An export whose built bodies do not fit the board plan, refused:
+    /// nothing was written ([`export::Unfit`]). `message` names the bodies
+    /// in the user's words; `report` is the check.
+    #[error("{message}")]
+    Unfit {
+        message: String,
+        report: Box<export::Report>,
+    },
 }
 
 impl Error {
@@ -124,6 +132,7 @@ impl Error {
             Self::Verification(_) => "native_verification_failed",
             Self::Io(_) => "io_error",
             Self::Cancelled => "cancelled",
+            Self::Unfit { .. } => "export_unfit",
         }
     }
 }
