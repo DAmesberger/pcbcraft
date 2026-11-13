@@ -177,6 +177,41 @@ fn native_export_writes_a_new_solidcraft_file_only() -> TestResult {
     Ok(())
 }
 
+/// `project.export_native` exports the mechanical tier unless asked for
+/// the full one, and reports the board's bodies checked against the board
+/// plan (A5); the interface tier is refused, writing nothing.
+#[test]
+fn native_export_reports_its_tier_and_the_check_against_the_plan() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let mut session = Session::new(Engine::showcase()?);
+    let at = |name: &str| dir.path().join(name).display().to_string();
+    let mechanical = session.dispatch(json!({"command": "project.export_native",
+        "params": {"path": at("mechanical.solidcraft")}}));
+    assert_eq!(mechanical["ok"], true, "{mechanical}");
+    let mechanical = &mechanical["result"];
+    assert_eq!(mechanical["tier"], "mechanical");
+    assert_eq!(mechanical["check"]["differs"], false, "{mechanical}");
+    assert_eq!(mechanical["check"]["differences"], json!([]));
+    let full = session.dispatch(json!({"command": "project.export_native",
+        "params": {"path": at("full.solidcraft"), "tier": "full"}}));
+    assert_eq!(full["ok"], true, "{full}");
+    let full = &full["result"];
+    assert_eq!(full["tier"], "full");
+    assert_eq!(full["check"]["differs"], false, "{full}");
+    let planned = |r: &Value| r["check"]["planned"].as_u64().unwrap_or(0);
+    assert!(planned(mechanical) > 0);
+    assert!(
+        planned(full) > planned(mechanical),
+        "the full tier adds the tracks, vias and fills"
+    );
+    assert!(full["bodies"].as_u64() > mechanical["bodies"].as_u64());
+    let interface = session.dispatch(json!({"command": "project.export_native",
+        "params": {"path": at("interface.solidcraft"), "tier": "interface"}}));
+    assert_eq!(interface["ok"], false, "{interface}");
+    assert!(!dir.path().join("interface.solidcraft").exists());
+    Ok(())
+}
+
 #[test]
 fn catalog_matches_the_request_type() -> TestResult {
     let catalog = Request::catalog();

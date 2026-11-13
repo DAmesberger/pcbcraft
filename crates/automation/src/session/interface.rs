@@ -81,6 +81,18 @@ impl Session {
             "tier": exported.sidecar.tier,
             "datums": exported.sidecar.datums.len(),
         });
+        // Section 2 checked against the board plan (A5): reported, the
+        // files written all the same.
+        if let Some(check) = exported.check {
+            let report = pcbcraft_solidcraft::export::report(
+                exported.sidecar.tier,
+                0,
+                Some(check),
+                Default::default(),
+            );
+            let checked = super::export_reply(&project, &report, json!({}));
+            reply["published"]["check"] = checked["check"].clone();
+        }
         Ok(reply)
     }
 }
