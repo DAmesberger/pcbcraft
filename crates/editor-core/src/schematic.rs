@@ -15,7 +15,7 @@ use crate::geometry::{Bounds, Point, Shape, Transform2, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
 use crate::instances::{self, MAX_OCCURRENCES};
 pub use crate::library::graphics::PlacedText;
-use crate::library::graphics::{TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM};
+use crate::library::graphics::{PIN_NUMBER_ROOM, TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM};
 use crate::library::{
     BindingDefinition, ComponentDefinition, Fill, HAlign, Item, Justify, Library,
     PackageDefinition, Rotation, SymbolDefinition, SymbolHit, TextContent, TextMetric, Unit,
@@ -1381,9 +1381,6 @@ fn pin_numbers(
     (!designations.is_empty()).then(|| designations.join(","))
 }
 
-/// The share of its stub a pin number may take, so it keeps clear of the
-/// pin end's mark and of the body.
-const NUMBER_ROOM: f64 = 0.9;
 /// The smallest share of the pin text height a number shrinks to before it
 /// takes its short form.
 const NUMBER_MIN_SCALE: f64 = 0.75;
@@ -1397,7 +1394,7 @@ const MIN_WRAP_COLUMNS: usize = 12;
 /// full designations stay in the pin mapping.
 fn fitted_number(text: String, length: f64, height: f64) -> (String, f64) {
     let advance = TextMetric::default().advance;
-    let room = NUMBER_ROOM * length;
+    let room = PIN_NUMBER_ROOM * length;
     let width = |t: &str| t.chars().count() as f64 * advance;
     if room <= 0.0 || room.is_nan() || width(&text) * height <= room {
         return (text, height);

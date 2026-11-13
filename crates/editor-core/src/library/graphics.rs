@@ -54,6 +54,9 @@ pub const SYMBOL_STROKE_MM: f64 = 0.25;
 /// Default pin name and number height: smaller than the symbol text, so
 /// pin numbers do not compete with the designator, name and value.
 pub const PIN_TEXT_HEIGHT_MM: f64 = 1.0;
+/// The share of its stub a pin number may take, so it keeps clear of the
+/// pin end's mark and of the body.
+pub const PIN_NUMBER_ROOM: f64 = 0.9;
 /// Default designator, name and value text height on symbols: half the
 /// 2.5 mm module, below the height of a two-terminal body.
 pub const SYMBOL_TEXT_HEIGHT_MM: f64 = 1.25;

@@ -1334,6 +1334,17 @@ fn build_packaged(spec: &Packaged<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit
         SymbolStyle::Column => {
             let mut symbol = column_symbol(refs.component, &terminals)?;
             fit_pin_names(&mut symbol, name_of);
+            // Stacked pads ("A1B12,B1A12") are numbered in full beside the pin.
+            let number = |id: TerminalId| {
+                let k = terminals.iter().position(|t| *t == id)?;
+                let leads = &plan.get(k)?.leads;
+                let shown: Vec<&str> = leads
+                    .iter()
+                    .filter_map(|l| designations.get(*l).map(String::as_str))
+                    .collect();
+                Some(shown.join(","))
+            };
+            fit_pin_numbers(&mut symbol, number)?;
             symbol
         }
         SymbolStyle::Empty => block_symbol(refs.component, &[])?,
@@ -1801,6 +1812,40 @@ pub(crate) fn fit_pin_names(
         changed = true;
     }
     changed
+}
+
+/// Lengthen every pin whose number (`number` gives a terminal's) would not
+/// fit along its stub at the pin text height, by whole modules, moving its
+/// connection end out so the end stays on the grid. Shorter pins keep
+/// their length.
+fn fit_pin_numbers(
+    symbol: &mut SymbolDefinition,
+    number: impl Fn(TerminalId) -> Option<String>,
+) -> Result<()> {
+    const STEP: f64 = graphics::SYMBOL_MODULE_MM;
+    let width = graphics::TextMetric::default().advance * symbol.pin_text_height_nm.to_mm_f64();
+    for pin in symbol.units.iter_mut().flat_map(|u| u.pins.iter_mut()) {
+        let Some(text) = number(pin.terminal) else {
+            continue;
+        };
+        let need = text.chars().count() as f64 * width / graphics::PIN_NUMBER_ROOM;
+        let length = pin.length_nm.to_mm_f64();
+        if need <= length {
+            continue;
+        }
+        let longer = ((need / STEP).ceil() * STEP).min(graphics::MAX_PIN_LENGTH_MM);
+        let by = longer - length;
+        let [x, y] = pin.position_mm();
+        let at = match pin.direction {
+            graphics::PinDirection::Right => [x - by, y],
+            graphics::PinDirection::Left => [x + by, y],
+            graphics::PinDirection::Up => [x, y - by],
+            graphics::PinDirection::Down => [x, y + by],
+        };
+        pin.position = PointNm::from_mm_f64_rounded(at)?;
+        pin.length_nm = Nm::from_mm_f64_rounded(longer)?;
+    }
+    Ok(())
 }
 
 /// A narrow body with every terminal down its left side in package order,
