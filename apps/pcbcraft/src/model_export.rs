@@ -98,11 +98,13 @@ impl ModelExport {
     }
 
     /// Whether an export is running.
+    #[cfg(test)]
     pub(crate) fn busy(&self) -> bool {
         self.running.is_some()
     }
 
     /// Whether the window is open (to choose, or showing an export).
+    #[cfg(test)]
     pub(crate) fn showing(&self) -> bool {
         self.choosing.is_some() || self.running.is_some()
     }
