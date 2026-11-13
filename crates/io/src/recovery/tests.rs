@@ -56,6 +56,29 @@ fn independent_sessions_survive_drop_and_restore_project_plus_unfinished_draft()
     Ok(())
 }
 
+/// Snapshots written before the rename from Pcbcraft keep their file name:
+/// they are listed, restored and discarded like new ones.
+#[test]
+fn a_snapshot_under_the_former_suffix_is_still_recovered() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let store = RecoveryStore::new(directory.path())?;
+    let document = Engine::demo()?.to_file();
+    store.write(&document, None)?;
+    assert!(
+        own(&store)?
+            .to_string_lossy()
+            .ends_with(".sparksmith-recovery")
+    );
+    let former = directory.path().join("session-former.pcbcraft-recovery");
+    std::fs::rename(own(&store)?, &former)?;
+    let entries = list(directory.path())?.entries;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(read(&former)?.document, document);
+    remove_entry(directory.path(), &former)?;
+    assert!(!former.exists());
+    Ok(())
+}
+
 #[test]
 fn invalid_recovery_write_preserves_previous_valid_snapshot() -> Result<()> {
     let directory = tempfile::tempdir()?;

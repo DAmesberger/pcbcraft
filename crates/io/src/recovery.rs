@@ -17,6 +17,10 @@ use std::{
 
 const PREFIX: &str = "session-";
 const SUFFIX: &str = ".sparksmith-recovery";
+/// The suffix before the rename from Pcbcraft (docs/rename-phase-b.md):
+/// such snapshots are still listed, restored and discarded; new ones take
+/// [`SUFFIX`].
+const FORMER_SUFFIX: &str = ".pcbcraft-recovery";
 /// Sessions a listing reads, newest first by file time. Older ones are
 /// listed in [`Listing::older`] by path only, so they can be discarded.
 pub const MAX_ENTRIES: usize = 128;
@@ -188,8 +192,9 @@ fn session_name(path: &Path) -> bool {
         .and_then(|s| s.to_str())
         .is_some_and(|name| {
             name.starts_with(PREFIX)
-                && name.ends_with(SUFFIX)
-                && name.len() > PREFIX.len() + SUFFIX.len()
+                && [SUFFIX, FORMER_SUFFIX].iter().any(|suffix| {
+                    name.ends_with(suffix) && name.len() > PREFIX.len() + suffix.len()
+                })
                 && name
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'.')
