@@ -63,10 +63,9 @@ pub struct NewParams {
     /// The revision of the last reply; refused as stale when the document
     /// has moved since.
     pub expected_revision: u64,
-    /// The board's fab profile: a profile library id (a built-in one
-    /// included) or a whole profile file's `profile`. Omitted: the user's
-    /// default fab profile (Settings), else the built-in JLCPCB 2-layer
-    /// 1 oz (`jlcpcb-2-layer-1oz`).
+    /// The board's fab profile: a library or built-in id, or a whole
+    /// profile file's `profile`. Omitted: the Settings default, else the
+    /// built-in `jlcpcb-2-layer-1oz`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<pcbcraft_core::fabrication::ProfileChoice>,
 }
@@ -764,7 +763,7 @@ impl Request {
             info::<NewParams>(
                 "project.new",
                 "Start a new empty project at expected_revision with its board's fab profile, clearing history.",
-                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the user's default fab profile, else the built-in JLCPCB 2-layer 1 oz (jlcpcb-2-layer-1oz). Refused without changes on a stale revision.",
+                "Start a new empty project at expected_revision; clears history. profile is the board's fab profile: a profile library id (project.query rules.fab_profiles lists them) or a whole profile file's profile; omitted, the Settings default, else built-in jlcpcb-2-layer-1oz. Refused without changes on a stale revision.",
             ),
             info::<OpenParams>(
                 "project.open",

@@ -312,7 +312,15 @@ fn the_board_replay_builds_the_same_document_with_compact_replies() -> TestResul
         let reply = compact.respond(Caller::Operator, request.clone());
         assert_eq!(reply["ok"], true, "{line}: {reply}");
         assert!(reply["result"].get("project").is_none(), "{line}");
-        largest = largest.max(reply.to_string().len());
+        // `rules.fab_profiles` answers whole profiles by design (the
+        // board's and the built-in JLCPCB 2-layer, about 12 KB each); it is
+        // no document reply, so it has its own bound.
+        let size = reply.to_string().len();
+        if request["params"]["query"] == "rules.fab_profiles" {
+            assert!(size < 32 * 1024, "{line}: {size} bytes");
+        } else {
+            largest = largest.max(size);
+        }
         let reply = full.dispatch(request);
         assert_eq!(reply["ok"], true, "{line}: {reply}");
     }
