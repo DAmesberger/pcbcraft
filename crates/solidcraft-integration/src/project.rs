@@ -2115,6 +2115,7 @@ impl Drawn<'_> {
         let open = || {
             appearance::open_laminate(display, self.lands, self.paths, &fill::outlines(self.fills))
         };
+        let pours = fill::regions(self.fills);
         let legend = || {
             crate::silkscreen::films(
                 self.project,
@@ -2123,6 +2124,7 @@ impl Drawn<'_> {
                     lands: self.lands,
                     paths: self.paths,
                     vias: self.marks,
+                    pours: &pours,
                     picks: &self.picks,
                 },
             )

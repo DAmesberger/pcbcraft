@@ -488,7 +488,7 @@ pub fn build(
         None => None,
     };
     let (mut def, report) = b.finish(last)?;
-    keep_designator_off_copper(&mut def);
+    keep_designator_off_copper(&mut def, package);
     if let Some(pad) = marker {
         // The dot is the newest graphic role; the pad is the authority.
         let markers = report.graphics.last().copied().into_iter().collect();
@@ -529,17 +529,26 @@ pub fn rebuild(
     build(&cleared(footprint), package, template, evaluator)
 }
 
-/// Move a silkscreen designator that now sits over the built pads to just
-/// above them, so the legend never lands on copper (the draft's text
-/// predates the template's pads).
-fn keep_designator_off_copper(def: &mut FootprintDefinition) {
-    use crate::library::graphics::{Item, TextContent};
-    let Some(pads) = def
-        .pads
+/// Move a silkscreen designator that now sits over the built part (its
+/// courtyard: pads and body) to just above it, centred, as the standard
+/// drawings place it, so the legend never lands on copper or under the
+/// body (the draft's text predates the template's pads).
+fn keep_designator_off_copper(def: &mut FootprintDefinition, package: &PackageDefinition) {
+    use crate::geometry::Bounds;
+    use crate::library::graphics::{Item, TextContent, TextMetric};
+    let courtyard = def
+        .graphics
         .iter()
-        .map(|p| p.bounds())
-        .reduce(crate::geometry::Bounds::union)
-    else {
+        .filter(|g| g.layer == DrawingLayer::Courtyard)
+        .filter_map(|g| match &g.item {
+            Item::Shape { shape, .. } => Some(shape.to_mm().bounds(0.0)),
+            Item::Text(_) => None,
+        })
+        .chain(def.pads.iter().map(|p| p.bounds()))
+        .chain(std::iter::once(def.envelope_outline(package)))
+        .filter(|b| b.min.iter().chain(&b.max).all(|v| v.is_finite()))
+        .reduce(Bounds::union);
+    let Some(part) = courtyard else {
         return;
     };
     for graphic in &mut def.graphics {
@@ -549,14 +558,13 @@ fn keep_designator_off_copper(def: &mut FootprintDefinition) {
         if graphic.layer != DrawingLayer::Silkscreen || text.content != TextContent::Designator {
             continue;
         }
-        let half = text.height_nm.to_mm_f64().max(0.0) / 2.0;
-        let extent = crate::geometry::Bounds::point(text.at.to_mm_f64()).inflated(half);
-        if extent.intersects(&pads) {
-            // Pads are within the coordinate bound, so the point above them
-            // is too; one that is not stays where it was.
+        if text.bounds(TextMetric::default()).intersects(&part) {
+            let half = text.height_nm.to_mm_f64().max(0.0) / 2.0;
+            // The part is within the coordinate bound, so the point above
+            // it is too; one that is not stays where it was.
             if let Ok(at) = crate::units::PointNm::from_mm_f64_rounded([
-                pads.center()[0],
-                pads.max[1] + half + crate::library::graphics::SILK_STROKE_MM * 2.0,
+                part.center()[0],
+                part.max[1] + half + crate::library::graphics::SILK_STROKE_MM,
             ]) {
                 text.at = at;
             }

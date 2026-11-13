@@ -602,6 +602,20 @@ pub(super) fn outlines(fills: &[FillMark]) -> Vec<(Layer, Vec<Point>)> {
         .collect()
 }
 
+/// Each outer-layer fill region with its side: its outline, then its holes.
+pub(super) fn regions(fills: &[FillMark]) -> Vec<(Layer, Vec<Vec<Point>>)> {
+    fills
+        .iter()
+        .filter_map(|mark| mark.layer.side().map(|side| (side, mark)))
+        .flat_map(|(side, mark)| {
+            mark.regions.iter().map(move |r| {
+                let loops = std::iter::once(&r.outer).chain(&r.holes).cloned();
+                (side, loops.collect())
+            })
+        })
+        .collect()
+}
+
 /// The box of a loop.
 fn bounds(points: &[Point]) -> [Point; 2] {
     points.iter().fold(
