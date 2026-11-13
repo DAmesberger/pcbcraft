@@ -196,6 +196,38 @@ pub trait BoardShapeEvaluator: Sync {
             "layout.dimension: this board evaluator cannot read 3D models".into(),
         ))
     }
+    /// Add, move or remove fixed geometry that something outside the
+    /// sketch owns (a housing reference's trace, `interface::housing`): a
+    /// fixed point, or a construction line between two fixed points. The
+    /// sketch's own edits cannot move it; board curves are dimensioned to
+    /// it. Returns the edited sketch and, for an add, the owned entity.
+    fn fixed_geometry(
+        &self,
+        _sketch: &SketchBlob,
+        _edit: &FixedEdit<'_>,
+    ) -> Result<(SketchBlob, Option<SketchRef>)> {
+        Err(Error::Unsupported(
+            "board.fixed: this board evaluator cannot hold enclosure geometry".into(),
+        ))
+    }
+}
+
+/// An edit of fixed, externally owned board-sketch geometry
+/// ([`BoardShapeEvaluator::fixed_geometry`]).
+#[derive(Clone, Copy, Debug)]
+pub enum FixedEdit<'a> {
+    /// Add a fixed point (a [`FeatureGeometry::Point`]) or a fixed
+    /// construction line (a [`FeatureGeometry::Line`]).
+    Add {
+        geometry: &'a crate::model::dimension::FeatureGeometry,
+    },
+    /// Move what [`Self::Add`] made to `geometry` (of the same shape).
+    Move {
+        owned: &'a SketchRef,
+        geometry: &'a crate::model::dimension::FeatureGeometry,
+    },
+    /// Remove it, with every constraint and dimension that names it.
+    Remove { owned: &'a SketchRef },
 }
 
 /// A free-form board curve to draw, in board millimetres (Solidcraft's
@@ -711,7 +743,7 @@ fn retire(sketch: &mut BoardSketch, deleted: &BTreeSet<SketchRef>) -> Result<()>
 /// project's `board.outline_fit`) and store it with its solve; refuses a
 /// shape that does not solve. Curves that are not a board are stored with their
 /// [`ShapeFault`] and the last valid shape.
-fn commit(
+pub(crate) fn commit(
     project: &mut Project,
     mut sketch: BoardSketch,
     evaluator: &dyn BoardShapeEvaluator,

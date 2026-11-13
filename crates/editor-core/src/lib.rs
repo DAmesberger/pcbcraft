@@ -75,6 +75,8 @@ pub enum Operation {
     Fabrication(fabrication::FabricationCommand),
     /// The board interface an enclosure references (`interface.*`).
     Interface(interface::InterfaceCommand),
+    /// The enclosure link (`housing.*`).
+    Housing(interface::housing::HousingCommand),
     Update(Box<updates::ApplyUpdate>),
 }
 
@@ -92,6 +94,7 @@ impl Operation {
             Self::Dimension(command) => command.class(),
             Self::Fabrication(command) => command.class(),
             Self::Interface(command) => command.class(),
+            Self::Housing(command) => command.class(),
             Self::Update(_) => Class::Edit,
         }
     }
@@ -109,6 +112,7 @@ impl Operation {
             Self::Dimension(command) => command.command(),
             Self::Fabrication(command) => command.command(),
             Self::Interface(command) => command.command(),
+            Self::Housing(command) => command.command(),
             Self::Update(_) => "update",
         }
     }
@@ -132,7 +136,8 @@ impl Operation {
             | Self::Board(_)
             | Self::Dimension(_)
             | Self::Fabrication(_)
-            | Self::Interface(_) => Area::Pcb,
+            | Self::Interface(_)
+            | Self::Housing(_) => Area::Pcb,
             Self::Schematic(
                 schematic::SchematicCommand::SetProperties { .. }
                 | schematic::SchematicCommand::RenameProject { .. },
@@ -187,6 +192,7 @@ impl Operation {
             layout::dimensions::DimensionCommand::CLASSES,
             fabrication::FabricationCommand::CLASSES,
             interface::InterfaceCommand::CLASSES,
+            interface::housing::HousingCommand::CLASSES,
             UPDATE,
         ]
         .into_iter()
@@ -208,6 +214,7 @@ impl Operation {
             layout::dimensions::DimensionCommand::TITLES,
             fabrication::FabricationCommand::TITLES,
             interface::InterfaceCommand::TITLES,
+            interface::housing::HousingCommand::TITLES,
             UPDATE,
         ]
         .into_iter()
@@ -473,6 +480,11 @@ pub enum Query {
     /// since the last publish; the list has the last published revision.
     #[serde(rename = "interface.list")]
     InterfaceList {},
+    /// The enclosure link's state from the document: no enclosure, a
+    /// broken reference (fabrication output is blocked) or linked, with
+    /// the findings. `housing.preview` reads the file.
+    #[serde(rename = "housing.status")]
+    HousingStatus {},
 }
 
 // A new command chooses its permission class here.
@@ -519,6 +531,7 @@ declare_classes!(Query {
     TunePreview "layout.tune_preview" Read "Preview length tuning",
     Preflight "fabrication.preflight" Read "Production check",
     InterfaceList "interface.list" Read "List the board interface",
+    HousingStatus "housing.status" Read "Check the enclosure link",
 });
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -566,6 +579,7 @@ pub enum QueryResult {
     RoutePreview(Box<layout::router::RoutePlan>),
     Preflight(Box<fabrication::PreflightReport>),
     InterfaceList(Box<interface::InterfaceList>),
+    HousingStatus(Box<interface::housing::HousingStatus>),
 }
 
 /// The host engines a command may need. The core never interprets a
@@ -1509,6 +1523,11 @@ impl Engine {
                 }
                 Outcome::None
             }
+            Operation::Housing(command) => {
+                let project = Arc::make_mut(&mut candidate.project);
+                interface::housing::apply(project, command, evaluators.board)?;
+                Outcome::None
+            }
             Operation::Update(update) => {
                 candidate.project = Arc::new(updates::candidate(
                     &self.document.project,
@@ -1768,6 +1787,12 @@ impl Engine {
             }
             Query::InterfaceList {} => Ok(QueryResult::InterfaceList(Box::new(
                 interface::list::list(&self.document.project)?,
+            ))),
+            Query::HousingStatus {} => Ok(QueryResult::HousingStatus(Box::new(
+                interface::housing::status(
+                    &self.document.project,
+                    interface::housing::FileCheck::NotChecked,
+                ),
             ))),
             Query::FillStatus {} => Ok(QueryResult::FillStatus(layout::fill::status(
                 &self.document.project,

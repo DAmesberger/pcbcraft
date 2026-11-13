@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 
 mod b1;
 mod b3;
+mod b4;
 mod package_datums;
 mod skeletons;
 

@@ -105,6 +105,11 @@ pub struct PublishPreviewParams {
     /// changed.
     #[serde(default)]
     pub path: Option<String>,
+    /// The linked enclosure's file: with it (and `path`, the design it
+    /// links), the preview runs the dry run on a scratch copy of it and
+    /// names the enclosure features that would move or fail (slice B4).
+    #[serde(default)]
+    pub enclosure_path: Option<String>,
 }
 
 /// `interface.publish` (a host request; Ask, because it writes files):
