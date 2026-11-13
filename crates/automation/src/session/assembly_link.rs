@@ -275,17 +275,9 @@ impl Session {
     /// a relink.
     pub(super) fn assembly_preview(&mut self, params: PreviewParams) -> Result<Value> {
         let read = self.update_read(&params.path, &params.design)?;
-        let hash = read.file_sha256;
         let mut fork = self.engine.fork();
-        let revision = fork.revision();
-        let preview = match fork.apply_hosted(
-            revision,
-            Operation::Assembly(AssemblyCommand::RecordUpdate { read }),
-            super::hosted(),
-        ) {
-            Ok(_) => assembly_link::diff(self.engine.project(), fork.project(), revision, hash),
-            Err(error) => assembly_link::refused(self.engine.project(), revision, hash, &error),
-        };
+        let preview =
+            assembly_link::preview(self.engine.project(), &mut fork, read, super::hosted());
         Ok(serde_json::to_value(preview)?)
     }
 
@@ -322,7 +314,10 @@ impl Session {
             )
             .into());
         }
-        Ok(AssemblyCommand::RecordUpdate { read })
+        Ok(AssemblyCommand::RecordUpdate {
+            read,
+            resolve: params.resolve.clone(),
+        })
     }
 
     /// The dry run of a publish on the linked design at `linked_design`: the

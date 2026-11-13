@@ -41,8 +41,8 @@ use crate::kit::{
 };
 use egui::Ui;
 use pcbcraft_core::interface::assembly_link::{
-    self as assembly_link, AssemblyPreview, AssemblyStatus, FileCheck, LinkState, PreviewParams,
-    UpdateParams,
+    self as assembly_link, AssemblyPreview, AssemblyStatus, Conflict, FileCheck, LinkState,
+    PreviewParams, Resolution, Side, UpdateParams,
 };
 use pcbcraft_core::interface::{
     DatumRow, DatumStatus, EffectKind, ExportTarget, InterfaceCommand, InterfaceList,
@@ -110,7 +110,7 @@ impl State {
                 "{changed} datum{} changed since revision {revision}",
                 if *changed == 1 { "" } else { "s" }
             ),
-            Self::Broken => "Broken reference · fabrication output is blocked".into(),
+            Self::Broken => "Broken reference · publishing is blocked".into(),
         }
     }
 
@@ -151,6 +151,9 @@ pub(super) enum ReviewKind {
     },
     Assembly {
         preview: Option<AssemblyPreview>,
+        /// Which side wins, per item both changed (`preview.conflicts`);
+        /// `None` until the user chooses.
+        choices: Vec<Option<Side>>,
         updating: bool,
     },
 }
@@ -447,34 +450,46 @@ pub(super) fn publish_summary(preview: &PublishPreview) -> String {
     }
 }
 
-/// The publish preview's blockers: the linked design features the dry run says
-/// would fail or lose a joint, each confirmed to publish anyway, and those
-/// on a face that is not exported, as warnings.
+/// The publish preview's blockers: each broken reference between the board
+/// and the linked design (the publish waits until it is resolved), the
+/// linked design features the dry run says would fail or lose a joint,
+/// each confirmed to publish anyway, and those on a face that is not
+/// exported, as warnings.
 pub(super) fn publish_blockers(preview: &PublishPreview) -> Vec<ReviewLine> {
-    let Some(dry) = &preview.dry_run else {
-        return Vec::new();
-    };
-    dry.effects
+    // A broken reference between the board and the linked design: the
+    // publish waits until it is resolved, so nothing acknowledges it.
+    let mut lines: Vec<ReviewLine> = preview
+        .blocked
         .iter()
-        .filter_map(|e| match e.effect {
-            EffectKind::Fails | EffectKind::JointUnsolved => Some(ReviewLine {
-                level: Level::Error,
-                title: e.message.clone(),
-                ack: Some(format!(
-                    "Publish anyway: ‘{}’ will fail in SolidCraft",
-                    e.feature
-                )),
-                locate: false,
-            }),
-            EffectKind::UnexportedReference => Some(ReviewLine {
-                level: Level::Warning,
-                title: e.message.clone(),
-                ack: None,
-                locate: false,
-            }),
-            EffectKind::Moves => None,
+        .map(|why| ReviewLine {
+            level: Level::Error,
+            title: why.clone(),
+            ack: None,
+            locate: false,
         })
-        .collect()
+        .collect();
+    let Some(dry) = &preview.dry_run else {
+        return lines;
+    };
+    lines.extend(dry.effects.iter().filter_map(|e| match e.effect {
+        EffectKind::Fails | EffectKind::JointUnsolved => Some(ReviewLine {
+            level: Level::Error,
+            title: e.message.clone(),
+            ack: Some(format!(
+                "Publish anyway: ‘{}’ will fail in SolidCraft",
+                e.feature
+            )),
+            locate: false,
+        }),
+        EffectKind::UnexportedReference => Some(ReviewLine {
+            level: Level::Warning,
+            title: e.message.clone(),
+            ack: None,
+            locate: false,
+        }),
+        EffectKind::Moves => None,
+    }));
+    lines
 }
 
 /// The publish preview's change groups: the datums that change, and the
@@ -506,9 +521,13 @@ pub(super) fn publish_groups(preview: &PublishPreview) -> Vec<ReviewGroup> {
     groups
 }
 
-/// The linked design preview's summary, blockers and groups.
+/// The linked design preview's summary, blockers and groups. When both
+/// files changed, each item both changed is a blocker until `choices` (one
+/// per conflict, in order) says which side wins, and the board's own
+/// changes are a group of their own.
 pub(super) fn assembly_content(
     preview: &AssemblyPreview,
+    choices: &[Option<Side>],
 ) -> (String, Vec<ReviewLine>, Vec<ReviewGroup>) {
     if let Some(why) = &preview.refused {
         return (
@@ -523,7 +542,21 @@ pub(super) fn assembly_content(
         );
     }
     let moved = preview.objects.len();
-    let summary = if !preview.changed && moved == 0 {
+    let open = preview
+        .conflicts
+        .iter()
+        .enumerate()
+        .filter(|(n, _)| choices.get(*n).copied().flatten().is_none())
+        .count();
+    let summary = if !preview.conflicts.is_empty() {
+        let n = preview.conflicts.len();
+        format!(
+            "Both changed · {n} item{} to choose which side wins",
+            if n == 1 { "" } else { "s" }
+        )
+    } else if !preview.board_changes.is_empty() {
+        "Both changed · nothing both sides changed".into()
+    } else if !preview.changed && moved == 0 {
         "The linked design is as the board last read it".into()
     } else if moved == 0 {
         "The linked design changed · nothing on the board moves".into()
@@ -533,17 +566,30 @@ pub(super) fn assembly_content(
             if moved == 1 { "" } else { "s" }
         )
     };
-    let blockers = preview
-        .references
-        .iter()
-        .filter(|r| r.to != pcbcraft_core::model::dimension::ReferenceStatus::Resolved)
-        .map(|r| ReviewLine {
-            level: Level::Warning,
-            title: r.summary.clone(),
+    let mut blockers: Vec<ReviewLine> = Vec::new();
+    if open > 0 {
+        blockers.push(ReviewLine {
+            level: Level::Error,
+            title: format!(
+                "Choose which side wins for {open} item{} both changed",
+                if open == 1 { "" } else { "s" }
+            ),
             ack: None,
             locate: false,
-        })
-        .collect();
+        });
+    }
+    blockers.extend(
+        preview
+            .references
+            .iter()
+            .filter(|r| r.to != pcbcraft_core::model::dimension::ReferenceStatus::Resolved)
+            .map(|r| ReviewLine {
+                level: Level::Warning,
+                title: r.summary.clone(),
+                ack: None,
+                locate: false,
+            }),
+    );
     let mut groups = vec![
         ReviewGroup {
             title: "Board".into(),
@@ -567,6 +613,13 @@ pub(super) fn assembly_content(
             lines: preview.consumers.clone(),
         });
     }
+    if !preview.board_changes.is_empty() {
+        groups.push(ReviewGroup {
+            title: "Changed on the board".into(),
+            summary: String::new(),
+            lines: preview.board_changes.clone(),
+        });
+    }
     (summary, blockers, groups)
 }
 
@@ -584,13 +637,23 @@ impl PcbEditor {
         self.interface.shown.as_ref()
     }
 
-    /// The published design: the one chosen, the linked design's, or
-    /// `<project>-board.solidcraft` beside a saved project.
-    fn design_path(&self, project: &Project) -> Option<PathBuf> {
+    /// The published design: the one chosen, where the project last
+    /// published it (kept in the project, so it survives restarts), the
+    /// linked design's, or `<project>-board.solidcraft` beside a saved
+    /// project.
+    pub(super) fn design_path(&self, project: &Project) -> Option<PathBuf> {
         if let Some(path) = &self.interface.design {
             return Some(path.clone());
         }
         let file = self.project_path.as_deref();
+        if let Some(path) = project
+            .interface
+            .published
+            .as_ref()
+            .and_then(|r| r.design_hint.as_deref())
+        {
+            return Some(resolved(file, path));
+        }
         if let Some(link) = project.assembly_link.as_deref() {
             return Some(resolved(file, &link.design_hint));
         }
@@ -718,9 +781,15 @@ impl PcbEditor {
                     Err(why) => review.refusal = Some(why),
                 }
             }
-            (ReviewKind::Assembly { preview, .. }, Done::AssemblyPreview(result)) => match result {
+            (
+                ReviewKind::Assembly {
+                    preview, choices, ..
+                },
+                Done::AssemblyPreview(result),
+            ) => match result {
                 Ok(p) => {
-                    review.acked = vec![false; assembly_content(&p).1.len()];
+                    *choices = vec![None; p.conflicts.len()];
+                    review.acked = vec![false; assembly_content(&p, choices).1.len()];
                     review.refusal = None;
                     *preview = Some(p);
                 }
@@ -955,6 +1024,7 @@ impl PcbEditor {
         self.interface.review = Some(Review {
             kind: ReviewKind::Assembly {
                 preview: None,
+                choices: Vec::new(),
                 updating: false,
             },
             running,
@@ -973,6 +1043,7 @@ impl PcbEditor {
             path: path.to_string_lossy().into_owned(),
             design: design.to_string_lossy().into_owned(),
             expect_hash: None,
+            resolve: Vec::new(),
             expected_revision: engine.revision(),
         };
         self.interface.linking = interface_host::start(
@@ -1489,12 +1560,16 @@ impl PcbEditor {
                     recompute = true;
                 }
             }
-            ReviewKind::Assembly { preview, updating } => {
+            ReviewKind::Assembly {
+                preview,
+                choices,
+                updating,
+            } => {
                 let title = "Update from linked design";
                 match (preview.as_ref(), waiting) {
                     (Some(p), false) => {
                         let stale = p.document_revision != engine.revision();
-                        let (summary, blockers, groups) = assembly_content(p);
+                        let (summary, blockers, groups) = assembly_content(p, choices);
                         review.acked.resize(blockers.len(), false);
                         let panel = ReviewPanel {
                             id: review_id(),
@@ -1512,11 +1587,12 @@ impl PcbEditor {
                             ui,
                             &mut review.acked,
                             review.refusal.as_deref(),
-                            |_| {},
+                            |ui| conflict_choices(ui, &p.conflicts, choices),
                         );
                         if action == Some(ReviewAction::Apply)
                             && let Some(link) = engine.project().assembly_link.as_deref()
                         {
+                            let resolve = resolutions(&p.conflicts, choices);
                             let file = self.project_path.as_deref();
                             *updating = true;
                             review.refusal = None;
@@ -1528,6 +1604,7 @@ impl PcbEditor {
                                     .to_string_lossy()
                                     .into_owned(),
                                 expect_hash: Some(p.expect_hash.to_string()),
+                                resolve,
                                 expected_revision: engine.revision(),
                             }));
                         }
@@ -1587,6 +1664,40 @@ impl PcbEditor {
 }
 
 /// The preview's text for Copy report.
+/// Each item both the board and the linked design changed: what each side
+/// did, and which side wins (`choices`, one per conflict).
+fn conflict_choices(ui: &mut Ui, conflicts: &[Conflict], choices: &mut [Option<Side>]) {
+    for (n, (conflict, choice)) in conflicts.iter().zip(choices.iter_mut()).enumerate() {
+        ui.push_id(("conflict", n), |ui| {
+            kit::value_row(ui, &conflict.name, &conflict.board);
+            kit::value_row(ui, "", &conflict.linked_design);
+            kit::choice_row(
+                ui,
+                "Wins",
+                choice,
+                &[
+                    (Some(Side::Board), "The board".to_owned()),
+                    (Some(Side::LinkedDesign), "The linked design".to_owned()),
+                ],
+            );
+        });
+    }
+}
+
+/// The side chosen for each conflict, for `assembly.update`'s `resolve`.
+pub(super) fn resolutions(conflicts: &[Conflict], choices: &[Option<Side>]) -> Vec<Resolution> {
+    conflicts
+        .iter()
+        .zip(choices)
+        .filter_map(|(c, wins)| {
+            wins.map(|wins| Resolution {
+                item: c.item.clone(),
+                wins,
+            })
+        })
+        .collect()
+}
+
 fn report(review: &Review) -> String {
     match &review.kind {
         ReviewKind::Publish {
@@ -1601,9 +1712,11 @@ fn report(review: &Review) -> String {
             lines.join("\n")
         }
         ReviewKind::Assembly {
-            preview: Some(p), ..
+            preview: Some(p),
+            choices,
+            ..
         } => {
-            let (summary, blockers, groups) = assembly_content(p);
+            let (summary, blockers, groups) = assembly_content(p, choices);
             let mut lines = vec![summary];
             lines.extend(blockers.into_iter().map(|b| b.title));
             for g in groups {

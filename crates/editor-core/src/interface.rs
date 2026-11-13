@@ -19,7 +19,7 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::library::Outline;
 use crate::library::datum::{DatumKind, DatumName};
-use crate::library::footprint_source::{ParamName, SketchCurveId};
+use crate::library::footprint_source::ParamName;
 use crate::model::interface::{
     DatumKey, DatumOwner, DatumRole, InterfaceDatum, InterfaceTable, MAX_DATUMS, MAX_SLOTS, Slot,
 };
@@ -220,12 +220,12 @@ pub fn check_key(key: &DatumKey) -> Result<()> {
         | R::BoardThickness
         | R::BoardParameter
         | R::SideHeight => key.owner == DatumOwner::Board,
-        R::BoardCutout => matches!(key.owner, DatumOwner::Curve { .. }),
+        R::BoardCutout => matches!(key.owner, DatumOwner::Cutout { .. }),
         R::Hole => matches!(key.owner, DatumOwner::Hole { .. }),
         R::PartFrame | R::PartEnvelope | R::PartDatum => {
             matches!(key.owner, DatumOwner::Instance { .. })
         }
-        R::Feature => !matches!(key.owner, DatumOwner::Curve { .. }),
+        R::Feature => !matches!(key.owner, DatumOwner::Cutout { .. }),
     };
     let name_ok = match key.role {
         R::PartDatum => name.is_some_and(|n| DatumName(n.into()).valid_for_package()),
@@ -246,7 +246,7 @@ pub fn check_key(key: &DatumKey) -> Result<()> {
 
 /// The token a datum is written under in the exported design and sidecar,
 /// built from ids only: `board.top`, `h12`, `i80.frame`, `i80.opening`,
-/// `cut.l7`, `side.top`, `board.parameter.width`, `d412`. Renaming a part,
+/// `cut3`, `side.top`, `board.parameter.width`, `d412`. Renaming a part,
 /// its designator or the datum never changes it. Refused with
 /// `interface.token` when an id cannot be written in token syntax.
 pub fn token(datum: &InterfaceDatum) -> Result<String> {
@@ -262,7 +262,7 @@ pub fn token(datum: &InterfaceDatum) -> Result<String> {
         (DatumOwner::Board, R::BoardThickness) => "board.thickness".into(),
         (DatumOwner::Board, R::BoardParameter) => format!("board.parameter.{name}"),
         (DatumOwner::Board, R::SideHeight) => format!("side.{name}"),
-        (DatumOwner::Curve { id }, R::BoardCutout) => format!("cut.{}", id.0),
+        (DatumOwner::Cutout { id }, R::BoardCutout) => format!("cut{}", id.0),
         (DatumOwner::Hole { id }, R::Hole) => format!("h{}", id.0),
         (DatumOwner::Instance { id }, R::PartFrame) => format!("i{id}.frame"),
         (DatumOwner::Instance { id }, R::PartEnvelope) => format!("i{id}.envelope"),
@@ -290,20 +290,6 @@ pub fn token_valid(text: &str) -> bool {
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_')
         })
-}
-
-/// The sketch curve that owns a cutout's datum: the loop's oldest curve,
-/// taken as the lowest by kind prefix, then by number (`l7` before `l10`).
-/// Sketch curve ids are never reused and each kind's numbers only grow, so
-/// adding or editing the loop's other curves keeps the owner, and with it
-/// the datum's token and slot.
-pub fn cutout_owner(curves: &[SketchCurveId]) -> Option<&SketchCurveId> {
-    curves.iter().min_by_key(|c| {
-        let text = c.0.as_str();
-        let digits = text.len() - text.trim_end_matches(|ch: char| ch.is_ascii_digit()).len();
-        let (prefix, number) = text.split_at(text.len() - digits);
-        (prefix, number.len(), number, text)
-    })
 }
 
 /// Allocate the next slot. Slots are never reused: the counter only grows,
@@ -405,6 +391,16 @@ pub fn check_table(table: &InterfaceTable) -> Result<()> {
             || record.earlier.iter().any(|f| f.revision > record.revision))
     {
         return bad("the earlier published files are bounded and come before this revision");
+    }
+    if let Some(path) = table
+        .published
+        .as_ref()
+        .and_then(|r| r.design_hint.as_deref())
+        && (path.trim().is_empty()
+            || path.len() > crate::model::interface::MAX_PUBLISHED_HINT
+            || path.chars().any(char::is_control))
+    {
+        return bad("a published design's path is 1–4096 bytes of text");
     }
     Ok(())
 }

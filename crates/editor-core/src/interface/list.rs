@@ -340,16 +340,17 @@ pub fn derive(project: &Project, datum: &InterfaceDatum) -> Derived {
                 None => found(kind, None),
             }
         }
-        (DatumOwner::Curve { id }, DatumRole::BoardCutout) => {
+        (DatumOwner::Cutout { id }, DatumRole::BoardCutout) => {
             let board = project.board();
-            let loop_ = board
-                .cutouts
-                .iter()
-                .find(|c| super::cutout_owner(&c.curves) == Some(id))
-                .map(|c| DatumGeometry::Profile {
-                    frame: up_frame(0.0),
-                    loops: vec![c.outline.clone()],
-                });
+            let loop_ =
+                board
+                    .cutouts
+                    .iter()
+                    .find(|c| c.id == Some(*id))
+                    .map(|c| DatumGeometry::Profile {
+                        frame: up_frame(0.0),
+                        loops: vec![c.outline.clone()],
+                    });
             found(kind, loop_)
         }
         (DatumOwner::Hole { id }, DatumRole::Hole) => {
@@ -431,12 +432,9 @@ pub fn display_name(project: &Project, datum: &InterfaceDatum) -> String {
         (_, DatumRole::BoardParameter) => format!("Board parameter {name}"),
         (_, DatumRole::SideHeight) if name == "bottom" => "Bottom side height".into(),
         (_, DatumRole::SideHeight) => "Top side height".into(),
-        (DatumOwner::Curve { id }, DatumRole::BoardCutout) => {
+        (DatumOwner::Cutout { id }, DatumRole::BoardCutout) => {
             let board = project.board();
-            let at = board
-                .cutouts
-                .iter()
-                .position(|c| super::cutout_owner(&c.curves) == Some(id));
+            let at = board.cutouts.iter().position(|c| c.id == Some(*id));
             match (at, at.and_then(|i| board.cutouts.get(i)).map(|c| c.kind)) {
                 (Some(i), Some(crate::model::board::CutoutKind::Slot { .. })) => {
                     format!("Slot {}", i + 1)

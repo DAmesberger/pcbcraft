@@ -481,7 +481,7 @@ pub enum Query {
     #[serde(rename = "interface.list")]
     InterfaceList {},
     /// The assembly link's state from the document: none, a
-    /// broken reference (fabrication output is blocked) or linked, with
+    /// broken reference (publishing to the linked design is blocked) or linked, with
     /// the findings. `assembly.preview` reads the file.
     #[serde(rename = "assembly.status")]
     AssemblyStatus {},
@@ -1320,6 +1320,12 @@ impl Engine {
         // Only the assembly link's own commands move the board-sketch
         // geometry its references own.
         let assembly_command = matches!(operation, Operation::Assembly(_));
+        // Recording a publish is no undo step, like a save: the files it
+        // records stay written (docs/architecture/board-interface.md).
+        let unrecorded = matches!(
+            operation,
+            Operation::Interface(interface::InterfaceCommand::RecordPublish { .. })
+        );
         // Parts the operation moves by hand: their attached copper is
         // carried with them, all at once.
         // Selected loose copper a group drag slides with its parts; the
@@ -1632,7 +1638,11 @@ impl Engine {
         } else {
             validate::drafts_only(&candidate.project, &candidate.drafts)?;
         }
-        self.commit(candidate, step)?;
+        if unrecorded {
+            self.store_unrecorded(candidate)?;
+        } else {
+            self.commit(candidate, step)?;
+        }
         self.rerouted = rerouted;
         Ok(outcome)
     }
@@ -2133,6 +2143,17 @@ impl Engine {
         self.revision
             .checked_add(1)
             .ok_or_else(|| Error::Limit("revision exhausted".into()))
+    }
+
+    /// Store `candidate` as a new revision without an undo step; undo and
+    /// redo keep what it recorded (`interface::auto::carry`), and the
+    /// steps around it stay as they were.
+    fn store_unrecorded(&mut self, candidate: Document) -> Result<()> {
+        let revision = self.next_revision()?;
+        self.document = candidate;
+        self.last_step = None;
+        self.set_revision(revision);
+        Ok(())
     }
 
     fn commit(&mut self, candidate: Document, step: Step) -> Result<()> {

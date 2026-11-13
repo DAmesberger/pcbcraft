@@ -122,9 +122,40 @@
         "description": "A body of a model design, by its name there.",
         "type": "string"
       },
+      "ConflictItem": {
+        "description": "An item of the link both the board and the linked design changed since\nthey last agreed.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "A followed face the linked design moved, built on datums the board\nchanged.",
+            "properties": {
+              "reference": {
+                "$ref": "#/$defs/FollowedFaceId"
+              }
+            },
+            "required": [
+              "reference"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A bound board parameter the board set and the linked design changed.",
+            "properties": {
+              "binding": {
+                "$ref": "#/$defs/ParamName"
+              }
+            },
+            "required": [
+              "binding"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "Consumer": {
         "additionalProperties": false,
-        "description": "A linked design feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the linked design. A consumer whose datum no longer resolves is a\nbroken reference (`assembly.reference_lost`), which blocks fabrication\noutput.",
+        "description": "A linked design feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the linked design. A consumer whose datum no longer resolves is a\nbroken reference (`assembly.reference_lost`), a warning that blocks\npublishing to the linked design until it is resolved.",
         "properties": {
           "datum": {
             "$ref": "#/$defs/DatumId",
@@ -432,6 +463,38 @@
           }
         ]
       },
+      "Resolution": {
+        "additionalProperties": false,
+        "description": "The side that wins for one conflicting item.",
+        "properties": {
+          "item": {
+            "$ref": "#/$defs/ConflictItem"
+          },
+          "wins": {
+            "$ref": "#/$defs/Side"
+          }
+        },
+        "required": [
+          "item",
+          "wins"
+        ],
+        "type": "object"
+      },
+      "Side": {
+        "description": "Which side's change an update keeps for a conflicting item.",
+        "oneOf": [
+          {
+            "const": "board",
+            "description": "The board keeps what it has; the linked design follows it after\nthe next publish and Update Links.",
+            "type": "string"
+          },
+          {
+            "const": "linked_design",
+            "description": "The board takes the linked design's change.",
+            "type": "string"
+          }
+        ]
+      },
       "Slot": {
         "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
         "format": "uint32",
@@ -469,6 +532,11 @@
             "const": "joint",
             "description": "A joint places the board by it: the whole board frame in the\nlinked design, and every followed face with it, depends on it.",
             "type": "string"
+          },
+          {
+            "const": "extent",
+            "description": "A sketch projects the datum only to shape a profile in its own\nplane, and the followed face is that sketch's plane: the datum sets\nthe face's extent, never its position. Only a followed face's\n[`FollowedFace::built_on`] says this.",
+            "type": "string"
           }
         ]
       }
@@ -505,7 +573,7 @@
       },
       {
         "additionalProperties": false,
-        "description": "Apply what the host read of the linked design.\n\nSent by `assembly.update` and `assembly.relink`: the references'\ntraces move the fixed geometry they own, bindings set their board\nparameters, and the snapshot becomes the read. Refused, changing\nnothing, when the board would not solve, or a bound parameter is\ngone.",
+        "description": "Apply what the host read of the linked design.\n\nSent by `assembly.update` and `assembly.relink`: the references'\ntraces move the fixed geometry they own, bindings set their board\nparameters, and the snapshot becomes the read. Refused, changing\nnothing, when the board would not solve, or a bound parameter is\ngone. When both files changed since they last agreed, every item\nboth changed ([`conflicts`]) needs a [`Resolution`] in `resolve`,\nor the update is refused.",
         "properties": {
           "command": {
             "const": "assembly.record_update",
@@ -516,6 +584,12 @@
             "properties": {
               "read": {
                 "$ref": "#/$defs/AssemblyRead"
+              },
+              "resolve": {
+                "items": {
+                  "$ref": "#/$defs/Resolution"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -711,7 +785,7 @@
       },
       "Consumer": {
         "additionalProperties": false,
-        "description": "A linked design feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the linked design. A consumer whose datum no longer resolves is a\nbroken reference (`assembly.reference_lost`), which blocks fabrication\noutput.",
+        "description": "A linked design feature that uses one of the board's published datums\n(a sketch projecting a datum's face, a joint on it), as the board last\nread the linked design. A consumer whose datum no longer resolves is a\nbroken reference (`assembly.reference_lost`), a warning that blocks\npublishing to the linked design until it is resolved.",
         "properties": {
           "datum": {
             "$ref": "#/$defs/DatumId",
@@ -968,6 +1042,27 @@
         "description": "A footprint parameter or package-value name: an identifier\n`[A-Za-z_][A-Za-z0-9_]*`. Names starting `pkg_` are reserved for\ninjected package values.",
         "type": "string"
       },
+      "PublishedDatum": {
+        "additionalProperties": false,
+        "description": "One datum as it was last published: its slot and content hash, so a\npreview tells changed datums from unchanged ones without the file.",
+        "properties": {
+          "hash": {
+            "$ref": "#/$defs/ContentHash"
+          },
+          "id": {
+            "$ref": "#/$defs/DatumId"
+          },
+          "slot": {
+            "$ref": "#/$defs/Slot"
+          }
+        },
+        "required": [
+          "id",
+          "slot",
+          "hash"
+        ],
+        "type": "object"
+      },
       "ReferenceStatus": {
         "description": "How a reference resolves against its source (§5.5). Derived: a 3D\nmodel reference's status is the host's, kept in its [`ModelTrace`];\nevery other one is read from the document. `Lost` and `Inexact`\nreferences are reported (`board.reference_lost`,\n`board.reference_inexact`), stop driving and keep their last geometry.",
         "oneOf": [
@@ -1079,6 +1174,11 @@
             "const": "joint",
             "description": "A joint places the board by it: the whole board frame in the\nlinked design, and every followed face with it, depends on it.",
             "type": "string"
+          },
+          {
+            "const": "extent",
+            "description": "A sketch projects the datum only to shape a profile in its own\nplane, and the followed face is that sketch's plane: the datum sets\nthe face's extent, never its position. Only a followed face's\n[`FollowedFace::built_on`] says this.",
+            "type": "string"
           }
         ]
       }
@@ -1087,6 +1187,13 @@
     "additionalProperties": false,
     "description": "The project's link to a linked design.",
     "properties": {
+      "agreed": {
+        "description": "The datums the link uses (its consumers' and what its followed\nfaces are built on), with the content hash each had in the publish\nthe linked design held when the two last agreed. A datum whose hash\ndiffers now is one the board changed since: where the linked\ndesign changed what depends on it too, the two conflict and an\nupdate asks which side wins (`assembly.record_update`'s `resolve`).",
+        "items": {
+          "$ref": "#/$defs/PublishedDatum"
+        },
+        "type": "array"
+      },
       "assembly_hint": {
         "description": "Where the linked design was, as the user gave it (absolute, or\nrelative to the project's folder). A hint for the desktop and for\nmessages: every request that reads the linked design names its file, so\nthe permission gate sees it, and is refused when it is not this one\n(`assembly.relink` changes it).",
         "type": "string"
@@ -1130,7 +1237,7 @@
         "type": "array"
       },
       "cycles": {
-        "description": "Loops between the two files: a followed face whose linked design\ngeometry is built on a datum that itself follows the reference on\nthe board. Derived after every edit that can change them\n(`interface::assembly_link::follow_cycles`); each blocks fabrication\noutput.",
+        "description": "Loops between the two files: a followed face whose linked design\ngeometry is built on a datum that itself follows the reference on\nthe board. Derived after every edit that can change them\n(`interface::assembly_link::follow_cycles`); a loop through\npositions blocks fabrication output, one through extents only is\nadvisory.",
         "items": {
           "$ref": "#/$defs/AssemblyCycle"
         },
@@ -1177,6 +1284,64 @@
   },
   "assembly_preview": {
     "$defs": {
+      "Conflict": {
+        "description": "One item both sides changed, in the user's words.",
+        "properties": {
+          "board": {
+            "description": "What the board changed: \"Board outline changed\".",
+            "type": "string"
+          },
+          "item": {
+            "$ref": "#/$defs/ConflictItem"
+          },
+          "linked_design": {
+            "description": "What the linked design changed: \"Far wall · inner face, 1 mm along Y\".",
+            "type": "string"
+          },
+          "name": {
+            "description": "\"Far wall · inner face\", \"Board parameter width\".",
+            "type": "string"
+          }
+        },
+        "required": [
+          "item",
+          "name",
+          "board",
+          "linked_design"
+        ],
+        "type": "object"
+      },
+      "ConflictItem": {
+        "description": "An item of the link both the board and the linked design changed since\nthey last agreed.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "A followed face the linked design moved, built on datums the board\nchanged.",
+            "properties": {
+              "reference": {
+                "$ref": "#/$defs/FollowedFaceId"
+              }
+            },
+            "required": [
+              "reference"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A bound board parameter the board set and the linked design changed.",
+            "properties": {
+              "binding": {
+                "$ref": "#/$defs/ParamName"
+              }
+            },
+            "required": [
+              "binding"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ContentHash": {
         "description": "A SHA-256 digest, written as 64 lower-case hex digits. Names a revision\nrecord's canonical content (`library::bundle::content_hash`) or an\nasset's bytes (`library::bundle::asset_hash`).",
         "type": "string"
@@ -1700,6 +1865,10 @@
         "minimum": 0,
         "type": "integer"
       },
+      "ParamName": {
+        "description": "A footprint parameter or package-value name: an identifier\n`[A-Za-z_][A-Za-z0-9_]*`. Names starting `pkg_` are reserved for\ninjected package values.",
+        "type": "string"
+      },
       "ReferenceChange": {
         "description": "One followed face's row in the preview.",
         "properties": {
@@ -1804,9 +1973,23 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "`assembly.preview`: what `assembly.update` (or `assembly.relink`) would\nchange, without changing anything.",
     "properties": {
+      "board_changes": {
+        "description": "Both files changed since they last agreed: what the board changed\n(the datums the link uses), shown beside the linked design's\nchanges above.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
       "changed": {
         "description": "The linked design changed since the board last read it.",
         "type": "boolean"
+      },
+      "conflicts": {
+        "description": "The items both changed; `assembly.update` takes a side for each\n(`resolve`). The rows above show the linked design winning them all.",
+        "items": {
+          "$ref": "#/$defs/Conflict"
+        },
+        "type": "array"
       },
       "consumers": {
         "description": "Linked design features newly using, or no longer using, the board.",
@@ -1826,7 +2009,7 @@
         "description": "The linked design file's hash now: `assembly.update` takes it as\n`expect_hash`, and is refused when the file changed since."
       },
       "findings": {
-        "description": "The two-way check after the update (slice B5): the linked design holds\nan older board, features on unexported faces, loops; or, refused,\nboth changed.",
+        "description": "The two-way check after the update (slice B5): the linked design holds\nan older board, features on unexported faces, loops; and, when both\nchanged, that.",
         "items": {
           "$ref": "#/$defs/Finding"
         },
@@ -1846,7 +2029,7 @@
         "type": "array"
       },
       "refused": {
-        "description": "Why the update would be refused (the board would not solve, or\nboth files changed since they last agreed), when it would be; then\nnothing else is listed.",
+        "description": "Why the update would be refused (the board would not solve), when\nit would be; then nothing else is listed.",
         "type": [
           "string",
           "null"
@@ -1940,12 +2123,12 @@
           },
           {
             "const": "broken_reference",
-            "description": "A reference no longer resolves, in either direction: fabrication\noutput is blocked.",
+            "description": "A reference no longer resolves, in either direction: publishing to\nthe linked design is blocked.",
             "type": "string"
           },
           {
             "const": "cycle",
-            "description": "The board and the linked design follow each other in a loop:\nfabrication output is blocked.",
+            "description": "The board and the linked design follow each other's positions in a\nloop: fabrication output is blocked.",
             "type": "string"
           },
           {
@@ -3090,6 +3273,13 @@
             },
             "type": "array"
           },
+          "design_hint": {
+            "description": "Where the design was written, as the host gave it (relative to the\nproject's folder when it is inside it): the default for the next\npublish, kept with the project so it survives restarts. A hint, as\nan assembly link's `design_hint` is: the core and the session never\nopen it; the next publish names its own file.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "design_sha256": {
             "anyOf": [
               {
@@ -4198,6 +4388,13 @@
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "description": "`interface.publish_preview`: what publishing would change.",
     "properties": {
+      "blocked": {
+        "description": "Why the publish would be refused: each broken reference between the\nboard and the linked design, in the user's words. Publishing waits\nuntil they are resolved; nothing else does.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
       "changes": {
         "description": "Every live or newly retired datum, in slot order.",
         "items": {
@@ -4613,13 +4810,13 @@
           },
           {
             "additionalProperties": false,
-            "description": "A cutout or slot of the board sketch, by the sketch curve that\nstarts its loop (the curve id of the lowest-ordered curve of the\nloop; sketch curve ids are never reused).",
+            "description": "A cutout or slot of the board sketch, by its board feature id: every\ninner loop has one, kept as its curves change and never reused, so\nthe owner does not depend on how its curves are named.",
             "properties": {
               "id": {
-                "$ref": "#/$defs/SketchCurveId"
+                "$ref": "#/$defs/BoardFeatureId"
               },
               "kind": {
-                "const": "curve",
+                "const": "cutout",
                 "type": "string"
               }
             },
@@ -4832,10 +5029,6 @@
           "hash"
         ],
         "type": "object"
-      },
-      "SketchCurveId": {
-        "description": "A SolidCraft sketch curve id (for example `l2`).",
-        "type": "string"
       },
       "Slot": {
         "description": "A datum's position in the board's append-only slot table, from 0. The\nexported design builds slots first and in slot order, so a slot's\nfeature ids, and with them its face names, follow from this number\nalone. A slot is never reused: a removed datum's slot is retired.",
@@ -5193,13 +5386,13 @@
           },
           {
             "additionalProperties": false,
-            "description": "A cutout or slot of the board sketch, by the sketch curve that\nstarts its loop (the curve id of the lowest-ordered curve of the\nloop; sketch curve ids are never reused).",
+            "description": "A cutout or slot of the board sketch, by its board feature id: every\ninner loop has one, kept as its curves change and never reused, so\nthe owner does not depend on how its curves are named.",
             "properties": {
               "id": {
-                "$ref": "#/$defs/SketchCurveId"
+                "$ref": "#/$defs/BoardFeatureId"
               },
               "kind": {
-                "const": "curve",
+                "const": "cutout",
                 "type": "string"
               }
             },
@@ -5708,6 +5901,13 @@
               "$ref": "#/$defs/PublishedDatum"
             },
             "type": "array"
+          },
+          "design_hint": {
+            "description": "Where the design was written, as the host gave it (relative to the\nproject's folder when it is inside it): the default for the next\npublish, kept with the project so it survives restarts. A hint, as\nan assembly link's `design_hint` is: the core and the session never\nopen it; the next publish names its own file.",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "design_sha256": {
             "anyOf": [

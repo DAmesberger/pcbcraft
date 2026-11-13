@@ -641,22 +641,64 @@ impl LinkedDesign {
         (uses, unexported)
     }
 
+    /// The sketch whose plane a face lies on, when that is all that places
+    /// it: the start cap of an extrude (`F<n>:start`) whose sketch is on a
+    /// fixed plane (an origin plane, or one given by numbers). That
+    /// sketch's projections shape the profile in the plane, the face's
+    /// extent, never where the face is.
+    fn plane_of(&self, face: &str) -> Option<u64> {
+        let (_, role) = face.split_once(':')?;
+        if role != "start" {
+            return None;
+        }
+        let doc = &self.native.session().doc;
+        let made = feature_of(face)?;
+        let FeatureKind::Extrude { sketch, .. } = &doc.features.iter().find(|f| f.id == made)?.kind
+        else {
+            return None;
+        };
+        let FeatureKind::Sketch { plane, .. } =
+            &doc.features.iter().find(|f| f.id == sketch.0)?.kind
+        else {
+            return None;
+        };
+        use solidcraft_engine::doc::PlaneRef;
+        matches!(
+            plane,
+            PlaneRef::Origin { .. } | PlaneRef::Custom { .. } | PlaneRef::Placed { .. }
+        )
+        .then_some(sketch.0)
+    }
+
     /// The board's datums the linked design geometry under the face `face`
     /// (a persistent name) is built on: walking back from the feature that
     /// made the face through the sketches, faces and bodies it is made
     /// from to every reference a slot carries, and every joint that places
     /// the board (the board frame, and the face's trace with it, depends
-    /// on those). The linked design half of the cycle graph.
+    /// on those). The linked design half of the cycle graph. A datum that
+    /// only shapes the profile of the sketch whose fixed plane the face
+    /// lies on sets the face's extent, not its position: it reads as
+    /// [`UseKind::Extent`], unless the face is built on it another way too.
     pub fn built_on(&self, link: &BoardLink, sidecar: &Sidecar, face: &str) -> Vec<Use> {
         let slots = Slots::new(link, sidecar);
         let doc = &self.native.session().doc;
         let mut out: BTreeSet<Use> = self.joint_uses(link, &slots).0.into_iter().collect();
-        let mut queue: Vec<u64> = feature_of(face).into_iter().collect();
+        let plane = self.plane_of(face);
+        // Each feature with whether what it is built on reaches the face
+        // only through the plane sketch's profile (its extent).
+        let mut queue: Vec<(u64, bool)> =
+            feature_of(face).map(|f| (f, false)).into_iter().collect();
         let mut seen = BTreeSet::new();
-        while let Some(id) = queue.pop() {
-            if seen.len() >= MAX_WALK || !seen.insert(id) {
+        while let Some((id, extent)) = queue.pop() {
+            if seen.len() >= MAX_WALK || !seen.insert((id, extent)) {
                 continue;
             }
+            let extent = extent || Some(id) == plane;
+            let via = if extent {
+                UseKind::Extent
+            } else {
+                UseKind::Sketch
+            };
             let Some(feature) = doc.features.iter().find(|f| f.id == id) else {
                 continue;
             };
@@ -675,28 +717,30 @@ impl LinkedDesign {
                                     feature: feature.name.clone(),
                                     feature_id: feature.id,
                                     token: token.to_owned(),
-                                    via: UseKind::Sketch,
+                                    via,
                                 });
                             }
                             Carried::Unexported => {}
                             Carried::Elsewhere => match l.face_name.as_deref().and_then(feature_of)
                             {
-                                Some(made) => queue.push(made),
+                                Some(made) => queue.push((made, extent)),
                                 // A whole body: every feature that shaped it.
                                 None => queue.extend(
                                     doc.features
                                         .iter()
                                         .filter(|f| f.body_names.iter().any(|b| b == body))
-                                        .map(|f| f.id),
+                                        .map(|f| (f.id, extent)),
                                 ),
                             },
                         }
                     }
                 }
-                FeatureKind::Extrude { sketch, .. } => queue.push(sketch.0),
+                FeatureKind::Extrude { sketch, .. } => queue.push((sketch.0, extent)),
                 kind => {
                     if let Ok(value) = serde_json::to_value(kind) {
-                        named_features(&value, &mut queue);
+                        let mut named = Vec::new();
+                        named_features(&value, &mut named);
+                        queue.extend(named.into_iter().map(|f| (f, extent)));
                         let mut faces = Vec::new();
                         linked_faces(&value, &mut faces);
                         for face in faces {
@@ -705,7 +749,7 @@ impl LinkedDesign {
                                     feature: feature.name.clone(),
                                     feature_id: feature.id,
                                     token: token.to_owned(),
-                                    via: UseKind::Sketch,
+                                    via,
                                 });
                             }
                         }
@@ -713,7 +757,15 @@ impl LinkedDesign {
                 }
             }
         }
-        out.into_iter().collect()
+        // A datum the face is built on by position too is a position use.
+        let placed: BTreeSet<String> = out
+            .iter()
+            .filter(|u| u.via != UseKind::Extent)
+            .map(|u| u.token.clone())
+            .collect();
+        out.into_iter()
+            .filter(|u| u.via != UseKind::Extent || !placed.contains(&u.token))
+            .collect()
     }
 
     /// The faces of every linked design body that is not the board's, by

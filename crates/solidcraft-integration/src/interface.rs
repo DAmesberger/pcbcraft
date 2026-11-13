@@ -209,8 +209,8 @@ struct Slab {
     /// other name its body has.
     faces: BTreeMap<String, String>,
     names: BTreeSet<String>,
-    /// Cutout owner curve → the cutout's curve ids.
-    cutouts: BTreeMap<String, Vec<String>>,
+    /// Cutout id → the cutout's curve ids.
+    cutouts: BTreeMap<u32, Vec<String>>,
     /// Hole id → its circle's id.
     holes: BTreeMap<u32, String>,
 }
@@ -242,8 +242,8 @@ fn slab(native: &mut Native, project: &Project, datum: &SidecarDatum) -> Result<
             &format!("c{}e", k + 1),
             &mut taken,
         );
-        if let Some(owner) = pcbcraft_core::interface::cutout_owner(&cutout.curves) {
-            cutouts.insert(owner.0.clone(), ids.clone());
+        if let Some(id) = cutout.id {
+            cutouts.insert(id.0, ids.clone());
         }
         named.push(NamedLoop::Outline {
             outline: &cutout.outline,
@@ -328,12 +328,12 @@ fn own(
             // A cutout without the slab keeps the board sketch's curve ids,
             // and goes through the board.
             let (ids, depth) = match &datum.owner {
-                DatumOwner::Curve { id } => {
+                DatumOwner::Cutout { id } => {
                     let board = project.board();
                     let curves: Vec<String> = board
                         .cutouts
                         .iter()
-                        .find(|c| pcbcraft_core::interface::cutout_owner(&c.curves) == Some(id))
+                        .find(|c| c.id == Some(*id))
                         .map(|c| c.curves.iter().map(|c| c.0.clone()).collect())
                         .unwrap_or_default();
                     let ids = match loops.first() {
@@ -446,7 +446,7 @@ fn slab_faces(datum: &SidecarDatum, slab: &Slab) -> BTreeMap<String, String> {
                 put("wall".into(), format!("F{f}:side:{circle}"));
             }
         }
-        ("board.cutout", DatumOwner::Curve { id }) => {
+        ("board.cutout", DatumOwner::Cutout { id }) => {
             for curve in slab.cutouts.get(&id.0).into_iter().flatten() {
                 put(format!("side:{curve}"), format!("F{f}:side:{curve}"));
             }

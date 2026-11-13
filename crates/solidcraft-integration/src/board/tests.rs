@@ -969,3 +969,158 @@ fn a_board_following_fill_grows_with_the_board_width() -> Fallible<()> {
     assert_eq!(fill(&engine, follows)?.outline, moved.outline);
     Ok(())
 }
+
+/// Slice P1: every cutout has a stable id, so its interface datum (token
+/// and slot) keeps its owner whatever its curves are named. Replacing the
+/// loop's oldest line, which used to own the datum, keeps the id; deleting
+/// another cutout before it renumbers nothing; a cutout drawn anew gets a
+/// new id, never a used one.
+#[test]
+fn a_cutout_keeps_its_id_as_its_curves_change() -> Fallible<()> {
+    use pcbcraft_core::model::interface::{DatumOwner, DatumRole};
+    let mut engine = sketched()?;
+    // The board uses its interface: the table is stored from here on.
+    apply(
+        &mut engine,
+        Operation::Interface(pcbcraft_core::interface::InterfaceCommand::Auto {
+            rule: pcbcraft_core::model::interface::AutoRule::Holes,
+            on: false,
+        }),
+    )?;
+    let first = created_curves_of(edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddRect {
+                a: [10.0, 10.0],
+                b: [16.0, 16.0],
+                construction: false,
+            },
+        }],
+    )?);
+    let second = created_curves_of(edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddRect {
+                a: [30.0, 10.0],
+                b: [36.0, 16.0],
+                construction: false,
+            },
+        }],
+    )?);
+    assert_eq!(first.len(), 4);
+    assert_eq!(second.len(), 4);
+    // The id of the cutout around `at`, and its datum's token and slot.
+    let cutout = |engine: &Engine, at: Point| -> Fallible<(u32, String, u32)> {
+        let board = engine.project().board().into_owned();
+        let id = board
+            .cutouts
+            .iter()
+            .find(|c| {
+                let b = pcbcraft_core::model::board::outline_bounds(&c.outline);
+                b.min[0] <= at[0] && at[0] <= b.max[0] && b.min[1] <= at[1] && at[1] <= b.max[1]
+            })
+            .and_then(|c| c.id)
+            .ok_or("the cutout has its id")?;
+        let table = pcbcraft_core::interface::list::table(engine.project())?;
+        let datum = table
+            .datums
+            .iter()
+            .find(|d| {
+                d.key.role == DatumRole::BoardCutout && d.key.owner == DatumOwner::Cutout { id }
+            })
+            .ok_or("the cutout's datum")?;
+        Ok((id.0, pcbcraft_core::interface::token(datum)?, datum.slot.0))
+    };
+    let (a, a_token, a_slot) = cutout(&engine, [13.0, 13.0])?;
+    let (b, b_token, b_slot) = cutout(&engine, [33.0, 13.0])?;
+    assert_ne!(a, b);
+    assert_eq!(a_token, format!("cut{a}"));
+    assert_eq!(b_token, format!("cut{b}"));
+
+    // Replace the second cutout's oldest line by a new one along it: the
+    // loop's curves change, its id, token and slot stay.
+    let oldest = second
+        .iter()
+        .min_by_key(|c| (c.0.len(), c.0.clone()))
+        .cloned()
+        .ok_or("a line")?;
+    let s = sketch(&engine)?;
+    let json: serde_json::Value = serde_json::from_str(&s.sketch.0)?;
+    let line = json["curves"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|c| c["id"] == oldest.0.as_str())
+        .ok_or("the line")?;
+    let points = json["points"].as_array().cloned().unwrap_or_default();
+    let ends: Vec<Point> = ["a", "b"]
+        .iter()
+        .filter_map(|end| {
+            let p = points.get(usize::try_from(line[end].as_u64()?).ok()?)?;
+            Some([p["pos"][0].as_f64()?, p["pos"][1].as_f64()?])
+        })
+        .collect();
+    let [from, to] = ends.as_slice() else {
+        return Err(format!("the line's ends: {ends:?}").into());
+    };
+    edit(
+        &mut engine,
+        vec![
+            BoardEdit::Sketch {
+                edit: SketchEdit::Delete {
+                    ids: vec![SketchRef::Curve(oldest.clone())],
+                },
+            },
+            BoardEdit::Sketch {
+                edit: SketchEdit::AddLine {
+                    a: *from,
+                    b: *to,
+                    construction: false,
+                },
+            },
+        ],
+    )?;
+    let curves = engine
+        .project()
+        .board()
+        .cutouts
+        .iter()
+        .find(|c| c.id.map(|i| i.0) == Some(b))
+        .map(|c| c.curves.clone())
+        .ok_or("the cutout is still there")?;
+    assert!(!curves.contains(&oldest), "the loop's curves changed");
+    assert_eq!(cutout(&engine, [33.0, 13.0])?, (b, b_token.clone(), b_slot));
+
+    // Deleting the first cutout renumbers nothing.
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::Delete {
+                ids: first.iter().cloned().map(SketchRef::Curve).collect(),
+            },
+        }],
+    )?;
+    assert_eq!(engine.project().board().cutouts.len(), 1);
+    assert_eq!(cutout(&engine, [33.0, 13.0])?, (b, b_token, b_slot));
+
+    // Drawn again where the first was: a new id, never a used one.
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddRect {
+                a: [10.0, 10.0],
+                b: [16.0, 16.0],
+                construction: false,
+            },
+        }],
+    )?;
+    let (c, _, c_slot) = cutout(&engine, [13.0, 13.0])?;
+    assert!(c != a && c != b, "a new id: {c}");
+    assert_ne!(c_slot, a_slot, "slots are never reused");
+
+    // Save and reopen: ids hold.
+    let reopened = Engine::from_file(format::decode(&format::encode(&engine.to_file())?)?)?;
+    assert_eq!(cutout(&reopened, [33.0, 13.0])?.0, b);
+    assert_eq!(cutout(&reopened, [13.0, 13.0])?.0, c);
+    Ok(())
+}

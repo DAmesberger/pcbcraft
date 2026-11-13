@@ -84,8 +84,9 @@ fn codes(engine: &Engine) -> Vec<String> {
 
 /// Acceptance 6 in the core: the linked design's cutout uses a part's opening;
 /// deleting the part makes it a broken reference that names the cutout
-/// and the part, reads "broken reference", is an error in the production
-/// check that no waiver lifts, and undo takes it away.
+/// and the part, reads "broken reference", is a warning in Issues that
+/// blocks publishing to the linked design but not fabrication output, and
+/// undo takes it away.
 #[test]
 fn b4_deleting_the_part_breaks_the_linked_design_reference() -> Fallible {
     let (mut engine, instance) = linked()?;
@@ -125,23 +126,36 @@ fn b4_deleting_the_part_breaks_the_linked_design_reference() -> Fallible {
     assert_eq!(status.state, LinkState::BrokenReference);
     assert_eq!(status.words, "broken reference");
 
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
-    let item = report
-        .items
+    // A warning in Issues at once. Fabrication output goes ahead;
+    // publishing to the linked design waits until it is resolved.
+    let issues = crate::issues::report(
+        engine.project(),
+        engine.drafts(),
+        &crate::issues::IssueScope::All,
+    )?;
+    let row = issues
+        .rows
         .iter()
-        .find(|i| i.code == ASSEMBLY_REFERENCE_LOST)
-        .ok_or("the production check lists it")?;
-    assert_eq!(item.severity, Severity::Error);
-    assert!(!report.ready());
-    let revision = engine.revision();
-    let waived = engine.apply(
-        revision,
-        Operation::Fabrication(crate::fabrication::FabricationCommand::Waive {
-            keys: vec![item.key.clone()],
-            reason: "the linked design is redone".into(),
-        }),
+        .find(|r| r.finding.code == ASSEMBLY_REFERENCE_LOST)
+        .ok_or("Issues lists it")?;
+    assert_eq!(row.severity, Severity::Warning);
+    assert_eq!(row.blocks(), None);
+    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    assert!(
+        report
+            .items
+            .iter()
+            .filter(|i| i.code == ASSEMBLY_REFERENCE_LOST)
+            .all(|i| !i.blocks()),
+        "fabrication output is not blocked"
     );
-    assert!(waived.is_err(), "never waived");
+    assert_eq!(
+        assembly_link::publish_blockers(engine.project()),
+        [broken.message.clone()]
+    );
+    let preview =
+        crate::interface::publish::preview(engine.project(), None, None, engine.revision())?;
+    assert_eq!(preview.blocked, [broken.message.clone()]);
 
     engine.undo()?;
     assert_eq!(*engine.project(), before);
@@ -168,8 +182,8 @@ fn b4_a_datum_missing_from_the_publish_is_broken() -> Fallible {
     Ok(())
 }
 
-/// Lost and inexact followed faces are reported in the user's words
-/// and block fabrication output.
+/// Lost and inexact followed faces are reported in the user's words as
+/// warnings; the lost one blocks publishing to the linked design.
 #[test]
 fn b4_lost_and_inexact_references_are_reported() -> Fallible {
     let (engine, _) = linked()?;
@@ -213,11 +227,18 @@ fn b4_lost_and_inexact_references_are_reported() -> Fallible {
             .iter()
             .any(|f| f.code == ASSEMBLY_REFERENCE_INEXACT)
     );
+    // Warnings: neither blocks fabrication output; only the lost one
+    // blocks publishing to the linked design.
     let report = preflight::report(&project, engine.drafts(), None)?;
     for code in [ASSEMBLY_REFERENCE_LOST, ASSEMBLY_REFERENCE_INEXACT] {
         let item = report.items.iter().find(|i| i.code == code).ok_or(code)?;
-        assert_eq!(item.severity, Severity::Error, "{code}");
+        assert_eq!(item.severity, Severity::Warning, "{code}");
+        assert!(!item.blocks(), "{code}");
     }
+    assert_eq!(
+        assembly_link::publish_blockers(&project),
+        [lost.message.clone()]
+    );
     assert_eq!(
         assembly_link::status(&project, FileCheck::NotChecked).state,
         LinkState::BrokenReference
@@ -247,6 +268,7 @@ fn b4_refused_link_commands_change_nothing() -> Fallible {
         AssemblyCommand::Unlink,
         AssemblyCommand::RecordUpdate {
             read: read(Vec::new()),
+            resolve: Vec::new(),
         },
         AssemblyCommand::RemoveReference {
             id: FollowedFaceId(1),

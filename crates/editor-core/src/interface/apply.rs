@@ -249,6 +249,9 @@ fn record_publish(
         let over = earlier.len().saturating_sub(MAX_PUBLISHED_FILES);
         earlier.drain(..over);
         record.earlier = earlier;
+        if record.design_hint.is_none() {
+            record.design_hint = last.design_hint;
+        }
     }
     table.source_id = Some(source_id);
     table.published = Some(record);

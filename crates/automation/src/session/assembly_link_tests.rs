@@ -153,13 +153,15 @@ pub(super) fn position(session: &Session, designator: &str) -> TestResult<[f64; 
         .position)
 }
 
-/// Acceptance 6: deleting J1, the publish preview's dry run names the
-/// linked design's cutout that would fail, before anything is written. Published
-/// anyway, `assembly.status` reads "broken reference", the production check
-/// has an unwaivable `assembly.reference_lost` naming the cutout and J1, and
-/// undo restores everything.
+/// Acceptance 6, as slice P1 decided it: deleting J1, the publish
+/// preview's dry run names the linked design's cutout that would fail, and
+/// says the publish waits, before anything is written. `assembly.status`
+/// reads "broken reference" at once; the production check lists
+/// `assembly.reference_lost`, naming the cutout and J1, as a warning that
+/// blocks no fabrication output; publishing is refused, writing nothing,
+/// until it is resolved; and undo restores everything.
 #[test]
-fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
+fn b4_deleting_j1_breaks_the_cutout_and_blocks_publishing() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
     let assembly_link = dir.path().join("assembly.solidcraft");
@@ -220,8 +222,10 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
     );
     assert!(cutout["datum"].is_u64(), "{cutout}");
 
-    // Broken as soon as J1 is gone, and after publishing anyway.
-    publish(&mut session, &design, "interface")?;
+    let blocked = preview["blocked"].as_array().ok_or("the publish waits")?;
+    assert_eq!(blocked.len(), 1, "{blocked:?}");
+
+    // Broken as soon as J1 is gone.
     let broken = status(&mut session)?;
     assert_eq!(broken["state"], "broken_reference", "{broken}");
     assert_eq!(broken["words"], "broken reference");
@@ -229,23 +233,30 @@ fn b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication() -> TestResult {
     let [item] = items.as_slice() else {
         return Err(format!("one broken reference: {items:?}").into());
     };
-    assert_eq!(item["severity"], "error");
+    assert_eq!(item["severity"], "warning", "fabrication output goes ahead");
     let title = item["title"].as_str().ok_or("a title")?;
     assert!(
         title.contains("‘USB opening’") && title.contains("J1 was deleted"),
         "{title}"
     );
-    // Never waived.
+    // Publishing waits, writing nothing.
+    let sidecar = pcbcraft_io::interface::sidecar_path(&design);
+    let sidecar_bytes = std::fs::read(&sidecar)?;
     let revision = session.engine().revision();
-    let waive = session.dispatch(json!({"command": "project.apply", "params": {
-        "expected_revision": revision,
-        "operation": {"editor": "Fabrication", "operation": {
-            "command": "fabrication.waive",
-            "params": {"keys": [item["key"]], "reason": "the linked design is redone"}}}}}));
-    assert_eq!(waive["ok"], false, "{waive}");
+    let refused = session.dispatch(json!({"command": "interface.publish", "params": {
+        "path": design.display().to_string(), "tier": "interface",
+        "expected_revision": revision}}));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(
+        refused["error"]["rule"], "assembly.publish_blocked",
+        "{refused}"
+    );
+    let message = refused["error"]["message"].as_str().ok_or("a message")?;
+    assert!(message.contains("J1 was deleted"), "{message}");
+    assert_eq!(session.engine().revision(), revision);
+    assert_eq!(std::fs::read(&design)?, design_bytes, "nothing written");
+    assert_eq!(std::fs::read(&sidecar)?, sidecar_bytes);
 
-    // Undo the publish's record, then the deletion.
-    undo(&mut session)?;
     undo(&mut session)?;
     assert_eq!(
         *session.engine().project(),

@@ -6,7 +6,7 @@
 //! the dimension to it. Slice B5: a board edit never moves that line,
 //! and a loop between the board and the linked design is found and blocks
 //! fabrication output.
-use super::tests::{Fallible, apply, edit, sketch, sketched};
+use super::tests::{Fallible, apply, created_curves_of, edit, sketch, sketched};
 use pcbcraft_core::fabrication::preflight;
 use pcbcraft_core::ids::ContentHash;
 use pcbcraft_core::interface::assembly_link::{
@@ -165,6 +165,7 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
         &mut engine,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(vec![moved]),
+            resolve: Vec::new(),
         }),
     )?;
     assert!((top(&engine)? - (height + 2.0)).abs() <= 1e-9);
@@ -183,6 +184,7 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
         &mut engine,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(vec![changed]),
+            resolve: Vec::new(),
         }),
     )?;
     let reference = engine
@@ -221,7 +223,11 @@ fn a_board_edge_follows_the_fixed_line_a_reference_owns() -> Fallible<()> {
 /// fixed line a followed face owns; the reference's linked design geometry
 /// is built on `built_on`. Returns the engine and the owned line.
 fn followed(built_on: Vec<Consumer>) -> Fallible<(Engine, SketchCurveId)> {
-    let mut engine = sketched()?;
+    followed_on(sketched()?, built_on)
+}
+
+/// [`followed`] on `engine`, a sketched board.
+fn followed_on(mut engine: Engine, built_on: Vec<Consumer>) -> Fallible<(Engine, SketchCurveId)> {
     let [width, height] = engine.project().board_size;
     apply(
         &mut engine,
@@ -458,4 +464,356 @@ fn capitalised(text: &str) -> String {
         Some(c) => c.to_uppercase().chain(chars).collect(),
         None => String::new(),
     }
+}
+
+/// Slice P1: a loop through extents only (the linked design projects the
+/// board outline only to shape the profile of the sketch whose plane the
+/// followed face is) settles, so it is a warning: named in both files'
+/// words, not blocking fabrication output, and the link reads no loop.
+#[test]
+fn an_extent_only_loop_is_a_warning() -> Fallible<()> {
+    let engine = sketched()?;
+    let mut outline = uses(&engine, DatumRole::BoardOutline, "Far wall")?;
+    outline.via = UseKind::Extent;
+    let (engine, _) = followed_on(engine, vec![outline.clone()])?;
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
+    let [cycle] = link.cycles.as_slice() else {
+        return Err(format!("one loop: {:?}", link.cycles).into());
+    };
+    assert_eq!(cycle.via, UseKind::Extent);
+    let found = assembly_link::checks(engine.project());
+    assert!(found.iter().all(|f| f.code != findings::ASSEMBLY_CYCLE));
+    let extent: Vec<_> = found
+        .iter()
+        .filter(|f| f.code == findings::ASSEMBLY_EXTENT_CYCLE)
+        .collect();
+    let [finding] = extent.as_slice() else {
+        return Err(format!("{found:?}").into());
+    };
+    let name = &outline.name;
+    assert_eq!(
+        finding.message,
+        format!(
+            "{} follows the linked design's Far wall · face, and the linked design takes the \
+             extent of ‘Far wall’ from {name}, not its position. The loop settles; stop \
+             following Far wall · face to break it",
+            capitalised(name)
+        )
+    );
+    assert_ne!(
+        assembly_link::status(engine.project(), FileCheck::NotChecked).state,
+        LinkState::Cycle
+    );
+    let issues = pcbcraft_core::issues::report(
+        engine.project(),
+        engine.drafts(),
+        &pcbcraft_core::issues::IssueScope::All,
+    )?;
+    let row = issues
+        .rows
+        .iter()
+        .find(|r| r.finding.code == findings::ASSEMBLY_EXTENT_CYCLE)
+        .ok_or("Issues lists it")?;
+    assert_eq!(row.severity, Severity::Warning);
+    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    assert!(
+        report
+            .items
+            .iter()
+            .filter(|i| i.code.starts_with("assembly."))
+            .all(|i| !i.blocks()),
+        "fabrication output is not blocked"
+    );
+    // Built on the outline by position as well: a real loop again.
+    let engine = sketched()?;
+    let position = uses(&engine, DatumRole::BoardOutline, "Far wall")?;
+    let (engine, _) = followed_on(engine, vec![position])?;
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
+    assert!(link.cycles.iter().all(|c| c.via != UseKind::Extent));
+    assert_eq!(
+        assembly_link::status(engine.project(), FileCheck::NotChecked).state,
+        LinkState::Cycle
+    );
+    // A linked design feature never uses a datum by extent alone.
+    let mut by_extent = read(Vec::new());
+    by_extent.consumers = vec![Consumer {
+        via: UseKind::Extent,
+        ..uses(&engine, DatumRole::BoardTop, "Lid")?
+    }];
+    let mut fresh = sketched()?;
+    assert!(
+        apply(
+            &mut fresh,
+            Operation::Assembly(AssemblyCommand::RecordLink { read: by_extent }),
+        )
+        .is_err()
+    );
+    Ok(())
+}
+
+/// A design file's hash, as SolidCraft keeps it on the linked design's link.
+fn file(n: u8) -> ContentHash {
+    ContentHash([0x40 + n; 32])
+}
+
+/// Publish as the host does, recording `written` as the design file's hash.
+fn publish(engine: &mut Engine, written: ContentHash) -> Fallible<()> {
+    use pcbcraft_core::interface::InterfaceCommand;
+    use pcbcraft_core::interface::publish::{candidate, record};
+    let source = pcbcraft_core::ids::InterfaceSourceId(0x005e_edb5);
+    let sidecar = candidate(
+        engine.project(),
+        pcbcraft_core::model::interface::Tier::Interface,
+        source,
+    )?;
+    let mut record = record(engine.project(), &sidecar)?;
+    record.design_sha256 = Some(written);
+    apply(
+        engine,
+        Operation::Interface(InterfaceCommand::RecordPublish {
+            source_id: source,
+            record,
+        }),
+    )?;
+    Ok(())
+}
+
+/// Slice P1: the board and the linked design both changed since they last
+/// agreed (the board moved the cutout the far wall is built on and
+/// published; the linked design moved the wall while it still held the
+/// earlier board). The update is not refused for that: the preview lists
+/// both sides' changes and the conflicting item, the update without a
+/// choice is refused changing nothing, and the user's choice decides,
+/// through the typed command, which side wins.
+#[test]
+fn when_both_changed_the_user_chooses_which_side_wins() -> Fallible<()> {
+    use assembly_link::{ConflictItem, Resolution, Side};
+    let mut engine = sketched()?;
+    let [width, height] = engine.project().board_size;
+    let cut = created_curves_of(edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::AddRect {
+                a: [10.0, 10.0],
+                b: [16.0, 16.0],
+                construction: false,
+            },
+        }],
+    )?);
+    publish(&mut engine, file(1))?;
+    let cutout = uses(&engine, DatumRole::BoardCutout, "Far wall")?;
+    let (mut engine, _) = followed_on(engine, vec![cutout.clone()])?;
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
+    assert!(
+        link.cycles.is_empty(),
+        "the cutout does not follow the wall"
+    );
+    assert_eq!(
+        link.agreed.iter().map(|d| d.id).collect::<Vec<_>>(),
+        [cutout.datum],
+        "the datum the wall is built on, as last published"
+    );
+    // The board moves the cutout and publishes again.
+    edit(
+        &mut engine,
+        vec![BoardEdit::Sketch {
+            edit: SketchEdit::Move {
+                ids: cut.into_iter().map(SketchRef::Curve).collect(),
+                delta: [0.0, 2.0],
+            },
+        }],
+    )?;
+    publish(&mut engine, file(2))?;
+    // Meanwhile the linked design, holding the first publish, moved the wall
+    // 2 mm.
+    let mut both = read(vec![ReferenceRead {
+        id: FollowedFaceId(1),
+        status: ReferenceStatus::Resolved,
+        pick: Some([0.0, height + 3.0, 0.0]),
+        geometry: Some(line(height + 3.0, width)),
+        note: String::new(),
+        built_on: vec![cutout.clone()],
+    }]);
+    both.file_sha256 = ContentHash([2; 32]);
+    both.board_sha256 = Some(file(1));
+    assert!(assembly_link::both_changed(engine.project(), &both));
+    let conflicts = assembly_link::conflicts(engine.project(), &both);
+    let [conflict] = conflicts.as_slice() else {
+        return Err(format!("one conflict: {conflicts:?}").into());
+    };
+    assert_eq!(conflict.item, ConflictItem::Reference(FollowedFaceId(1)));
+    assert_eq!(conflict.name, "Far wall · face");
+    assert_eq!(
+        conflict.board,
+        format!(
+            "{} changed on the board",
+            capitalised(&cutout.name.to_lowercase())
+        )
+    );
+    assert_eq!(conflict.linked_design, "Far wall · face, 2 mm along Y");
+
+    // The preview: both sides' changes, the conflict, and what the update
+    // does with the linked design winning.
+    let mut fork = engine.fork();
+    let preview = assembly_link::preview(
+        engine.project(),
+        &mut fork,
+        both.clone(),
+        super::tests::hosted(),
+    );
+    assert_eq!(preview.refused, None);
+    assert_eq!(preview.conflicts, conflicts);
+    assert_eq!(
+        preview.board_changes.len(),
+        1,
+        "{:?}",
+        preview.board_changes
+    );
+    assert_eq!(
+        preview.findings.first().map(|f| f.code.as_str()),
+        Some(findings::ASSEMBLY_BOTH_CHANGED)
+    );
+    assert!(!preview.references.is_empty(), "the wall's move is listed");
+
+    // No choice: refused, nothing changed.
+    let before = engine.project().clone();
+    let revision = engine.revision();
+    let refused = apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: both.clone(),
+            resolve: Vec::new(),
+        }),
+    );
+    let Err(error) = refused else {
+        return Err("an update with an open conflict was applied".into());
+    };
+    assert_eq!(error.rule(), Some(findings::ASSEMBLY_BOTH_CHANGED));
+    assert!(error.to_string().contains("Far wall · face"), "{error}");
+    assert_eq!(engine.revision(), revision);
+    assert_eq!(*engine.project(), before);
+    // A choice for an item that is no conflict is refused.
+    let stray = apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: both.clone(),
+            resolve: vec![
+                Resolution {
+                    item: ConflictItem::Reference(FollowedFaceId(1)),
+                    wins: Side::Board,
+                },
+                Resolution {
+                    item: ConflictItem::Reference(FollowedFaceId(9)),
+                    wins: Side::Board,
+                },
+            ],
+        }),
+    );
+    assert!(stray.is_err());
+    assert_eq!(*engine.project(), before);
+
+    // The linked design wins: the top edge follows the wall.
+    let mut theirs = engine.fork();
+    apply(
+        &mut theirs,
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: both.clone(),
+            resolve: vec![Resolution {
+                item: ConflictItem::Reference(FollowedFaceId(1)),
+                wins: Side::LinkedDesign,
+            }],
+        }),
+    )?;
+    assert!((top(&theirs)? - (height + 2.0)).abs() <= 1e-9);
+
+    // The board wins: it keeps the wall where it was; the rest of the read
+    // is taken.
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: both.clone(),
+            resolve: vec![Resolution {
+                item: ConflictItem::Reference(FollowedFaceId(1)),
+                wins: Side::Board,
+            }],
+        }),
+    )?;
+    assert!((top(&engine)? - height).abs() <= 1e-9);
+    let link = engine.project().assembly_link.as_deref().ok_or("linked")?;
+    assert_eq!(
+        link.references.first().map(|r| r.geometry.clone()),
+        Some(line(height + 1.0, width))
+    );
+    assert_eq!(link.file_sha256, both.file_sha256);
+    Ok(())
+}
+
+/// Slice P1, a bound parameter: the board set `width` to 52 mm and
+/// published; the linked design, still holding the earlier board, changed
+/// the parameter bound to it. The binding is the item both changed; the
+/// user's choice decides the width.
+#[test]
+fn a_binding_both_sides_changed_is_chosen_too() -> Fallible<()> {
+    use assembly_link::{ConflictItem, Resolution, Side};
+    use pcbcraft_core::library::footprint_source::ParamName;
+    use pcbcraft_core::model::assembly_link::AssemblyBinding;
+    use pcbcraft_core::units::Nm;
+    let mut engine = sketched()?;
+    let width = engine.project().board_size[0];
+    publish(&mut engine, file(1))?;
+    let mut linked = read(Vec::new());
+    linked.board_sha256 = Some(file(1));
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordLink { read: linked }),
+    )?;
+    let param = ParamName("width".into());
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordBinding {
+            binding: AssemblyBinding {
+                board_param: param.clone(),
+                assembly_param: "inner".into(),
+                value: Nm::from_mm_f64_rounded(width)?,
+            },
+        }),
+    )?;
+    edit(&mut engine, vec![super::tests::set("width", "52 mm")])?;
+    publish(&mut engine, file(2))?;
+    let mut both = read(Vec::new());
+    both.file_sha256 = ContentHash([2; 32]);
+    both.board_sha256 = Some(file(1));
+    both.bindings = vec![assembly_link::BindingRead {
+        board_param: param.clone(),
+        value_mm: Some(70.0),
+    }];
+    let conflicts = assembly_link::conflicts(engine.project(), &both);
+    let [conflict] = conflicts.as_slice() else {
+        return Err(format!("one conflict: {conflicts:?}").into());
+    };
+    assert_eq!(conflict.item, ConflictItem::Binding(param.clone()));
+    assert_eq!(conflict.name, "Board parameter width");
+    assert_eq!(
+        conflict.board,
+        "Board parameter width set to 52 mm on the board"
+    );
+    assert_eq!(
+        conflict.linked_design,
+        "inner is 70 mm in the linked design"
+    );
+    let choose = |wins| {
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: both.clone(),
+            resolve: vec![Resolution {
+                item: ConflictItem::Binding(param.clone()),
+                wins,
+            }],
+        })
+    };
+    let mut theirs = engine.fork();
+    apply(&mut theirs, choose(Side::LinkedDesign))?;
+    assert!((theirs.project().board_size[0] - 70.0).abs() <= 1e-9);
+    apply(&mut engine, choose(Side::Board))?;
+    assert!((engine.project().board_size[0] - 52.0).abs() <= 1e-9);
+    Ok(())
 }

@@ -12,7 +12,7 @@ use crate::library::footprint_source::{ParamName, SketchRef};
 use crate::model::dimension::{
     BodyName, FaceName, FeatureGeometry, FollowedFaceId, ReferenceStatus,
 };
-use crate::model::interface::{DatumId, Slot};
+use crate::model::interface::{DatumId, PublishedDatum, Slot};
 use crate::units::Nm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -80,10 +80,19 @@ pub struct AssemblyLink {
     /// Loops between the two files: a followed face whose linked design
     /// geometry is built on a datum that itself follows the reference on
     /// the board. Derived after every edit that can change them
-    /// (`interface::assembly_link::follow_cycles`); each blocks fabrication
-    /// output.
+    /// (`interface::assembly_link::follow_cycles`); a loop through
+    /// positions blocks fabrication output, one through extents only is
+    /// advisory.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cycles: Vec<AssemblyCycle>,
+    /// The datums the link uses (its consumers' and what its followed
+    /// faces are built on), with the content hash each had in the publish
+    /// the linked design held when the two last agreed. A datum whose hash
+    /// differs now is one the board changed since: where the linked
+    /// design changed what depends on it too, the two conflict and an
+    /// update asks which side wins (`assembly.record_update`'s `resolve`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agreed: Vec<PublishedDatum>,
     /// Next [`FollowedFaceId`]; ids are never reused.
     pub next_ref: u32,
 }
@@ -100,6 +109,11 @@ pub enum UseKind {
     /// A joint places the board by it: the whole board frame in the
     /// linked design, and every followed face with it, depends on it.
     Joint,
+    /// A sketch projects the datum only to shape a profile in its own
+    /// plane, and the followed face is that sketch's plane: the datum sets
+    /// the face's extent, never its position. Only a followed face's
+    /// [`FollowedFace::built_on`] says this.
+    Extent,
 }
 
 impl UseKind {
@@ -187,8 +201,8 @@ pub struct AssemblyBinding {
 /// A linked design feature that uses one of the board's published datums
 /// (a sketch projecting a datum's face, a joint on it), as the board last
 /// read the linked design. A consumer whose datum no longer resolves is a
-/// broken reference (`assembly.reference_lost`), which blocks fabrication
-/// output.
+/// broken reference (`assembly.reference_lost`), a warning that blocks
+/// publishing to the linked design until it is resolved.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(deny_unknown_fields)]
 pub struct Consumer {

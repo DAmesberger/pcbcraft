@@ -16,7 +16,7 @@ use crate::library::package_model::{PackageEdit, edit_package};
 use crate::model::interface::Tier;
 use crate::{Engine, InstanceCommand, Operation};
 
-const SOURCE: InterfaceSourceId = InterfaceSourceId(0x005e_edb3);
+pub(super) const SOURCE: InterfaceSourceId = InterfaceSourceId(0x005e_edb3);
 
 /// The demo with an authored external opening on its package, opened as
 /// a file so its interface starts empty: each placement exports one
@@ -56,7 +56,7 @@ pub(super) fn first_placed(engine: &Engine) -> Fallible<(Id, [f64; 2], f64, crat
     Ok((p.instance, p.position, p.rotation_deg, p.layer))
 }
 
-fn move_by(engine: &mut Engine, instance: Id, by: [f64; 2]) -> Fallible {
+pub(super) fn move_by(engine: &mut Engine, instance: Id, by: [f64; 2]) -> Fallible {
     let p = engine
         .project()
         .placement_of(instance)

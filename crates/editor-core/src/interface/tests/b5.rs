@@ -159,6 +159,7 @@ fn b5_a_linked_design_holding_an_older_board_is_reported() -> Fallible {
         &mut engine,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(LINKED_DESIGN, Some(file(2))),
+            resolve: Vec::new(),
         }),
     )?;
     assert!(codes(&engine).is_empty());
@@ -188,11 +189,14 @@ fn b5_a_linked_design_holding_an_older_board_is_reported() -> Fallible {
 
 /// Conflict row "both changed": the linked design holds an older board and
 /// its own file changed. Its status says so once, instead of "changed"
-/// and "older"; an update from it is refused in the user's words, changing
-/// nothing; once the linked design holds the last publish the same update is
-/// applied.
+/// and "older", and asks for the preview. An update from it is not refused
+/// for that (slice P1): with no item both changed there is nothing to
+/// choose, so it is applied. A choice for an item that is no conflict is
+/// refused, changing nothing. Conflicting items and the choice between
+/// sides are tested where the sketch evaluator runs (`pcbcraft-solidcraft`
+/// `board::fixed_tests`).
 #[test]
-fn b5_both_changed_refuses_the_update() -> Fallible {
+fn b5_both_changed_asks_for_the_preview() -> Fallible {
     let mut engine = agreed()?;
     nudge(&mut engine)?;
     publish(&mut engine, file(2))?;
@@ -203,8 +207,8 @@ fn b5_both_changed_refuses_the_update() -> Fallible {
     assert_eq!(
         status.findings.first().map(|f| f.message.as_str()),
         Some(
-            "The board and the linked design both changed since they last agreed. Update the \
-             linked design first; nothing was applied"
+            "The board and the linked design both changed since they last agreed. Preview the \
+             update and choose which side wins where they conflict"
         )
     );
     // The linked design changed alone: only stale.
@@ -221,27 +225,44 @@ fn b5_both_changed_refuses_the_update() -> Fallible {
 
     let before = engine.project().clone();
     let revision = engine.revision();
-    let refused = engine.apply(
+    let stray = engine.apply(
         revision,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(EDITED, Some(file(1))),
+            resolve: vec![assembly_link::Resolution {
+                item: assembly_link::ConflictItem::Reference(
+                    crate::model::dimension::FollowedFaceId(1),
+                ),
+                wins: assembly_link::Side::Board,
+            }],
         }),
     );
-    let Err(error) = refused else {
-        return Err("an update from a linked design that changed on an older board".into());
+    let Err(error) = stray else {
+        return Err("a choice for an item that is no conflict".into());
     };
     assert_eq!(error.rule(), Some(ASSEMBLY_BOTH_CHANGED));
-    assert!(
-        error.to_string().contains("Update the linked design first"),
-        "{error}"
-    );
     assert_eq!(engine.revision(), revision);
     assert_eq!(*engine.project(), before);
-    // Updated in SolidCraft first: applied.
+    assert!(assembly_link::conflicts(engine.project(), &read(EDITED, Some(file(1)))).is_empty());
+    // Nothing both changed: applied. The linked design still holds the
+    // earlier board.
+    apply(
+        &mut engine,
+        Operation::Assembly(AssemblyCommand::RecordUpdate {
+            read: read(EDITED, Some(file(1))),
+            resolve: Vec::new(),
+        }),
+    )?;
+    assert_eq!(
+        assembly_link::status(engine.project(), FileCheck::Found(EDITED)).state,
+        LinkState::OlderBoard
+    );
+    // Updated in SolidCraft: in sync.
     apply(
         &mut engine,
         Operation::Assembly(AssemblyCommand::RecordUpdate {
             read: read(EDITED, Some(file(2))),
+            resolve: Vec::new(),
         }),
     )?;
     assert_eq!(

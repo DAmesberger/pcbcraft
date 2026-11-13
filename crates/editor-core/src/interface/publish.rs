@@ -10,8 +10,10 @@
 //! both files and records the publish with [`record`].
 //!
 //! [`preview`] is `interface.publish_preview`'s diff: per datum, against
-//! the recorded publish, and against the published sidecar when the host
-//! could read it, so a datum that moved says by how much.
+//! the published sidecar on disk when the host could read it (a publish,
+//! like a save, is no undo step, so the file is what the linked design
+//! sees), else against the recorded publish; a datum that moved says by
+//! how much.
 use super::report::{ChangeKind, DatumChange, PublishPreview};
 use super::sidecar::{FORMAT, UNITS};
 use super::{DatumGeometry, DatumStatus, Frame, Sidecar, SidecarDatum, Vec3, list, package};
@@ -147,6 +149,7 @@ pub fn record(project: &Project, sidecar: &Sidecar) -> Result<PublishedRecord> {
         datums,
         design_sha256: None,
         earlier: Vec::new(),
+        design_hint: None,
     })
 }
 
@@ -367,19 +370,36 @@ fn moved(before: &DatumGeometry, after: &DatumGeometry) -> Option<(Vec3, f64)> {
     }
 }
 
+/// What was published in a slot: its datum's content hash, when known.
+#[derive(Clone, Copy)]
+enum Baseline<'a> {
+    /// Nothing was published in the slot.
+    None,
+    /// Published, with this hash.
+    Hash(ContentHash),
+    /// Published without geometry (an unresolved slot of the sidecar on
+    /// disk): how it read is not known.
+    Unresolved,
+    /// Published, as the sidecar on disk holds it.
+    Datum(&'a SidecarDatum),
+}
+
 /// One live datum's change against what was published.
 fn change_of(
     datum: &SidecarDatum,
-    published: Option<&PublishedDatum>,
+    published: Baseline<'_>,
     before: Option<&SidecarDatum>,
 ) -> ChangeKind {
-    let Some(published) = published else {
-        return ChangeKind::Added;
+    let published = match published {
+        Baseline::None => return ChangeKind::Added,
+        Baseline::Unresolved => return ChangeKind::Changed,
+        Baseline::Hash(hash) => hash,
+        Baseline::Datum(d) => d.hash,
     };
-    if published.hash == datum.hash {
+    if published == datum.hash {
         return ChangeKind::Unchanged;
     }
-    let Some(before) = before.filter(|b| b.hash == published.hash) else {
+    let Some(before) = before.filter(|b| b.hash == published) else {
         return ChangeKind::Changed;
     };
     if before.status != datum.status {
@@ -399,10 +419,10 @@ fn change_of(
 
 /// `interface.publish_preview`'s diff: publishing `project` at `tier` (the
 /// last published tier, or the mechanical one, when omitted) against the
-/// recorded publish and, when given, the published sidecar (`previous`; it
-/// is not trusted for the comparison unless its datums' hashes are the
-/// recorded ones). Every live datum and every datum published and gone
-/// since, in slot order. Reads only.
+/// published sidecar on disk (`previous`, when it is this board's), or
+/// without it against the recorded publish. Every live datum and every
+/// datum published and gone since, in slot order, and what blocks the
+/// publish. Reads only.
 pub fn preview(
     project: &Project,
     tier: Option<Tier>,
@@ -420,8 +440,21 @@ pub fn preview(
     let previous = previous.filter(|p| table.source_id.is_none_or(|s| s == p.source_id));
     let candidate = candidate(project, tier, source)?;
     let record = table.published.as_ref();
-    let published = |slot: Slot| record.and_then(|r| r.datums.iter().find(|d| d.slot == slot));
     let before = |slot: Slot| previous.and_then(|p| p.datums.iter().find(|d| d.slot == slot));
+    // The file on disk is what the linked design sees; the record stands in
+    // for it when it cannot be read.
+    let published = |slot: Slot| -> Baseline<'_> {
+        match previous {
+            Some(p) => match before(slot) {
+                Some(d) => Baseline::Datum(d),
+                None if p.unresolved_slots.binary_search(&slot).is_ok() => Baseline::Unresolved,
+                None => Baseline::None,
+            },
+            None => record
+                .and_then(|r| r.datums.iter().find(|d| d.slot == slot))
+                .map_or(Baseline::None, |d: &PublishedDatum| Baseline::Hash(d.hash)),
+        }
+    };
     let rows = list::rows(project, &table)?;
     let mut changes: Vec<DatumChange> = Vec::new();
     for row in &rows {
@@ -429,9 +462,10 @@ pub fn preview(
             Some(datum) => change_of(datum, published(row.slot), before(row.slot)),
             // Unresolved now.
             None => match (published(row.slot), before(row.slot)) {
-                (None, _) => ChangeKind::Added,
-                (Some(p), _) if p.hash == list::datum_hash(row)? => ChangeKind::Unchanged,
-                (Some(_), Some(b)) if b.status != row.status => ChangeKind::StatusChanged {
+                (Baseline::None, _) => ChangeKind::Added,
+                (Baseline::Unresolved, _) => ChangeKind::Unchanged,
+                (Baseline::Hash(h), _) if h == list::datum_hash(row)? => ChangeKind::Unchanged,
+                (_, Some(b)) if b.status != row.status => ChangeKind::StatusChanged {
                     from: b.status,
                     to: row.status,
                 },
@@ -452,18 +486,26 @@ pub fn preview(
             change,
         });
     }
-    for gone in record.into_iter().flat_map(|r| r.datums.iter()) {
-        if rows.iter().any(|r| r.id == gone.id) {
+    let gone_ids: Vec<(crate::model::interface::DatumId, Slot)> = match previous {
+        Some(p) => p.datums.iter().map(|d| (d.id, d.slot)).collect(),
+        None => record
+            .into_iter()
+            .flat_map(|r| r.datums.iter())
+            .map(|d| (d.id, d.slot))
+            .collect(),
+    };
+    for (id, slot) in gone_ids {
+        if rows.iter().any(|r| r.id == id) {
             continue;
         }
-        let name = before(gone.slot).map_or_else(
-            || format!("The datum in slot {}", gone.slot.0),
+        let name = before(slot).map_or_else(
+            || format!("The datum in slot {}", slot.0),
             |b| b.name.clone(),
         );
         let change = ChangeKind::Retired;
         changes.push(DatumChange {
-            datum: gone.id,
-            slot: gone.slot,
+            datum: id,
+            slot,
             summary: summary(&name, &change),
             name,
             change,
@@ -472,7 +514,8 @@ pub fn preview(
     changes.sort_by_key(|c| c.slot);
     Ok(PublishPreview {
         document_revision,
-        from: record.map(|r| r.revision),
+        from: previous.map(|p| p.revision).or(record.map(|r| r.revision)),
+        blocked: super::assembly_link::publish_blockers(project),
         to: candidate.revision,
         hash: candidate.hash,
         tier,

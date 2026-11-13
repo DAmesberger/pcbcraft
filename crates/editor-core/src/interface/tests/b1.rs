@@ -14,7 +14,7 @@ use crate::library::footprint_source::{
 };
 use crate::library::{Segment, datum::DatumName};
 use crate::model::board::{
-    BoardFeatureId, BoardShape, BoardSketch, CutoutKind, MountingHoleRole, SolvedBoard,
+    BoardFeatureId, BoardShape, BoardSketch, CutoutKind, CutoutRole, MountingHoleRole, SolvedBoard,
     SolvedCutout, SolvedMountingHole,
 };
 use crate::model::dimension::{BoardRef, FeatureRef, FollowedFaceId, PadPoint};
@@ -68,8 +68,8 @@ fn square(min: [f64; 2], max: [f64; 2]) -> Outline {
     }
 }
 
-/// The demo project on a sketched 60 × 40 mm board with one cutout (whose
-/// loop starts at curve `l7`), two mounting holes (ids 1 and 2) and a
+/// The demo project on a sketched 60 × 40 mm board with one cutout (id 3,
+/// its loop curves `l7` to `l10`), two mounting holes (ids 1 and 2) and a
 /// `width` parameter, as a solved sketch stores them. Opened as a file, so
 /// its interface table is empty until the first change.
 fn sketched() -> Fallible<Engine> {
@@ -104,16 +104,20 @@ fn sketched() -> Fallible<Engine> {
             unit: ParamUnit::Mm,
             comment: String::new(),
         }],
-        cutouts: Vec::new(),
+        cutouts: vec![CutoutRole {
+            id: BoardFeatureId(3),
+            kind: CutoutKind::Cutout,
+            curves: curves.to_vec(),
+        }],
         holes: vec![role(1, "p1"), role(2, "p2")],
         edges: Vec::new(),
-        next_feature: 3,
+        next_feature: 4,
         solve: Default::default(),
         solved: SolvedBoard {
             outer: square([0.0, 0.0], [60.0, 40.0]),
             outer_curves: Vec::new(),
             cutouts: vec![SolvedCutout {
-                id: None,
+                id: Some(BoardFeatureId(3)),
                 kind: CutoutKind::Cutout,
                 outline: square([30.0, 20.0], [34.0, 24.0]),
                 curves: curves.to_vec(),
@@ -153,7 +157,7 @@ fn b1_automatic_rules_export_the_board() -> Fallible {
             "board.bottom",
             "board.thickness",
             "board.outline",
-            "cut.l7",
+            "cut3",
             "h1",
             "h2",
             "side.bottom",
@@ -198,7 +202,7 @@ fn b1_automatic_rules_export_the_board() -> Fallible {
         })
     );
     assert_eq!(by("h1").map(|d| d.name.as_str()), Some("Mounting hole 1"));
-    assert_eq!(by("cut.l7").map(|d| d.name.as_str()), Some("Cutout 1"));
+    assert_eq!(by("cut3").map(|d| d.name.as_str()), Some("Cutout 1"));
     // The tallest top part is the demo's two-terminal body.
     let Some(DatumGeometry::Volume { height, .. }) =
         by("side.top").and_then(|d| d.geometry.clone())
@@ -731,6 +735,7 @@ fn recording_a_publish_marks_what_changed_since() -> Fallible {
         datums: datums.clone(),
         design_sha256: None,
         earlier: Vec::new(),
+        design_hint: None,
     };
     let publish = |engine: &mut Engine, source_id, record| {
         apply(
@@ -816,20 +821,4 @@ fn undo_restores_an_automatic_datum_in_its_slot() -> Fallible {
     assert_eq!(carried.retired, [Slot(10)]);
     assert_eq!(carried.next_slot, 11);
     Ok(())
-}
-
-/// A cutout's datum belongs to its loop's oldest curve, by kind and then
-/// number, so a curve added to the loop later keeps the owner (and the
-/// token): `l7` before `l10`, whatever order the solve lists them in.
-#[test]
-fn a_cutout_keeps_its_owner_as_its_loop_grows() {
-    let ids = |names: &[&str]| -> Vec<SketchCurveId> {
-        names.iter().map(|n| SketchCurveId((*n).into())).collect()
-    };
-    let owner = |names: &[&str]| crate::interface::cutout_owner(&ids(names)).map(|c| c.0.clone());
-    assert_eq!(owner(&["l9", "l7", "l8"]).as_deref(), Some("l7"));
-    assert_eq!(owner(&["l9", "l7", "l8", "l10"]).as_deref(), Some("l7"));
-    assert_eq!(owner(&["l10", "l100", "l11"]).as_deref(), Some("l10"));
-    assert_eq!(owner(&["a3", "a12"]).as_deref(), Some("a3"));
-    assert_eq!(owner(&[]), None);
 }

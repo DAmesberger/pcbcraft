@@ -8,7 +8,6 @@
 //! The table is `Project::interface`; slice B1 keeps it through the
 //! `interface.*` commands and the automatic rules (`crate::interface::auto`).
 use crate::ids::{ContentHash, Id, InterfaceSourceId};
-use crate::library::footprint_source::SketchCurveId;
 use crate::model::board::BoardFeatureId;
 use crate::model::dimension::BoardRef;
 use schemars::JsonSchema;
@@ -70,10 +69,10 @@ pub enum DatumOwner {
     Instance { id: Id },
     /// A mounting hole, by board hole id.
     Hole { id: BoardFeatureId },
-    /// A cutout or slot of the board sketch, by the sketch curve that
-    /// starts its loop (the curve id of the lowest-ordered curve of the
-    /// loop; sketch curve ids are never reused).
-    Curve { id: SketchCurveId },
+    /// A cutout or slot of the board sketch, by its board feature id: every
+    /// inner loop has one, kept as its curves change and never reused, so
+    /// the owner does not depend on how its curves are named.
+    Cutout { id: BoardFeatureId },
 }
 
 /// What a datum is to its owner (docs/architecture/board-interface.md,
@@ -243,7 +242,17 @@ pub struct PublishedRecord {
     /// holds. Kept by `interface.record_publish`, never by the host.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub earlier: Vec<PublishedFile>,
+    /// Where the design was written, as the host gave it (relative to the
+    /// project's folder when it is inside it): the default for the next
+    /// publish, kept with the project so it survives restarts. A hint, as
+    /// an assembly link's `design_hint` is: the core and the session never
+    /// open it; the next publish names its own file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub design_hint: Option<String>,
 }
+
+/// Bytes of a published design's path as the record keeps it.
+pub const MAX_PUBLISHED_HINT: usize = 4096;
 
 /// Earlier published design files a record remembers.
 pub const MAX_PUBLISHED_FILES: usize = 64;

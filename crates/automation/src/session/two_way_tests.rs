@@ -3,7 +3,7 @@
 //! over the ESP32-S31 dev board example with an original headless
 //! SolidCraft assembly, as in B4's gate (`assembly_link_tests`). Rows B4
 //! already proves are named there: "a datum the linked design uses is gone"
-//! is `b4_deleting_j1_breaks_the_cutout_and_blocks_fabrication`, "the
+//! is `b4_deleting_j1_breaks_the_cutout_and_blocks_publishing`, "the
 //! linked design is missing or moved" `b4_a_missing_linked_design_keeps_the_snapshot`.
 use super::Session;
 use super::assembly_link_tests::{
@@ -182,13 +182,17 @@ fn b5_the_linked_design_holds_an_older_board_until_it_updates_links() -> TestRes
     Ok(())
 }
 
-/// Conflict row "both changed": the board published revision 2 while the
-/// linked design, still holding revision 1, was edited and saved (its far wall
-/// moved). The preview refuses in the user's words and says so as a
-/// finding; the update at the preview's hash is refused, changing
-/// nothing.
+/// Conflict row "both changed": the board published revision 2 (J1
+/// moved) while the linked design, still holding revision 1, was edited and
+/// saved (its far wall moved). Slice P1: the preview is not refused; it
+/// lists what the board changed beside the linked design's changes and says
+/// both changed. Nothing the board follows was changed on both sides, so
+/// there is no side to choose: a choice for an item that is no conflict is
+/// refused, changing nothing, and the update at the preview's hash is
+/// applied. (Conflicting items and the choice: `pcbcraft-solidcraft`'s
+/// `board::fixed_tests`.)
 #[test]
-fn b5_both_changed_refuses_the_update() -> TestResult {
+fn b5_both_changed_shows_both_sides() -> TestResult {
     let dir = tempfile::tempdir()?;
     let design = dir.path().join("board.solidcraft");
     let assembly_link = dir.path().join("assembly.solidcraft");
@@ -210,13 +214,18 @@ fn b5_both_changed_refuses_the_update() -> TestResult {
         &mut session,
         json!({"command": "assembly.preview", "params": files(&assembly_link, &design)}),
     )?;
-    let refused = preview["refused"].as_str().ok_or("refused")?;
+    assert!(preview["refused"].is_null(), "{preview}");
     assert!(
-        refused.contains(
-            "The board and the linked design both changed since they last agreed. Update the \
-             linked design first; nothing was applied"
-        ),
-        "{refused}"
+        preview["conflicts"].is_null(),
+        "nothing to choose: {preview}"
+    );
+    let board = preview["board_changes"]
+        .as_array()
+        .ok_or("the board's changes")?;
+    assert_eq!(
+        board,
+        &[json!("J1 opening, changed on the board")],
+        "{preview}"
     );
     let found: Vec<&Value> = preview["findings"]
         .as_array()
@@ -224,19 +233,29 @@ fn b5_both_changed_refuses_the_update() -> TestResult {
         .flatten()
         .filter(|f| f["code"] == "assembly.both_changed")
         .collect();
-    assert_eq!(found.len(), 1, "{preview}");
-    let update = session.dispatch(json!({"command": "assembly.update", "params": with(
-        files(&assembly_link, &design), json!({
-        "expect_hash": preview["expect_hash"], "expected_revision": revision}))}));
-    assert_eq!(update["ok"], false, "{update}");
-    assert!(
-        update
-            .to_string()
-            .contains("Update the linked design first"),
-        "{update}"
+    let [both] = found.as_slice() else {
+        return Err(format!("{preview}").into());
+    };
+    assert_eq!(
+        both["message"],
+        "The board and the linked design both changed since they last agreed. Preview the update \
+         and choose which side wins where they conflict"
     );
+    let stray = session.dispatch(json!({"command": "assembly.update", "params": with(
+        files(&assembly_link, &design), json!({
+        "expect_hash": preview["expect_hash"], "expected_revision": revision,
+        "resolve": [{"item": {"reference": 1}, "wins": "board"}]}))}));
+    assert_eq!(stray["ok"], false, "{stray}");
+    assert_eq!(stray["error"]["rule"], "assembly.both_changed", "{stray}");
     assert_eq!(session.engine().revision(), revision);
     assert_eq!(*session.engine().project(), before);
+    ok(
+        &mut session,
+        json!({"command": "assembly.update", "params": with(
+            files(&assembly_link, &design), json!({
+            "expect_hash": preview["expect_hash"], "expected_revision": revision}))}),
+    )?;
+    assert_eq!(status(&mut session)?["state"], "older_board");
     Ok(())
 }
 
@@ -365,11 +384,16 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> TestResult {
 
 /// Conflict rows "a cycle" and "the board's driven outline was edited
 /// locally", with the linked design half of the cycle graph read from the
-/// file: the linked design's far wall is a sketch projecting the board slab's
-/// top face, so it is built on the board outline; the board's top edge
-/// follows the far wall's inner face. The loop is named in both files'
-/// words, reads in the status and blocks fabrication; deleting the line
-/// the linked design drives is refused in the user's words.
+/// file: the linked design's far wall is a sketch on a fixed plane
+/// projecting the board slab's top face, so it is built on the board
+/// outline; the board's top edge follows the far wall's inner face. That
+/// face is the sketch's plane: the outline sets its extent, never its
+/// position, so the loop settles (slice P1). It is named in both files'
+/// words as a warning, reads no loop in the status and blocks nothing. The
+/// wall's end face, placed by the projected outline edge, is built on the
+/// outline by position (such a loop blocks fabrication output:
+/// `pcbcraft-solidcraft`'s `board::fixed_tests`). Deleting the line the
+/// linked design drives is refused in the user's words.
 #[test]
 fn b5_a_loop_between_board_and_linked_design_is_found() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -407,9 +431,18 @@ fn b5_a_loop_between_board_and_linked_design_is_found() -> TestResult {
             .any(|c| c["feature"] == "Far wall" && c["datum"] == outline.0),
         "{built_on:?}"
     );
+    let by_outline: Vec<&Value> = built_on
+        .iter()
+        .filter(|c| c["datum"] == outline.0)
+        .collect();
+    assert!(
+        by_outline.iter().all(|c| c["via"] == "extent"),
+        "the inner face's extent only: {by_outline:?}"
+    );
     let looped = status(&mut session)?;
-    assert_eq!(looped["state"], "cycle", "{looped}");
-    let found = findings(&looped, "assembly.cycle");
+    assert_eq!(looped["state"], "linked", "{looped}");
+    assert!(findings(&looped, "assembly.cycle").is_empty(), "{looped}");
+    let found = findings(&looped, "assembly.extent_cycle");
     let [finding] = found.as_slice() else {
         return Err(format!("{looped}").into());
     };
@@ -425,16 +458,42 @@ fn b5_a_loop_between_board_and_linked_design_is_found() -> TestResult {
     assert_eq!(
         finding["message"],
         format!(
-            "{capital} follows the linked design's Far wall · inner face, and the linked design builds \
-             ‘Far wall’ from {name}. Break the loop: stop following Far wall · inner face, or \
-             build ‘Far wall’ in SolidCraft without {name}"
+            "{capital} follows the linked design's Far wall · inner face, and the linked design \
+             takes the extent of ‘Far wall’ from {name}, not its position. The loop settles; \
+             stop following Far wall · inner face to break it"
         )
     );
-    let items = preflight(&mut session, "assembly.cycle")?;
+    let items = preflight(&mut session, "assembly.extent_cycle")?;
     let [item] = items.as_slice() else {
         return Err(format!("{items:?}").into());
     };
-    assert_eq!(item["severity"], "error");
+    assert_eq!(item["severity"], "warning");
+    assert!(preflight(&mut session, "assembly.cycle")?.is_empty());
+
+    // The wall's end face is placed by the projected outline edge.
+    let (mut read_back, newer) = LinkedDesign::open(&assembly_link.display().to_string())?;
+    assert!(!newer);
+    let end = faces(&mut read_back, "Far wall")?
+        .into_iter()
+        .find(|f| f.normal.is_some_and(|n| n[0] > 0.99))
+        .ok_or("the far wall's end face")?;
+    let revision = session.engine().revision();
+    let added = ok(
+        &mut session,
+        json!({"command": "assembly.follow", "params": with(files(&assembly_link, &design), json!({
+            "body": "Far wall", "face": end.name, "pick": end.point, "name": "Far wall · end",
+            "expected_revision": revision}))}),
+    )?;
+    let end_on = added["assembly"]["references"][1]["built_on"]
+        .as_array()
+        .ok_or("the end face is built on board datums")?;
+    assert!(
+        end_on
+            .iter()
+            // A sketch use, the default, is not written out.
+            .any(|c| c["datum"] == outline.0 && c.get("via").is_none_or(|v| v == "sketch")),
+        "by position: {end_on:?}"
+    );
 
     // The line the linked design drives is not the board's to delete.
     let revision = session.engine().revision();

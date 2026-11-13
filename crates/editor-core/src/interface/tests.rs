@@ -15,6 +15,7 @@ mod b1;
 mod b3;
 mod b4;
 mod b5;
+mod p1;
 mod package_datums;
 mod skeletons;
 
@@ -86,14 +87,14 @@ fn tokens_are_built_from_ids_only() -> Fallible {
                 3,
                 2,
                 key(
-                    DatumOwner::Curve {
-                        id: SketchCurveId("l7".into()),
+                    DatumOwner::Cutout {
+                        id: BoardFeatureId(7),
                     },
                     DatumRole::BoardCutout,
                     None,
                 ),
             ),
-            "cut.l7",
+            "cut7",
         ),
         (
             datum(
@@ -164,8 +165,8 @@ fn keys_hold_their_owner_and_name_syntax() {
         key(DatumOwner::Board, DatumRole::BoardParameter, Some("2w")),
         // A feature cannot belong to a cutout loop.
         key(
-            DatumOwner::Curve {
-                id: SketchCurveId("l1".into()),
+            DatumOwner::Cutout {
+                id: BoardFeatureId(1),
             },
             DatumRole::Feature,
             None,
@@ -177,23 +178,6 @@ fn keys_hold_their_owner_and_name_syntax() {
             .and_then(|e| e.rule().map(str::to_owned));
         assert_eq!(refusal.as_deref(), Some("interface.key"), "{k:?}");
     }
-}
-
-#[test]
-fn a_cutout_curve_id_outside_token_syntax_is_refused() {
-    let odd = datum(
-        1,
-        0,
-        key(
-            DatumOwner::Curve {
-                id: SketchCurveId("l 7".into()),
-            },
-            DatumRole::BoardCutout,
-            None,
-        ),
-    );
-    let rule = token(&odd).err().and_then(|e| e.rule().map(str::to_owned));
-    assert_eq!(rule.as_deref(), Some("interface.token"));
 }
 
 #[test]
@@ -497,18 +481,31 @@ fn commands_have_their_wire_names_and_refuse_unknown_fields() -> Fallible {
 fn every_finding_code_is_listed_once() {
     let codes: std::collections::BTreeSet<&str> = findings::CODES.iter().map(|c| c.code).collect();
     assert_eq!(codes.len(), findings::CODES.len());
-    // Lost and inexact references block fabrication with no waiver, as for
-    // part dimensions.
-    for code in [
-        findings::ASSEMBLY_REFERENCE_LOST,
-        findings::ASSEMBLY_REFERENCE_INEXACT,
-    ] {
-        let spec = findings::CODES.iter().find(|c| c.code == code);
-        assert!(
-            spec.is_some_and(|s| s.blocks_fabrication && !s.waivable),
-            "{code}"
-        );
-    }
+    // A broken assembly reference blocks only publishing to the linked
+    // design; an inexact one blocks nothing.
+    let spec = |code: &str| findings::CODES.iter().find(|c| c.code == code).copied();
+    assert!(
+        spec(findings::ASSEMBLY_REFERENCE_LOST)
+            .is_some_and(|s| !s.blocks_fabrication && s.blocks_publish)
+    );
+    assert!(
+        spec(findings::ASSEMBLY_REFERENCE_INEXACT)
+            .is_some_and(|s| !s.blocks_fabrication && !s.blocks_publish)
+    );
+    // A loop through positions blocks fabrication with no waiver; one
+    // through extents only is advisory.
+    assert!(spec(findings::ASSEMBLY_CYCLE).is_some_and(|s| s.blocks_fabrication && !s.waivable));
+    assert!(
+        spec(findings::ASSEMBLY_EXTENT_CYCLE)
+            .is_some_and(|s| !s.blocks_fabrication && !s.blocks_publish)
+    );
+    // Only broken references block publishing.
+    let publishing: Vec<&str> = findings::CODES
+        .iter()
+        .filter(|c| c.blocks_publish)
+        .map(|c| c.code)
+        .collect();
+    assert_eq!(publishing, [findings::ASSEMBLY_REFERENCE_LOST]);
     assert_eq!(
         findings::unpublished(3, Some(14)).message,
         "3 datums changed since revision 14"

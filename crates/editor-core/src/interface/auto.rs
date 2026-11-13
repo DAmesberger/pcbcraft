@@ -49,9 +49,9 @@ pub fn needed(project: &Project, table: &InterfaceTable) -> Vec<(AutoRule, Datum
                 .board()
                 .cutouts
                 .iter()
-                .filter_map(|c| super::cutout_owner(&c.curves))
-                .map(|curve| DatumKey {
-                    owner: DatumOwner::Curve { id: curve.clone() },
+                .filter_map(|c| c.id)
+                .map(|id| DatumKey {
+                    owner: DatumOwner::Cutout { id },
                     role: DatumRole::BoardCutout,
                     name: None,
                 })
@@ -177,13 +177,17 @@ pub fn follow(before: &Project, after: &Project) -> Result<Option<InterfaceTable
 /// is ever handed out twice. An automatic datum `current` holds that the
 /// restored board still needs keeps its slot and id (undoing a document's
 /// first edit does not renumber the board's own datums); every other slot
-/// the restored table does not hold is retired. `None` when nothing
-/// changes.
+/// the restored table does not hold is retired. A publish, like a save, is
+/// no undo step: the board's interface identity and its last publish
+/// record (with where it was written) are `current`'s, whichever document
+/// is restored. `None` when nothing changes.
 pub fn carry(current: &InterfaceTable, restored: &Project) -> Result<Option<InterfaceTable>> {
     let table: &InterfaceTable = &restored.interface;
     let mut next = table.clone();
     next.next_slot = table.next_slot.max(current.next_slot);
     next.next_datum = table.next_datum.max(current.next_datum);
+    next.source_id = current.source_id;
+    next.published.clone_from(&current.published);
     let wanted: BTreeMap<DatumKey, AutoRule> = needed(restored, table)
         .into_iter()
         .map(|(r, k)| (k, r))

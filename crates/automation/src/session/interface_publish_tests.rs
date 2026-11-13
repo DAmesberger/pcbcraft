@@ -300,7 +300,9 @@ fn b3_the_preview_lists_the_one_moved_datum() -> TestResult {
     assert!((x - 2.0).abs() <= 1e-9, "{offset:?}");
     let second = publish(&mut session, &design, "interface")?;
     assert_eq!(second["published"]["revision"], 2);
-    // One undo step: the record goes back, the files stay.
+    // A publish, like a save, is no undo step: undo takes back the move
+    // before it and keeps the record, and the preview compares with the
+    // file on disk, which holds the move.
     let revision = session.engine().revision();
     ok(
         &mut session,
@@ -314,8 +316,15 @@ fn b3_the_preview_lists_the_one_moved_datum() -> TestResult {
             .published
             .as_ref()
             .map(|r| r.revision),
-        Some(1)
+        Some(2)
     );
+    let back = self::preview(&mut session, &design)?;
+    assert_eq!(back["from"], 2, "the revision on disk");
+    let changed = changes(&back);
+    let [only] = changed.as_slice() else {
+        return Err(format!("{} changed: {changed:?}", changed.len()).into());
+    };
+    assert_eq!(only["summary"], "J1 opening, -2 mm along X");
     Ok(())
 }
 
@@ -644,5 +653,52 @@ fn b3_publishing_the_interface_tier_is_under_100_ms() -> TestResult {
     let median = times.get(times.len() / 2).copied().unwrap_or(f64::NAN);
     eprintln!("interface.publish, interface tier, ESP32: median {median:.1} ms, all {times:.1?}");
     assert!(median < 100.0, "{median} ms");
+    Ok(())
+}
+
+/// Slice P1: the project keeps where it published, relative to its folder
+/// when the design lies inside it, else as given, so the next publish
+/// defaults there after a restart; saved and opened again, it holds.
+#[test]
+fn the_project_keeps_where_it_published() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let mut session = open(dir.path())?;
+    let hint = |session: &Session| {
+        session
+            .engine()
+            .project()
+            .interface
+            .published
+            .as_ref()
+            .and_then(|r| r.design_hint.clone())
+    };
+    std::fs::create_dir_all(dir.path().join("shared"))?;
+    publish(
+        &mut session,
+        &dir.path().join("shared").join("board.solidcraft"),
+        "interface",
+    )?;
+    assert_eq!(
+        hint(&session).map(std::path::PathBuf::from),
+        Some(Path::new("shared").join("board.solidcraft"))
+    );
+    let elsewhere = tempfile::tempdir()?;
+    let outside = elsewhere.path().join("board.solidcraft");
+    publish(&mut session, &outside, "interface")?;
+    let kept = hint(&session).ok_or("a hint")?;
+    assert!(Path::new(&kept).is_absolute(), "{kept}");
+    assert_eq!(Path::new(&kept).file_name(), outside.file_name(), "{kept}");
+    let saved = dir.path().join("board.pcbcraft");
+    ok(
+        &mut session,
+        json!({"command": "project.save", "params": {"path": saved.display().to_string()}}),
+    )?;
+    let mut reopened = Session::new(Engine::default());
+    ok(
+        &mut reopened,
+        json!({"command": "project.open", "params": {"expected_revision": 0,
+            "path": saved.display().to_string()}}),
+    )?;
+    assert_eq!(hint(&reopened), Some(kept));
     Ok(())
 }
