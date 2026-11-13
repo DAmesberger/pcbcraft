@@ -107,9 +107,7 @@ fn a_package_uses_the_part_file_in_one_step_and_refusals_change_nothing() -> Tes
     // licence is refused too.
     let dir = tempfile::tempdir()?;
     let own = dir.path().join("own.solidcraft");
-    let mut bytes = sparksmith_solidcraft::models::part_file::builtin(BUILTIN)
-        .ok_or("builtin")?
-        .to_vec();
+    let mut bytes = super::builtin_parts()?.require(BUILTIN)?.bytes.to_vec();
     bytes.push(b'\n');
     std::fs::write(&own, bytes)?;
     let unlicensed = call(

@@ -1031,32 +1031,6 @@ pub fn insert_design(
     })
 }
 
-/// Sparksmith's built-in part files (`library/parts/`, original work,
-/// MIT OR Apache-2.0), by name.
-pub const BUILTIN: &[(&str, &[u8])] = &[
-    (
-        "esp32-s31-wroom-3",
-        include_bytes!("../../../../library/parts/esp32-s31-wroom-3.solidcraft"),
-    ),
-    (
-        "smd-nut",
-        include_bytes!("../../../../library/parts/smd-nut.solidcraft"),
-    ),
-    (
-        "round-spacer",
-        include_bytes!("../../../../library/parts/round-spacer.solidcraft"),
-    ),
-    (
-        "finned-heatsink",
-        include_bytes!("../../../../library/parts/finned-heatsink.solidcraft"),
-    ),
-];
-
-/// The bytes of the built-in part file `name`.
-pub fn builtin(name: &str) -> Option<&'static [u8]> {
-    BUILTIN.iter().find(|(n, _)| *n == name).map(|(_, b)| *b)
-}
-
 #[cfg(test)]
 #[path = "part_file_tests.rs"]
 mod tests;

@@ -1,7 +1,7 @@
 //! The part-file chooser (docs/mechanical-parts.md M5): one Solidcraft-
 //! styled sheet for every place that picks a SolidCraft part file. The
 //! source list on the left offers the built-in part files
-//! (`part_file::BUILTIN`), the project's Models of format `solidcraft`, the
+//! (the shipped library's, `part_files::builtin_parts`), the project's Models of format `solidcraft`, the
 //! recent files (at most eight, kept per user) and Open file… (the native
 //! picker). The detail pane on the right shows the check report of the
 //! highlighted source at the edited values: findings (blocking in red,
@@ -36,8 +36,6 @@ pub const MAX_RECENT: usize = sparksmith_io::settings::MAX_RECENT_PART_FILES;
 /// The id of the sheet.
 const SHEET: &str = "part-chooser";
 const KEYS: &str = "Click a source · Esc close";
-/// Licence of Sparksmith's built-in part files.
-const BUILTIN_LICENCE: &str = "MIT OR Apache-2.0";
 /// Bytes of a stated licence.
 const MAX_LICENCE: usize = 128;
 /// The value range of a length, angle or number (`PartValue::finite`).
@@ -50,7 +48,7 @@ const COUNT_RANGE: std::ops::RangeInclusive<f64> = 0.0..=10000.0;
 pub enum PartSource {
     /// A `.solidcraft` file on disk.
     Path(PathBuf),
-    /// A built-in part file, by name (`esp32-s31-wroom-3`).
+    /// A built-in part file of the shipped library, by its file's stem.
     Builtin(String),
     /// A Model revision of format `solidcraft` the project holds.
     Model(ModelRef),
@@ -607,16 +605,22 @@ pub fn source_rows(engine: &Engine, recent: &[PathBuf]) -> [(&'static str, Vec<S
     ]
 }
 
+/// The shipped built-in part files; none when the shipped library could not
+/// be read (opening the sheet says why).
 fn builtin_rows() -> Vec<SourceRow> {
-    part_file::BUILTIN
+    let Ok(parts) = part_files::builtin_parts() else {
+        return Vec::new();
+    };
+    parts
+        .all()
         .iter()
-        .map(|(name, bytes)| SourceRow {
-            source: PartSource::Builtin((*name).to_owned()),
-            label: (*name).to_owned(),
+        .map(|part| SourceRow {
+            source: PartSource::Builtin(part.name.clone()),
+            label: part.name.clone(),
             detail: format!(
                 "Built-in · {} · {}",
-                BUILTIN_LICENCE,
-                size_label(u64::try_from(bytes.len()).unwrap_or(u64::MAX))
+                part.licence,
+                size_label(u64::try_from(part.bytes.len()).unwrap_or(u64::MAX))
             ),
         })
         .collect()
@@ -645,11 +649,17 @@ impl PartChooser {
     pub fn open(&mut self, mode: ChooserMode, source: Option<PartSource>, values: PartValues) {
         self.mode = Some(mode);
         self.refusal = None;
-        let source = source.or_else(|| {
-            part_file::BUILTIN
+        let first = match part_files::builtin_parts() {
+            Ok(parts) => parts
+                .all()
                 .first()
-                .map(|(n, _)| PartSource::Builtin((*n).to_owned()))
-        });
+                .map(|part| PartSource::Builtin(part.name.clone())),
+            Err(error) => {
+                self.refusal = Some(shown_message(&error.diagnostic().message));
+                None
+            }
+        };
+        let source = source.or(first);
         match source {
             Some(source) => self.select_with(source, values),
             None => self.selected = None,
@@ -1004,7 +1014,10 @@ impl PartChooser {
         let (name, licence) = match &selected {
             PartSource::Builtin(name) => (
                 format!("{name}.solidcraft"),
-                Some(BUILTIN_LICENCE.to_owned()),
+                part_files::builtin_parts()
+                    .ok()
+                    .and_then(|parts| parts.get(name))
+                    .map(|part| part.licence.clone()),
             ),
             PartSource::Model(model) => {
                 match crate::model_library::model_definition(engine, *model) {

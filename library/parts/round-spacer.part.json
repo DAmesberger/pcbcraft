@@ -1,0 +1,13 @@
+{
+  "format": 1,
+  "name": "round-spacer",
+  "title": "Round spacer",
+  "summary": "Round PA9T spacer: a tube (inner_d, outer_d, height) over a bare hole.",
+  "use": "mechanical",
+  "prefix": "H",
+  "lands": [
+    {"hole": {"diameter": {"param": "inner_d", "add_mm": 0.0}}}
+  ],
+  "licence": "MIT OR Apache-2.0",
+  "provenance": "Original work, authored through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; generic illustrative dimensions and land sizes (verify against the chosen part), no vendor drawing or EDA/CAD library data copied."
+}

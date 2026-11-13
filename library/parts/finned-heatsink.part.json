@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "finned-heatsink",
+  "title": "Finned heatsink",
+  "summary": "Aluminium heatsink: a base plate and fin_count fins along x, one body (length, width, height, base_height, fin_count, fin_thickness).",
+  "use": "mechanical",
+  "prefix": "HS",
+  "lands": [],
+  "licence": "MIT OR Apache-2.0",
+  "provenance": "Original work, authored through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; generic illustrative dimensions, no vendor drawing or EDA/CAD library data copied."
+}

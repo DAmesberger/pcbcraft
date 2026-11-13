@@ -64,16 +64,18 @@ fn has(texts: &[(String, egui::Pos2)], text: &str) -> bool {
 #[test]
 fn the_chooser_lists_the_builtins_and_the_projects_part_files() -> TestResult {
     let engine = Engine::default();
+    let shipped = part_files::builtin_parts()?.all();
+    assert!(!shipped.is_empty());
     let groups = source_rows(&engine, &["/parts/nut.solidcraft".into()]);
     let names: Vec<&str> = groups.iter().map(|(g, _)| *g).collect();
     assert_eq!(names, ["Built-in", "This project", "Recent files"]);
-    assert_eq!(groups[0].1.len(), part_file::BUILTIN.len());
-    for (name, _) in part_file::BUILTIN {
+    assert_eq!(groups[0].1.len(), shipped.len());
+    for name in shipped.iter().map(|p| p.name.as_str()) {
         assert!(
             groups[0]
                 .1
                 .iter()
-                .any(|r| r.source == PartSource::Builtin((*name).into()) && r.label == *name)
+                .any(|r| r.source == PartSource::Builtin(name.into()) && r.label == name)
         );
     }
     assert!(
@@ -93,11 +95,10 @@ fn the_chooser_lists_the_builtins_and_the_projects_part_files() -> TestResult {
         chooser.show(ui.ctx(), &engine);
     });
     assert!(
-        has(&texts, &format!("BUILT-IN  {}", part_file::BUILTIN.len()))
-            && has(&texts, "THIS PROJECT  0"),
+        has(&texts, &format!("BUILT-IN  {}", shipped.len())) && has(&texts, "THIS PROJECT  0"),
         "{texts:?}"
     );
-    for (name, _) in part_file::BUILTIN {
+    for name in shipped.iter().map(|p| p.name.as_str()) {
         assert!(has(&texts, name), "{name} listed: {texts:?}");
     }
     assert!(has(&texts, "Open file…"));
@@ -106,8 +107,9 @@ fn the_chooser_lists_the_builtins_and_the_projects_part_files() -> TestResult {
 }
 
 #[test]
-fn the_place_mode_names_its_primary() {
+fn the_place_mode_names_its_primary() -> TestResult {
     let engine = Engine::default();
+    let shipped = part_files::builtin_parts()?.all();
     let mut frames = Frames::new();
     let mut chooser = PartChooser::default();
     chooser.open(ChooserMode::Place, None, PartValues::new());
@@ -119,13 +121,10 @@ fn the_place_mode_names_its_primary() {
         chooser.show(ui.ctx(), &engine);
     });
     assert!(
-        has(&texts, "Place")
-            && has(
-                &texts,
-                &format!("PLACE 3D PART  {}", part_file::BUILTIN.len())
-            ),
+        has(&texts, "Place") && has(&texts, &format!("PLACE 3D PART  {}", shipped.len())),
         "{texts:?}"
     );
+    Ok(())
 }
 
 #[test]
@@ -200,7 +199,7 @@ fn a_builtin_is_checked_off_the_ui_thread_and_its_parameters_shown() -> TestResu
     );
     assert!(has(&texts, "can_height"));
     assert!(has(&texts, "esp32-s31-wroom-3.solidcraft"));
-    assert!(has(&texts, BUILTIN_LICENCE));
+    assert!(has(&texts, "MIT OR Apache-2.0"));
     // Use returns exactly what was checked.
     let at = texts
         .iter()
@@ -225,7 +224,7 @@ fn a_builtin_is_checked_off_the_ui_thread_and_its_parameters_shown() -> TestResu
     let pick = pick.ok_or("Use picked")?;
     assert_eq!(pick.source, PartSource::Builtin("esp32-s31-wroom-3".into()));
     assert!(pick.values.is_empty());
-    assert!(pick.file.builtin);
+    assert!(pick.file.builtin.is_some());
     assert_eq!(pick.licence, None);
     assert!(chooser.is_open(), "the caller closes it once applied");
     Ok(())

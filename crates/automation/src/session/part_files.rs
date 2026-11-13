@@ -30,12 +30,12 @@ use sparksmith_core::{Engine, Operation};
 use sparksmith_solidcraft::models::part_file::{self, PartReport, PartValues};
 use std::path::Path;
 
+pub use super::shipped_parts::{BuiltinPart, builtin_parts};
+
 /// Longest accepted path, bytes.
 const MAX_PATH: usize = 4095;
 /// The media type of a part file asset.
 const MEDIA_TYPE: &str = "application/x-solidcraft";
-/// Licence of Sparksmith's built-in part files.
-const BUILTIN_LICENCE: &str = "MIT OR Apache-2.0";
 
 /// `library.check_part_file`: a file (`path`) or a built-in part file
 /// (`builtin`), and values for some of its parameters.
@@ -95,10 +95,10 @@ fn invalid(message: String) -> crate::Error {
 #[derive(Clone, Debug)]
 pub struct PartFileBytes {
     pub bytes: Vec<u8>,
-    /// The file name (`esp32-s31-wroom-3.solidcraft`).
+    /// The file name (`NAME.solidcraft`).
     pub file_name: String,
-    /// One of Sparksmith's built-in part files (MIT OR Apache-2.0).
-    pub builtin: bool,
+    /// The shipped data of a built-in part file; `None` for any other file.
+    pub builtin: Option<&'static BuiltinPart>,
 }
 
 /// Read exactly one of a file `path` (bounded, `.solidcraft`) and a
@@ -127,21 +127,15 @@ pub fn read_part_file(path: Option<&str>, builtin: Option<&str>) -> Result<PartF
             Ok(PartFileBytes {
                 bytes: sparksmith_io::persistence::read_bytes(p)?,
                 file_name,
-                builtin: false,
+                builtin: None,
             })
         }
         (None, Some(name)) => {
-            let bytes = part_file::builtin(name).ok_or_else(|| {
-                let known: Vec<&str> = part_file::BUILTIN.iter().map(|(n, _)| *n).collect();
-                invalid(format!(
-                    "part_file.read: no built-in part file {name}; built-ins: {}",
-                    known.join(", ")
-                ))
-            })?;
+            let builtin = builtin_parts()?.require(name)?;
             Ok(PartFileBytes {
-                bytes: bytes.to_vec(),
-                file_name: format!("{name}.solidcraft"),
-                builtin: true,
+                bytes: builtin.bytes.to_vec(),
+                file_name: builtin.file_name(),
+                builtin: Some(builtin),
             })
         }
         _ => Err(invalid(
@@ -212,7 +206,7 @@ pub fn model_part_file(engine: &Engine, model: ModelRef) -> Result<PartFileBytes
     Ok(PartFileBytes {
         bytes,
         file_name: definition.asset.file_name.clone(),
-        builtin: false,
+        builtin: None,
     })
 }
 
@@ -286,8 +280,8 @@ pub fn use_part_file_operation(
             )))],
         }),
         None => {
-            let licence = if file.builtin {
-                Some(BUILTIN_LICENCE.to_owned())
+            let licence = if let Some(builtin) = file.builtin {
+                Some(builtin.licence.clone())
             } else {
                 Some(
                     request
@@ -313,14 +307,14 @@ pub fn use_part_file_operation(
                 format: ModelFormat::Solidcraft,
                 bounds_nm: sparksmith_core::library::model3d::bounds_nm(as_is.bounds_mm)?,
                 provenance: ModelProvenance {
-                    redistribution: if file.builtin {
+                    redistribution: if file.builtin.is_some() {
                         Redistribution::Permitted
                     } else {
                         request.redistribution.unwrap_or_default()
                     },
                     record: Provenance {
                         origin: None,
-                        basis: if file.builtin {
+                        basis: if file.builtin.is_some() {
                             Basis::Authored
                         } else {
                             Basis::Imported

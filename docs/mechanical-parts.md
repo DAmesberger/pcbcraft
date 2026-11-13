@@ -234,7 +234,7 @@ The parts are original parametric designs, authored through Solidcraft's command
   - Core: `library/mechanical.rs`: `PartSpec`, `MechanicalPart`, `MechanicalLand`, `variant_key`, `find_variant`, `make_variant` (the set is published through `library::publish` over a scratch draft set), `in_bom`, `in_pick_and_place`.
   - The commands are in `layout/part.rs` (`layout.place_part`, `layout.set_part`, `layout.remove_part`), with `Outcome::PartPlaced`.
   - `instances::place_off_sheet` creates the instance with its unit unused.
-  - Automation: `session/mechanical_parts.rs`: `BUILTIN_PARTS` and their land rules, `place_part_operation`, `set_part_operation`, `placed_part`, and the three requests. MCP exposes them as `library_part_files`, `layout_place_part_file` and `layout_set_part_file_values` (generated from the catalog).
+  - Automation: `session/shipped_parts.rs` reads the built-in part files and their sidecars (`library/parts/NAME.part.json`: title, summary, prefix, use, land rules, licence, provenance); `session/mechanical_parts.rs`: `place_part_operation`, `set_part_operation`, `placed_part`, and the three requests. MCP exposes them as `library_part_files`, `layout_place_part_file` and `layout_set_part_file_values` (generated from the catalog).
   - CLI: `sparksmith part list`.
   - Desktop:
     - `part_chooser.rs`: one sheet for Use and Place, with its worker-thread `Evaluator`;
