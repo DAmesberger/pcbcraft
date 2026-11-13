@@ -310,14 +310,19 @@ fn review_lock(built: &[Built], host: &str) -> Result<(Vec<String>, Vec<String>)
     Ok((failures, notes))
 }
 
-/// Record `built` for `host`. A module whose hash on this host changed
-/// keeps no other host's hash: those are stale until rebuilt there.
+/// Record `built` for `host`. A module whose recorded hash on this host
+/// changed keeps no other host's hash: those are stale until rebuilt
+/// there. A host recording its first hash adds it beside the others,
+/// since bytes differ per host even from the same source.
 fn update_lock(built: &[Built], host: &str) -> Result<()> {
     let lock = read_lock()?;
     let mut modules = Vec::new();
     for b in built {
         let mut hosts = recorded(&lock, &b.name).cloned().unwrap_or_default();
-        if hosts.get(host).and_then(Value::as_str) != Some(b.sha256.as_str()) {
+        let before = hosts.get(host).and_then(Value::as_str);
+        if before.is_none() {
+            hosts.insert(host.to_string(), Value::String(b.sha256.clone()));
+        } else if before != Some(b.sha256.as_str()) {
             let stale: Vec<&String> = hosts.keys().filter(|h| *h != host).collect();
             if !stale.is_empty() {
                 eprintln!(
