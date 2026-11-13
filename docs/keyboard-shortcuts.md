@@ -150,7 +150,7 @@ Changing any of these keys would also change a key tip, because a tip equals a c
 
 ## 3D navigation
 
-The PCB 3D view has a navigation cube in its top-right corner. It follows Solidcraft's cube: click a face for that side's view, click a corner square for that corner's isometric view, or drag the cube to orbit. The house button above the cube goes home (isometric, fitted). The same views are the PCB 3D commands above (registry commands, rebindable in Settings and shown by the key reveal; 1–7 belong to PCB 3D and the layer keys 1–0 to Layout, sibling contexts that never see each other's keys), and the canvas hint at the bottom left names the trackpad gestures. The Keyboard shortcuts sheet lists every gesture under PCB › 3D (`navigation::NAVIGATION_3D`):
+The PCB 3D view has a navigation cube in its top-right corner. It follows Solidcraft's cube: click a face for that side's view, click a corner square for that corner's isometric view, or drag the cube to orbit. The house button above the cube goes home (isometric, fitted). The same views are the PCB 3D commands above (registry commands, rebindable in Settings and shown by the key reveal; 1–7 belong to PCB 3D and the layer keys 1–0 to Layout, sibling contexts that never see each other's keys), and the canvas hint at the bottom left names the gestures of the device last used to navigate: the mouse's buttons after a middle or right drag or a wheel notch, the trackpad's after a two-finger scroll or a pinch, and both before either (`navigation::Device`). The key reveal's navigation line follows it the same way, in 3D and on the flat canvases. The Keyboard shortcuts sheet lists every gesture under PCB › 3D (`navigation::NAVIGATION_3D`):
 
 | Input | Trackpad | Mouse |
 | --- | --- | --- |
@@ -159,4 +159,4 @@ The PCB 3D view has a navigation cube in its top-right corner. It follows Solidc
 | Zoom toward the pointer | Pinch | Wheel |
 | Fit | F | Middle double-click |
 
-A plain left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Sparksmith follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.
+A plain or Shift left-drag on empty space does not orbit. In Solidcraft's Fusion preset, which Sparksmith follows, a left-drag on empty space is box selection. In PCB 3D the left button also selects and drives the move gizmo, so a bare drag that sometimes orbits and sometimes selects or moves would be ambiguous. ⌘-drag on empty space and the cube give a left-button orbit that cannot be confused with either.

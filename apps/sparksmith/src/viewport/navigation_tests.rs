@@ -305,6 +305,39 @@ fn middle_drag_pans_and_shift_middle_orbits() -> Result<()> {
     Ok(())
 }
 
+/// The canvas hint names the device in hand: both before any navigation,
+/// the mouse's buttons after a right drag or a wheel notch, the trackpad's
+/// gestures after a two-finger swipe or a pinch.
+#[test]
+fn the_hint_follows_the_device_in_hand() -> Result<()> {
+    use crate::navigation::{Device, hint_3d};
+    let mut nav = Nav::new(NavCaps::BOARD)?;
+    let at = nav.rect()?.center();
+    let hint = |nav: &Nav| hint_3d(Device::last(&nav.ctx));
+    assert_eq!(Device::last(&nav.ctx), Device::Unknown);
+    assert!(hint(&nav).contains("Right-drag") && hint(&nav).contains("two fingers"));
+    nav.drag(
+        PointerButton::Secondary,
+        at,
+        at + vec2(60.0, 0.0),
+        Modifiers::NONE,
+        5,
+    );
+    assert_eq!(Device::last(&nav.ctx), Device::Mouse);
+    assert!(hint(&nav).starts_with("Right-drag to orbit"));
+    nav.frame(swipe(vec2(10.0, 0.0), Modifiers::NONE, 3), Modifiers::NONE);
+    assert_eq!(Device::last(&nav.ctx), Device::Trackpad);
+    assert!(hint(&nav).starts_with("Shift + two fingers"));
+    nav.frame(vec![notch(1.0)], Modifiers::NONE);
+    assert_eq!(Device::last(&nav.ctx), Device::Mouse);
+    nav.frame(vec![Event::Zoom(1.1)], Modifiers::NONE);
+    assert_eq!(Device::last(&nav.ctx), Device::Trackpad);
+    // A plain move or click tells nothing: the last device stays.
+    nav.click(PointerButton::Primary, at, Modifiers::NONE);
+    assert_eq!(Device::last(&nav.ctx), Device::Trackpad);
+    Ok(())
+}
+
 /// A click still selects; Cmd/Ctrl+drag from empty space orbits, and from a
 /// part it does not.
 #[test]
