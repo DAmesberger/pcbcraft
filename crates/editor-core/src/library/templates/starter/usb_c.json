@@ -12,7 +12,7 @@
  "rows": [
   {
    "name": "USB-C receptacle, USB 2.0, 16 contacts, top mount (GCT USB4105)",
-   "description": "USB Type-C receptacle for USB 2.0: 16 contacts on 12 SMD lands (VBUS and GND shared by the A and B rows), shell on four through-hole stakes, two locating pegs; 8.94 \u00d7 7.35 \u00d7 3.31 mm, mating face at the board edge.",
+   "description": "USB Type-C receptacle for USB 2.0: 16 contacts on 12 SMD lands (VBUS and GND shared by the A and B rows), shell on four through-hole stakes, two locating pegs; 8.94 \u00d7 7.35 \u00d7 3.31 mm, mating face at the board edge. The drawing's land pattern needs a fab with finer limits than a standard 2-layer service (see the note).",
    "aliases": [
     "USB",
     "USB-C",
@@ -31,7 +31,7 @@
     "skeleton": "connector"
    },
    "cite": "gct-usb4105",
-   "note": "Dimensions read from the manufacturer's public drawing, as the ESP32-S31 example's USB4105 records. The 3D model's tongue, insulator, tail thickness and peg length are estimates. Place the mating face (\u2212y) at the board edge.",
+   "note": "Dimensions read from the manufacturer's public drawing, as the ESP32-S31 example's USB4105 records. The 3D model's tongue, insulator, tail thickness and peg length are estimates. Place the mating face (\u2212y) at the board edge. Land pattern re-checked against the drawing's Recommended PCB Layout (read 2026-11-13, same URL and revision) and kept as drawn: the 0.65 mm peg holes stand 0.175 mm from the A1B12 and B1A12 lands, and the shell stake lands (1.00 mm round a 0.60 mm slot) leave a 0.20 mm ring. Both are below JLCPCB's standard 2-layer limits (0.2 mm NPTH to copper; 0.25 mm recommended PTH ring, 0.18 mm absolute minimum), so the production check reports them there: order from a fab that accepts the drawing's geometry, or waive those findings after checking with the fab.",
    "values": {
     "family": "usb_c",
     "width": 8.94,
