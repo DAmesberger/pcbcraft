@@ -146,7 +146,7 @@ fn the_placement_check_finds_a_moved_flipped_or_missing_part() -> Result<()> {
         .position(|g| part_bodies(&live, r1).iter().any(|b| std::ptr::eq(*b, g)))
         .ok_or_else(|| Error::Verification("R1 has no body".into()))?;
     let edit = |change: &dyn Fn(&mut Place)| -> Result<Vec<String>> {
-        let mut off = live.snapshot();
+        let mut off = meshed(&project)?;
         if let Some(place) = off.geometry.get_mut(first).and_then(|g| g.place.as_mut()) {
             change(place);
         }
@@ -159,7 +159,7 @@ fn the_placement_check_finds_a_moved_flipped_or_missing_part() -> Result<()> {
         *p = then(p, &place_of(&Transform3::rot_x(180.0)));
     })?;
     assert_eq!(flipped.len(), 1, "{flipped:#?}");
-    let mut missing = live.snapshot();
+    let mut missing = meshed(&project)?;
     missing.geometry.remove(first);
     let differences = parity(&exact, &missing)?.differences;
     assert_eq!(differences.len(), 1, "{differences:#?}");
@@ -238,7 +238,7 @@ fn an_edit_evaluates_no_part_design_again() -> Result<()> {
     let started = std::time::Instant::now();
     let (moved, how) = update(live, &project, &library, None)?;
     let took = started.elapsed();
-    assert_eq!(how, Rebuilt::InPlace(0));
+    assert_eq!(how, Rebuilt::InPlace);
     assert_eq!(moved.flat(), Flat::Meshed);
     let again: Vec<usize> = part_bodies(&moved, r1)
         .iter()

@@ -406,7 +406,7 @@ These are typed, one undo step each, and failures leave the document unchanged. 
 ### Build and cache (integration, `models/template.rs`, `models/template/{inspect,land,surfaces}.rs`)
 
 - **Board.** `project::build` inserts each distinct `ParamSetKey` once with SC1 (`param_prefix = pkg<id>r<rev>[v…]`). It does so inside the existing `defer_evaluation` batch and places occurrences as today. Bodies get role, material and terminal from the interface and lead map, stored in the existing `org.pcbcraft.electronics.models.N` chunks. Looks are assigned through `appearance.assign`, so the saved model is parametric and plain Solidcraft opens it.
-- **Replay.** The existing replay log (`native/replay.rs`) passes a definition whose `ParamSetKey` and template hash are unchanged (`Native::pass`), so an unrelated board edit reruns nothing.
+- **Live view.** The live 3D view keeps each package revision's design between models (`project::designs`), so an unrelated board edit reruns nothing. (The replay log that did this for the native board was removed with the live native board in stage A4.)
 - **Preview cache.** `TemplateCache`, an LRU of at most 32 parameter sets and 64 MiB (targets), keyed by `ParamSetKey`. It holds the evaluated `TemplateEvaluation` and the tessellated bodies for the Component 3D preview and the parameter form. The default set loads through `Model::adopt` from the template's saved model (under 10 ms measured).
 - **Threading.** All evaluation runs on the model worker, cancellable and revision-tagged. A stale result never overwrites a newer request. The time budget per evaluation is 10 s, a target; beyond it the result is `part_template.eval_budget`.
 - **Markings.** `marking/board.rs` takes surfaces from the evaluation when the package form is a template; otherwise from `surface::anchors(form)`. The decal cache is unchanged.
@@ -713,7 +713,7 @@ pub fn cache_counts() -> (u64 /* hits */, u64 /* evaluations */);
   - It refuses a name collision or any inserted feature failing. It runs inside the board build, which is discarded whole on any failure, so a refusal leaves no partial board.
   - Looks are assigned through `appearance.assign` from the material table. Bodies are recorded in the `org.pcbcraft.electronics.models.N` chunks, so the saved `.solidcraft` board stays parametric and opens in plain Solidcraft.
 - **Fork.** The insert uses only the pinned fork's public API (`Session::doc_mut`, `Feature::remap_clone`, `Document::param_defs`, `clone_expression`). The fork's generic `component.insert_history` (SC1) is prepared on the fork branch `insert-history`: any CAD user inserts a design's history with deterministic name maps, prefixed parameters and literal overrides, as one undo step, atomically. Once it is pushed and pinned, `insert` calls it instead, with no change to this contract.
-- **Board.** `project::build` defines each distinct `PartKey` once, before the parts, inside the existing put-off evaluation, and places occurrences as for generated models. A replayed build passes a definition whose key is unchanged.
+- **Board.** `project::build` defines each distinct `PartKey` once, before the parts, inside the existing put-off evaluation, and places occurrences as for generated models.
 - **Threads.** Evaluation runs where board builds and previews run (the model worker); the UI thread only reads results. The automation and CLI calls are synchronous by nature.
 
 ### L4. Commands (one engine for UI, CLI and MCP)

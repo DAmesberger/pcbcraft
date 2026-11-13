@@ -146,103 +146,97 @@ fn esp32_j1_dimension_edit_in_the_app() -> Fallible {
     Ok(())
 }
 
-/// A track width edit on the ESP32 board in the PCB 3D view, with the
-/// board's flat bodies meshed directly and built exactly: from the edit
-/// to the frame showing its board, and from the refill's stored copper to
-/// the frame showing the refilled board (target with the direct mesh:
-/// under 150 ms). Each mode opens the board first and waits for it to
-/// settle (`cargo test --profile ci -p pcbcraft --bin pcbcraft
+/// A track width edit on the ESP32 board in the PCB 3D view: from the
+/// edit to the frame showing its board, and from the refill's stored
+/// copper to the frame showing the refilled board (target: under 150 ms).
+/// It opens the board first and waits for it to settle (`cargo test --profile ci -p pcbcraft --bin pcbcraft
 /// track_width_edit -- --ignored --nocapture`, with `PCBCRAFT_TIMINGS=1`
 /// for the worker's own lines).
 #[test]
 #[ignore = "timing; run by hand"]
 fn esp32_track_width_edit_in_the_app() -> Fallible {
     use pcbcraft_core::layout::LayoutCommand;
-    use pcbcraft_solidcraft::project::Flat;
-    for flat in [Flat::Meshed, Flat::Native] {
-        let mut engine = esp32()?;
-        let mut scene = SceneController::new(
-            egui::Context::default(),
-            crate::viewport::Viewport::detached(),
-        );
-        scene.set_flat(flat);
-        let mut fills = FillWorker::start(egui::Context::default());
-        let opened = Instant::now();
-        let shown = settle(&mut scene, &mut fills, &mut engine, opened)?;
-        println!("{flat:?}: opened, shown at {shown:?} (s, request, current)");
-        // The first track whose narrowing changes a fill's copper.
-        let tracks: Vec<(pcbcraft_core::Id, f64)> = engine
-            .project()
-            .tracks
-            .iter()
-            .map(|t| (t.id, t.width))
-            .collect();
-        let mut edited = None;
-        for (id, width) in tracks.into_iter().take(400) {
-            if width < 0.2 {
-                continue;
-            }
-            let started = Instant::now();
-            if engine
-                .apply(
-                    engine.revision(),
-                    Operation::Layout(LayoutCommand::SetTrack {
-                        id,
-                        width: Some(width - 0.05),
-                        layer: None,
-                    }),
-                )
-                .is_err()
-            {
-                continue;
-            }
-            // The refill must change some fill's copper, so its tiles are
-            // planned and meshed again.
-            let project = engine.project().clone();
-            let refilled = pcbcraft_core::layout::fill::refill(
-                &project,
-                pcbcraft_core::layout::fill::RefillTarget::All,
-            )?;
-            if refilled.iter().any(|(id, copper)| {
-                project.fills.iter().any(|f| {
-                    f.id == *id && f.computed.as_ref().map(|c| &c.regions) != Some(&copper.regions)
-                })
-            }) {
-                edited = Some((id, started));
+    let mut engine = esp32()?;
+    let mut scene = SceneController::new(
+        egui::Context::default(),
+        crate::viewport::Viewport::detached(),
+    );
+    let mut fills = FillWorker::start(egui::Context::default());
+    let opened = Instant::now();
+    let shown = settle(&mut scene, &mut fills, &mut engine, opened)?;
+    println!("opened, shown at {shown:?} (s, request, current)");
+    // The first track whose narrowing changes a fill's copper.
+    let tracks: Vec<(pcbcraft_core::Id, f64)> = engine
+        .project()
+        .tracks
+        .iter()
+        .map(|t| (t.id, t.width))
+        .collect();
+    let mut edited = None;
+    for (id, width) in tracks.into_iter().take(400) {
+        if width < 0.2 {
+            continue;
+        }
+        let started = Instant::now();
+        if engine
+            .apply(
+                engine.revision(),
+                Operation::Layout(LayoutCommand::SetTrack {
+                    id,
+                    width: Some(width - 0.05),
+                    layer: None,
+                }),
+            )
+            .is_err()
+        {
+            continue;
+        }
+        // The refill must change some fill's copper, so its tiles are
+        // planned and meshed again.
+        let project = engine.project().clone();
+        let refilled = pcbcraft_core::layout::fill::refill(
+            &project,
+            pcbcraft_core::layout::fill::RefillTarget::All,
+        )?;
+        if refilled.iter().any(|(id, copper)| {
+            project.fills.iter().any(|f| {
+                f.id == *id && f.computed.as_ref().map(|c| &c.regions) != Some(&copper.regions)
+            })
+        }) {
+            edited = Some((id, started));
+            break;
+        }
+        engine.undo()?;
+    }
+    let (track, started) = edited.ok_or("no track edit changes a fill")?;
+    let mut refilled: Option<Instant> = None;
+    let mut first_shown = None;
+    let mut shown_refilled = None;
+    for _ in 0..60_000 {
+        let polled = fills.poll(&mut engine)?;
+        if polled.stored > 0 && refilled.is_none() {
+            refilled = Some(Instant::now());
+        }
+        let key = ModelKey::Project(Arc::clone(engine.project_arc()));
+        scene.request(key.clone(), None, || Ok(None));
+        scene.receive();
+        if let Status::Failed(error) = scene.status() {
+            return Err(error.clone().into());
+        }
+        if scene.display(&key) == Display::Current {
+            first_shown.get_or_insert_with(|| started.elapsed());
+            if let Some(at) = refilled {
+                shown_refilled = Some(at.elapsed());
                 break;
             }
-            engine.undo()?;
         }
-        let (track, started) = edited.ok_or("no track edit changes a fill")?;
-        let mut refilled: Option<Instant> = None;
-        let mut first_shown = None;
-        let mut shown_refilled = None;
-        for _ in 0..60_000 {
-            let polled = fills.poll(&mut engine)?;
-            if polled.stored > 0 && refilled.is_none() {
-                refilled = Some(Instant::now());
-            }
-            let key = ModelKey::Project(Arc::clone(engine.project_arc()));
-            scene.request(key.clone(), None, || Ok(None));
-            scene.receive();
-            if let Status::Failed(error) = scene.status() {
-                return Err(error.clone().into());
-            }
-            if scene.display(&key) == Display::Current {
-                first_shown.get_or_insert_with(|| started.elapsed());
-                if let Some(at) = refilled {
-                    shown_refilled = Some(at.elapsed());
-                    break;
-                }
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        }
-        println!(
-            "{flat:?}: track {track} narrowed by 0.05 mm: first shown {first_shown:?} after the \
-             edit; refill stored {:?} after the edit; refilled board shown {shown_refilled:?} \
-             after the refill",
-            refilled.map(|at| at.duration_since(started)),
-        );
+        std::thread::sleep(Duration::from_millis(1));
     }
+    println!(
+        "track {track} narrowed by 0.05 mm: first shown {first_shown:?} after the \
+         edit; refill stored {:?} after the edit; refilled board shown {shown_refilled:?} \
+         after the refill",
+        refilled.map(|at| at.duration_since(started)),
+    );
     Ok(())
 }

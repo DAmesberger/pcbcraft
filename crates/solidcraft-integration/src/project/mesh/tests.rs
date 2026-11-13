@@ -268,7 +268,7 @@ fn an_update_of_a_meshed_model_stays_meshed() -> Result<()> {
     project.tracks[0].width += 0.05;
     let (updated, how) = crate::project::update(live, &project, &sources, None)?;
     assert_eq!(updated.flat(), Flat::Meshed);
-    assert_eq!(how, crate::project::Rebuilt::InPlace(0));
+    assert_eq!(how, crate::project::Rebuilt::InPlace);
     assert_eq!(updated.meshes.len(), held);
     let plan = plan::of(&project)?;
     let track = updated

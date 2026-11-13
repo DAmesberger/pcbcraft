@@ -1,7 +1,8 @@
-//! Where the board's 3D build spends its time (docs/3d-speed-profile.md):
-//! the ESP32-S31 example's native build, each Solidcraft feature kind's
-//! evaluation time and Solidcraft's own span profile, then one part turned
-//! by 90° and turned back (the edit and its undo) through `project::update`.
+//! Where the board's exact build spends its time (docs/3d-speed-profile.md):
+//! the ESP32-S31 example's native build (what an export builds), each
+//! Solidcraft feature kind's evaluation time and Solidcraft's own span
+//! profile. The live view meshes the board and has no native build to
+//! profile; its edits are timed by the app's `edit_timing_tests`.
 //!
 //! `nix develop -c cargo test --profile ci -p pcbcraft-automation --features profile --test build_profile -- --ignored --nocapture`
 //!
@@ -10,14 +11,6 @@
 //!   `no-tracks`, `parts=N` (the first N placements), `vias=N` (the first N vias),
 //!   `addvias=N` (no fills, N more vias on a grid).
 //! - `PCBCRAFT_PROFILE_NOFILLS=1`: leave the fills out (after the variant).
-//! - `PCBCRAFT_PROFILE_EDIT=1`: also time the part turn and its undo (`track`: an
-//!   outer track 10 µm wider and back instead; `width`: the board 1 mm wider
-//!   through the engine and undone, each followed as the app follows it,
-//!   the stale fills refilled; `route`: a routed step (a track and a via)
-//!   added and removed; `move`: a part, `PCBCRAFT_PROFILE_PART` or J1, moved
-//!   0.5 mm and the stale fills refilled);
-//!   `PCBCRAFT_PROFILE_REFILL=1` then refills the stale fills and updates again.
-//! - `PCBCRAFT_PROFILE_PART`: the part turned (default SW1).
 //! - `PCBCRAFT_PROFILE_TRACE`: write Solidcraft's Chrome trace there.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -173,7 +166,7 @@ fn spans(title: &str) {
 #[test]
 #[ignore = "benchmark"]
 fn board_build_profile() {
-    let mut project = board();
+    let project = board();
     let sources = SourceCache::default();
     pcbcraft_solidcraft::profile::set_enabled(true);
     pcbcraft_solidcraft::profile::reset();
@@ -196,244 +189,6 @@ fn board_build_profile() {
     eprintln!("drawn bodies by kind: {kinds:?}");
     features(&model);
     spans("build");
-    let Ok(edit) = std::env::var("PCBCRAFT_PROFILE_EDIT") else {
-        return;
-    };
-    if edit == "width" {
-        board_width(model);
-        return;
-    }
-    // A part (`PCBCRAFT_PROFILE_PART`, default J1) moved 0.5 mm, then the
-    // fills it made stale refilled, as the app's fill worker does.
-    if edit == "move" {
-        let part = std::env::var("PCBCRAFT_PROFILE_PART").unwrap_or_else(|_| "J1".into());
-        let instance = project.instance_by_designator(&part).unwrap().id;
-        let placement = project
-            .placements
-            .iter_mut()
-            .find(|p| p.instance == instance)
-            .unwrap();
-        placement.position[1] += 0.5;
-        let start = Instant::now();
-        let (model, how) = project::update(model, &project, &sources, None).unwrap();
-        eprintln!(
-            "{part} moved: update {:.1} s ({how:?})",
-            start.elapsed().as_secs_f64()
-        );
-        let mut cache = pcbcraft_core::layout::fill::FillCache::default();
-        let fresh = pcbcraft_core::layout::fill::compute_stale(&project, &mut cache).unwrap();
-        let count = fresh.len();
-        for (id, copper) in fresh {
-            let fill = project.fills.iter_mut().find(|f| f.id == id).unwrap();
-            fill.computed = Some(copper);
-        }
-        let start = Instant::now();
-        let (model, how) = project::update(model, &project, &sources, None).unwrap();
-        eprintln!(
-            "{part} moved, {count} fills refilled: update {:.1} s ({how:?})",
-            start.elapsed().as_secs_f64()
-        );
-        features(&model);
-        spans("refilled");
-        return;
-    }
-    // A routed step added (a copy of an outer track, 0.5 mm aside, and a
-    // via of the first via's size at its end), then removed again.
-    if edit == "route" {
-        let mut model = model;
-        let mut track = project
-            .tracks
-            .iter()
-            .find(|t| t.layer.side().is_some())
-            .cloned()
-            .unwrap();
-        let mut via = project.vias[0].clone();
-        track.id = project.allocate().unwrap();
-        track.start[1] += 0.5;
-        track.end[1] += 0.5;
-        via.id = project.allocate().unwrap();
-        via.position = track.end;
-        let (tracks, vias) = (project.tracks.clone(), project.vias.clone());
-        for what in ["routed step added", "routed step removed"] {
-            if what == "routed step added" {
-                project.tracks.push(track.clone());
-                project.vias.push(via.clone());
-            } else {
-                project.tracks = tracks.clone();
-                project.vias = vias.clone();
-            }
-            let start = Instant::now();
-            let (next, how) = project::update(model, &project, &sources, None).unwrap();
-            eprintln!(
-                "{what}: update {:.1} s ({how:?})",
-                start.elapsed().as_secs_f64()
-            );
-            spans(what);
-            model = next;
-        }
-        return;
-    }
-    // An outer track 10 µm wider, then as it was (an edit that changes a
-    // value only: no fill is stale, nothing is drawn anew).
-    if edit == "track" {
-        let mut model = model;
-        let track = project
-            .tracks
-            .iter()
-            .position(|t| t.layer.side().is_some())
-            .unwrap();
-        for (what, by) in [("track wider", 0.01), ("undo", -0.01)] {
-            project.tracks[track].width += by;
-            let start = Instant::now();
-            let (next, how) = project::update(model, &project, &sources, None).unwrap();
-            eprintln!(
-                "{what}: update {:.1} s ({how:?})",
-                start.elapsed().as_secs_f64()
-            );
-            spans(what);
-            model = next;
-        }
-        return;
-    }
-    let part = std::env::var("PCBCRAFT_PROFILE_PART").unwrap_or_else(|_| "SW1".into());
-    let instance = project.instance_by_designator(&part).unwrap().id;
-    let mut model = model;
-    for (what, turn) in [("turn 90", 90.0), ("undo", -90.0)] {
-        let placement = project
-            .placements
-            .iter_mut()
-            .find(|p| p.instance == instance)
-            .unwrap();
-        placement.rotation_deg = (placement.rotation_deg + turn).rem_euclid(360.0);
-        let start = Instant::now();
-        let (next, how) = project::update(model, &project, &sources, None).unwrap();
-        eprintln!(
-            "{what} {part}: update {:.1} s ({how:?})",
-            start.elapsed().as_secs_f64()
-        );
-        features(&next);
-        spans(what);
-        model = next;
-        // The app's fill worker then recomputes the fills the edit made
-        // stale, and the model is updated again with their new copper.
-        if std::env::var("PCBCRAFT_PROFILE_REFILL").is_err() {
-            continue;
-        }
-        let start = Instant::now();
-        let mut cache = pcbcraft_core::layout::fill::FillCache::default();
-        let fresh = pcbcraft_core::layout::fill::compute_stale(&project, &mut cache).unwrap();
-        eprintln!(
-            "{what}: {} stale fills recomputed in {:.1} s",
-            fresh.len(),
-            start.elapsed().as_secs_f64()
-        );
-        for (id, copper) in fresh {
-            let fill = project.fills.iter_mut().find(|f| f.id == id).unwrap();
-            let same = fill
-                .computed
-                .as_ref()
-                .is_some_and(|old| old.regions == copper.regions);
-            eprintln!("  fill {id}: regions unchanged {same}");
-            fill.computed = Some(copper);
-        }
-        let start = Instant::now();
-        let (next, how) = project::update(model, &project, &sources, None).unwrap();
-        eprintln!(
-            "{what} {part}, refilled: update {:.1} s ({how:?})",
-            start.elapsed().as_secs_f64()
-        );
-        features(&next);
-        spans(&format!("{what}, refilled"));
-        model = next;
-    }
-}
-
-/// The board 1 mm wider through the engine (`layout.set_board_size`), then
-/// undone, each as the app follows it: the model worker updates the board
-/// with the fills' stored copper, the fill worker refills the fills the
-/// edit made stale (undo finds them in its cache) and the model is updated
-/// again with their copper. Prints each update and the edit's total.
-fn board_width(model: NativeModel) {
-    use pcbcraft_core::layout::LayoutCommand;
-    use pcbcraft_core::layout::outline::{BoardCommand, BoardEdit};
-    use pcbcraft_core::{Engine, Operation};
-    let mut engine = Engine::from_file(pcbcraft_io::read_project(&path()).unwrap()).unwrap();
-    let sources = SourceCache::default();
-    let mut cache = pcbcraft_core::layout::fill::FillCache::default();
-    // The fills as opened are current: the cache holds them for undo.
-    assert!(
-        pcbcraft_core::layout::fill::compute_stale(engine.project(), &mut cache)
-            .unwrap()
-            .is_empty()
-    );
-    for fill in &engine.project().fills {
-        if let Some(copper) = &fill.computed {
-            cache.insert(copper.clone());
-        }
-    }
-    let mut model = model;
-    let [w, h] = engine.project().board_size;
-    for what in ["width +1 mm", "undo"] {
-        let start = Instant::now();
-        if what == "undo" {
-            engine.undo().unwrap();
-        } else {
-            let revision = engine.revision();
-            // A sketched board: its `width` parameter 1 mm more, as the
-            // board card's width field sets it.
-            let operation = match &engine.project().board_shape {
-                pcbcraft_core::model::board::BoardShape::Sketch(sketch) => {
-                    let mut param = sketch
-                        .parameters
-                        .iter()
-                        .find(|p| p.name.0 == "width")
-                        .unwrap()
-                        .clone();
-                    param.expr =
-                        pcbcraft_core::library::footprint_source::Expr(format!("{} mm", w + 1.0));
-                    Operation::Board(BoardCommand::Edit {
-                        edits: vec![BoardEdit::SetParameter { param }],
-                    })
-                }
-                _ => Operation::Layout(LayoutCommand::SetBoardSize { size: [w + 1.0, h] }),
-            };
-            engine
-                .apply_hosted(revision, operation, pcbcraft_automation::session::hosted())
-                .unwrap();
-            eprintln!("board size now {:?}", engine.project().board_size);
-        }
-        // The app's model worker keeps a copy of the model it updates, for
-        // an undo back to it.
-        let copy = Instant::now();
-        let _earlier = model.snapshot();
-        eprintln!(
-            "{what}: model kept for undo in {:.1} ms",
-            copy.elapsed().as_secs_f64() * 1e3
-        );
-        let (next, how) = project::update(model, engine.project(), &sources, None).unwrap();
-        let first = start.elapsed();
-        eprintln!("{what}: update {:.1} s ({how:?})", first.as_secs_f64());
-        spans(&format!("{what}, update"));
-        model = next;
-        let refill = Instant::now();
-        let fresh =
-            pcbcraft_core::layout::fill::compute_stale(engine.project(), &mut cache).unwrap();
-        let filled = refill.elapsed();
-        let count = fresh.len();
-        let revision = engine.revision();
-        engine.store_fills(revision, fresh).unwrap();
-        let again = Instant::now();
-        let (next, how) = project::update(model, engine.project(), &sources, None).unwrap();
-        eprintln!(
-            "{what}: {count} fills refilled in {:.1} s, update {:.1} s ({how:?}); in all {:.1} s",
-            filled.as_secs_f64(),
-            again.elapsed().as_secs_f64(),
-            start.elapsed().as_secs_f64()
-        );
-        features(&next);
-        spans(&format!("{what}, refilled"));
-        model = next;
-    }
 }
 
 /// One extruded copper region of `edges` straight edges: a 40 mm polygon

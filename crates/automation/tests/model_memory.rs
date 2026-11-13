@@ -1,8 +1,10 @@
-//! The ESP32 board's model after an edit holds what a fresh build of the
-//! edited board holds: an update takes unchanged bodies' geometry from the
-//! last model, and that geometry must not keep the last model's evaluated
-//! bodies alive (it did through each body's lazy volume: 1,278 MB live
-//! against 912 MB for a fresh build, after one width edit and its refill).
+//! The ESP32 board's live model after an edit holds what a fresh live
+//! model of the edited board holds: an update takes unchanged meshes, fill
+//! plans, display layers and part designs from the last model, and must
+//! not keep anything else of it alive. (When the live model was the exact
+//! build, each body's lazy volume kept the last model's evaluated bodies:
+//! 1,278 MB live against 912 MB for a fresh build, after one width edit
+//! and its refill.)
 //! By hand, macOS only (live heap from `heap -s`):
 //! `cargo test --profile ci -p pcbcraft-automation --test model_memory -- --ignored --nocapture`.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
@@ -72,7 +74,7 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     let sources = SourceCache::default();
     let mut cache = pcbcraft_core::layout::fill::FillCache::default();
     let t = Instant::now();
-    let mut model = project::build_with(engine.project(), &sources, None).unwrap();
+    let mut model = project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
     let held = |base: f64| live().map_or(f64::NAN, |now| now - base);
     println!(
         "build {:.1} s: +{:.0} MB",
@@ -105,7 +107,7 @@ fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     drop(model);
     let base = live().unwrap_or(base);
     let t = Instant::now();
-    let built = project::build_with(engine.project(), &sources, None).unwrap();
+    let built = project::build_flat(engine.project(), &sources, None, project::Flat::Meshed).unwrap();
     let fresh = held(base);
     println!(
         "fresh build {:.1} s: +{fresh:.0} MB",

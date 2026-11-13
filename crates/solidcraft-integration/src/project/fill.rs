@@ -22,8 +22,7 @@
 //! points, each a face to tessellate, measure and save.
 //!
 //! The fill copper is the copper the document stores: the board view and
-//! the 3D view show the same regions, stale or not, and a refill (a new
-//! document revision) rebuilds them.
+//! the 3D view show the same regions, stale or not.
 use super::plan::FillPlan;
 use super::{Builder, Source, copper_param, inner_base, next_pick, polygon, track_outline};
 use crate::appearance::{self, Board, Land, Region, ViaMark};
@@ -282,25 +281,17 @@ fn native(
         CopperLayer::Bottom => format!("- {height}").into(),
         CopperLayer::Inner(_) => inner_base(&project.stackup, fill.layer)?.into(),
     };
-    b.native.unit(&name, None)?;
     let created = b.native.component(&name, false)?;
-    b.native.unit_end()?;
     // One body per tile ([`tiles`]): the tiles are disjoint, so each
-    // sketch makes exactly one body of a known name. A tile is a unit of
-    // its content: refilled, only the tiles whose copper changed are
-    // built again.
+    // sketch makes exactly one body of a known name.
     for (body, _) in &planned.tiles {
-        let contours = &body.loops;
-        let content = super::digest(&(&offset, &height, contours));
-        b.native.unit(&body.name, Some(content))?;
         b.native.batched_body(ProfileBody {
             name: &body.name,
             offset: offset.clone(),
-            contours,
+            contours: &body.loops,
             height: height.as_str().into(),
         })?;
         b.record(&body.name, BodyKind::FillCopper)?;
-        b.native.unit_end()?;
     }
     joints.push((
         BoardJoint {
