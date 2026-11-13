@@ -245,6 +245,15 @@ impl Native {
         Ok(native)
     }
 
+    /// Open a `.solidcraft` design read-only, with `doc.open`'s reply
+    /// (`newer_file` when a newer SolidCraft saved it).
+    pub fn open_reporting(path: &str) -> Result<(Self, Value)> {
+        validate_path(path)?;
+        let mut native = Self::with(Session::default());
+        let reply = native.call("doc.open", json!({"path": path, "read_only": true}))?;
+        Ok((native, reply))
+    }
+
     /// Stop at the next command once `cancel` is set ([`Error::Cancelled`]).
     pub fn cancel_with(&mut self, cancel: Arc<AtomicBool>) {
         self.cancel = Some(cancel);

@@ -424,6 +424,44 @@ fn square_faces(body: &ModelBody, frame: &Transform3) -> String {
     }
 }
 
+/// Trace a face of an enclosure's evaluated design in the board plane
+/// (`enclosure`): `frame` takes the enclosure's world frame to the board's.
+/// An enclosure face moves when the enclosure changes, so a name that
+/// follows the design's history is found where the face is now, and the
+/// pick goes with it: the point on the face it returns. Without verified
+/// history the stored pick must still lie on the face.
+pub(crate) fn trace_enclosure_face(
+    state: &ModelState,
+    face: &ModelFaceRef,
+    words: &str,
+    frame: &Transform3,
+) -> Result<(Traced, [f64; 3])> {
+    let trust = Trust {
+        picked_here: true,
+        history: true,
+    };
+    let found =
+        naming::locate_face_on_body(state, Some(&face.body.0), &face.face.0, vec(face.pick));
+    let moved = found.as_ref().and_then(|hit| {
+        let b = state.bodies.get(hit.body)?;
+        if hit.verified && !hit.on_point {
+            naming::face_spot(b, hit.face).map(|s| arr(s.point))
+        } else {
+            None
+        }
+    });
+    match moved {
+        Some(pick) => {
+            let again = ModelFaceRef {
+                pick,
+                ..face.clone()
+            };
+            Ok((trace_face(state, &again, words, frame, trust)?, pick))
+        }
+        None => Ok((trace_face(state, face, words, frame, trust)?, face.pick)),
+    }
+}
+
 fn trace_face(
     state: &ModelState,
     face: &ModelFaceRef,

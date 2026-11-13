@@ -29,18 +29,19 @@ use pcbcraft_core::diagnostics::{Error, Finding, ObjectRef, Result};
 use pcbcraft_core::geometry::Point;
 use pcbcraft_core::layout::dimensions::{PartsRequest, PartsSolution};
 use pcbcraft_core::layout::outline::{
-    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, FreeFormCurve,
-    SHAPE_UNSOLVED, refuses,
+    BoardEvaluation, BoardShapeEvaluator, DrawnSlot, FATAL_PREFIX, Fillets, FixedEdit,
+    FreeFormCurve, SHAPE_UNSOLVED, refuses,
 };
 use pcbcraft_core::library::footprint_source::{
     DimValue, EvaluatorRef, Expr, FootprintParam, ParamName, ParamUnit, SketchBlob, SketchCurveId,
-    SketchEdit, SketchOutcome, SketchPointId, SolveStatus, SolveSummary,
+    SketchEdit, SketchOutcome, SketchPointId, SketchRef, SolveStatus, SolveSummary,
 };
 use pcbcraft_core::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
 use pcbcraft_core::model::board::{
     BoardSketch, CutoutKind, EdgeName, NamedEdge, RECT_EDGES, ShapeFault, ShapeFaultKind,
     SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
 };
+use pcbcraft_core::model::dimension::FeatureGeometry;
 use pcbcraft_core::rules::{DEFAULT_OUTLINE_FIT_MM, OUTLINE_FIT_RANGE_MM};
 use solidcraft_engine::sketch::{
     ConstraintKind, CurveKind, ENDPOINT_JOIN_TOL, MAX_SPLINE_POINTS, Sketch, find_drawn_profiles,
@@ -238,6 +239,118 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
     ) -> Result<Vec<pcbcraft_core::layout::dimensions::model::BodyFace>> {
         model_refs::faces(request)
     }
+
+    fn fixed_geometry(
+        &self,
+        sketch: &SketchBlob,
+        edit: &FixedEdit<'_>,
+    ) -> Result<(SketchBlob, Option<SketchRef>)> {
+        Ok(fixed_geometry(sketch, edit)?)
+    }
+}
+
+/// A point of the sketch at `at`, board mm.
+fn fixed_point(at: Point) -> Outcome<Vec2> {
+    if !at.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD_MM) {
+        return Err(problem(EDIT, "fixed geometry leaves the coordinate range"));
+    }
+    Ok(Vec2::new(at[0], at[1]))
+}
+
+/// The points that hold an owned entity: a point, or a line's two ends.
+fn owned_points(sk: &Sketch, owned: &SketchRef) -> Outcome<Vec<usize>> {
+    match owned {
+        SketchRef::Point(p) => {
+            Ok(vec![sk.point_index(&p.0).ok_or_else(|| {
+                problem(EDIT, format!("no sketch point `{}`", p.0))
+            })?])
+        }
+        SketchRef::Curve(c) => {
+            let i = sk
+                .curve_index(&c.0)
+                .ok_or_else(|| problem(EDIT, format!("no sketch curve `{}`", c.0)))?;
+            match sk.curves.get(i).map(|c| &c.kind) {
+                Some(CurveKind::Line { a, b }) => Ok(vec![*a, *b]),
+                _ => Err(problem(EDIT, format!("`{}` is not a fixed line", c.0))),
+            }
+        }
+        SketchRef::Constraint(k) => Err(problem(EDIT, format!("`{}` holds no geometry", k.0))),
+    }
+}
+
+/// [`BoardShapeEvaluator::fixed_geometry`]: a fixed point, or a
+/// construction line between two fixed points, owned outside the sketch.
+fn fixed_geometry(
+    blob: &SketchBlob,
+    edit: &FixedEdit<'_>,
+) -> Outcome<(SketchBlob, Option<SketchRef>)> {
+    let stored = check::check_board_sketch(&blob.0)?;
+    let mut sk = stored.clone();
+    let mut made = None;
+    match *edit {
+        FixedEdit::Add { geometry } => match *geometry {
+            FeatureGeometry::Point { at } => {
+                let p = sk.add_point(fixed_point(at)?, None).map_err(sketch_error)?;
+                let point = sk
+                    .points
+                    .get_mut(p)
+                    .ok_or_else(|| problem(EDIT, "the point is gone"))?;
+                point.fixed = true;
+                made = Some(SketchRef::Point(SketchPointId(point.id.clone())));
+            }
+            FeatureGeometry::Line { a, b } => {
+                let pa = sk.add_point(fixed_point(a)?, None).map_err(sketch_error)?;
+                let pb = sk.add_point(fixed_point(b)?, None).map_err(sketch_error)?;
+                for p in [pa, pb] {
+                    if let Some(point) = sk.points.get_mut(p) {
+                        point.fixed = true;
+                    }
+                }
+                let l = sk.add_line_pts(pa, pb, None).map_err(sketch_error)?;
+                let line = sk
+                    .curves
+                    .get_mut(l)
+                    .ok_or_else(|| problem(EDIT, "the line is gone"))?;
+                line.construction = true;
+                made = Some(SketchRef::Curve(SketchCurveId(line.id.clone())));
+            }
+            _ => {
+                return Err(problem(
+                    EDIT,
+                    "only a fixed point or a fixed line is held in the board sketch",
+                ));
+            }
+        },
+        FixedEdit::Move { owned, geometry } => {
+            let points = owned_points(&sk, owned)?;
+            let to: Vec<Vec2> = match (*geometry, points.len()) {
+                (FeatureGeometry::Point { at }, 1) => vec![fixed_point(at)?],
+                (FeatureGeometry::Line { a, b }, 2) => vec![fixed_point(a)?, fixed_point(b)?],
+                _ => return Err(problem(EDIT, "the fixed geometry changed shape")),
+            };
+            for (p, at) in points.into_iter().zip(to) {
+                if let Some(point) = sk.points.get_mut(p) {
+                    point.pos = at;
+                }
+            }
+        }
+        FixedEdit::Remove { owned } => {
+            let points = owned_points(&sk, owned)?;
+            if let SketchRef::Curve(c) = owned
+                && let Some(i) = sk.curve_index(&c.0)
+            {
+                sk.remove_curves(&[i]);
+            }
+            let ids: Vec<String> = points
+                .iter()
+                .filter_map(|&i| sk.points.get(i).map(|p| p.id.clone()))
+                .collect();
+            let points: Vec<usize> = ids.iter().filter_map(|id| sk.point_index(id)).collect();
+            sk.remove_points(&points);
+        }
+    }
+    let outcome = finish(&stored, &sk)?;
+    Ok((outcome.sketch, made))
 }
 
 /// A failed solve: the last solved shape kept, a fatal finding.
@@ -1339,6 +1452,8 @@ pub fn laminate(project: &pcbcraft_core::Project) -> Option<Laminate> {
 
 #[cfg(test)]
 mod closed_loop_tests;
+#[cfg(test)]
+mod fixed_tests;
 pub mod model_refs;
 #[cfg(test)]
 mod package_datum_tests;
