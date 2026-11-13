@@ -2366,7 +2366,7 @@ mod tests {
     ) -> Result<catalog::SourceCatalog, Box<dyn std::error::Error>> {
         let engine = Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: catalog::synthetic::project(count)?,
+            project: catalog::synthetic::project(count, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {
@@ -2590,7 +2590,7 @@ mod tests {
         use sparksmith_core::library::Origin;
         let engine = Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: catalog::synthetic::project(3)?,
+            project: catalog::synthetic::project(3, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {
@@ -2684,7 +2684,7 @@ mod tests {
     {
         let engine = Engine::from_file(EditorFile {
             version: FILE_VERSION,
-            project: catalog::synthetic::project(3)?,
+            project: catalog::synthetic::project(3, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?;
         let QueryResult::Search(report) = engine.query(Query::Search {

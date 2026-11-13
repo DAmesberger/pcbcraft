@@ -346,7 +346,6 @@ pub struct BoardSketch {
     /// The arc-fit tolerance `solved` was made with, mm: the effective
     /// `board.outline_fit` rule (`layout::outline::validate` keeps the two
     /// equal; changing the rule re-solves the board).
-    #[serde(default = "default_outline_fit")]
     pub outline_fit: f64,
     /// Why the sketch's curves are not a board now (open ends, a crossing,
     /// a touching hole); `solved` is then the last valid shape.
@@ -357,10 +356,6 @@ pub struct BoardSketch {
     /// them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub idle: Vec<ParamName>,
-}
-
-fn default_outline_fit() -> f64 {
-    crate::rules::DEFAULT_OUTLINE_FIT_MM
 }
 
 /// Points one [`ShapeFault`] names at most.

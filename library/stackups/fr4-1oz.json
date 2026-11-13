@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "stackup_presets": {
+    "id": "fr4-1oz",
+    "name": "FR-4, 1 oz copper",
+    "copper_um": 35.0,
+    "mask_um": 12.0,
+    "mask_laminate_um": 20.0,
+    "two_layer_core": { "thickness_mm": 1.6, "glass": "style7628" },
+    "dielectric_mm": 1.6,
+    "dielectric_mm_up_to_layers": 10,
+    "dielectric_mm_per_layer_above": 0.16,
+    "prepreg_mm": 0.2,
+    "prepreg_mm_up_to_layers": 6,
+    "prepreg_mm_above": 0.1,
+    "prepreg_glass": [
+      { "from_mm": 0.2, "glass": "style2116" },
+      { "from_mm": 0.0, "glass": "style1080" }
+    ],
+    "core_glass": [
+      { "from_mm": 0.3, "glass": "style7628" },
+      { "from_mm": 0.0, "glass": "style2116" }
+    ],
+    "added_prepreg": { "thickness_mm": 0.2, "glass": "style2116" },
+    "added_core": { "thickness_mm": 0.4, "glass": "style7628" },
+    "glass_dk": {
+      "style106": 3.8,
+      "style1080": 4.0,
+      "style2116": 4.3,
+      "style7628": 4.6
+    },
+    "sources": {
+      "copper_um": "1 oz per square foot (IPC-4562 nominal 34.8 µm, rounded as fabricators quote it).",
+      "mask_um": "Within the 10–20 µm over copper that the LPI soldermask datasheets quote (Florida CirTech LPI-950 LC-1, C-8GD and S-22; docs/materials.md, Sources), toward their thin end because LPI thins over a track's crown and edges.",
+      "mask_laminate_um": "Uncited: Sparksmith's earlier 3D display value. LPI flows into the gaps between copper, so it is thicker over laminate than over copper, but no fabricator capability page or mask datasheet consulted states a value over laminate (docs/materials.md, Sources).",
+      "two_layer_core": "The common 1.6 mm double-sided build on one 7628 core.",
+      "dielectric_mm": "Up to ten layers the common 1.6 mm of dielectric; above that it grows by 0.16 mm a layer, as thick high-count boards do. Author's choice, not a fabricator's stackup.",
+      "prepreg_mm": "Foil lamination with 0.2 mm prepreg up to six layers, 0.1 mm above; thin builds use the finer glass styles. Author's choice, not a fabricator's stackup.",
+      "added_prepreg": "A layer added in the stackup editor: a 0.2 mm prepreg of 2116 glass or a 0.4 mm core of 7628. Author's choice.",
+      "glass_dk": "Generic FR-4 estimates by glass style (resin-rich thin styles lower, glass-heavy 7628 higher; typical values near 1 GHz, not a fabricator's data). Checked against Isola's published 370HR core table (docs/materials.md, Sources): 106, 1080 and 2116 agree within 0.05 (3.81, 4.04, 4.26); 7628 does not (Isola 4.36 at 42 % resin), and stays uncited until decided."
+    }
+  }
+}

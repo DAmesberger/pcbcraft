@@ -158,7 +158,7 @@ fn out_of_range_is_a_clear_refusal_from_the_form() {
 /// What the list offers can be built: the largest header the form holds.
 #[test]
 fn the_largest_offered_header_builds() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     assert_eq!(one(&engine, "header 1x512").state, GenericState::NotCreated);
     find_or_create(&mut engine, "header 1x512", None)?;
     assert!(one(&engine, "header 1x512").component().is_some());
@@ -266,7 +266,7 @@ fn matching_is_bounded() {
 
 #[test]
 fn the_same_part_is_found_not_built_again() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let Outcome::GenericPart {
         component,
         created: true,
@@ -332,7 +332,7 @@ fn the_same_part_is_found_not_built_again() -> Result<()> {
 /// A template row chosen by hand is the same part a search would make.
 #[test]
 fn a_template_row_built_by_hand_is_found_too() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let Some(request) = one(&engine, "header 1x4").would_create else {
         return fail("a request");
     };
@@ -371,7 +371,7 @@ fn a_template_row_built_by_hand_is_found_too() -> Result<()> {
 /// Edited values and another prefix are another part.
 #[test]
 fn a_changed_request_is_not_the_generic_part() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let Some(request) = one(&engine, "header 1x4").would_create else {
         return fail("a request");
     };
@@ -391,7 +391,7 @@ fn a_changed_request_is_not_the_generic_part() -> Result<()> {
 
 #[test]
 fn find_or_create_refuses_what_it_cannot_settle() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let before = engine.revision();
     for (text, code) in [
         ("nonsense words", "reads as no generic part"),
@@ -423,7 +423,7 @@ fn find_or_create_refuses_what_it_cannot_settle() -> Result<()> {
 
 #[test]
 fn colour_reaches_the_placed_instance_through_the_outcome() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let Outcome::GenericPart {
         component,
         properties,
@@ -464,7 +464,7 @@ fn an_empty_value_field_warns_and_an_leds_value_is_its_colour() -> Result<()> {
     use crate::fields::{PropertyEdit, PropertyInput};
     use crate::instances::NewInstance;
     use crate::{InstanceCommand, UnitId};
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let place = |engine: &mut Engine, query: &str, designator: &str| -> Result<crate::Id> {
         let Outcome::GenericPart { component, .. } = find_or_create(engine, query, None)? else {
             return fail("built");

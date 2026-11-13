@@ -54,7 +54,7 @@ fn import_params(session: &Session, path: &str, root: DefinitionRef) -> Value {
 fn synthetic_engine() -> Fallible<Engine> {
     Ok(Engine::from_file(EditorFile {
         version: FILE_VERSION,
-        project: sparksmith_core::catalog::synthetic::project_with_parts(3)?,
+        project: sparksmith_core::catalog::synthetic::project_with_parts(3, &sparksmith_core::NewBoard::fixture())?,
         drafts: Default::default(),
     })?)
 }

@@ -29,9 +29,9 @@ pub fn fine() -> Result<RuleProfile> {
     parse(FINE_JSON)
 }
 
-/// The sourced JLCPCB profile shipped as a file in `examples/profiles/`.
+/// The sourced JLCPCB profile shipped in `library/profiles/` (read here as test data only).
 pub const JLCPCB_EXAMPLE_JSON: &str =
-    include_str!("../../../../examples/profiles/jlcpcb-2-layer-1oz.json");
+    include_str!("../../../../library/profiles/jlcpcb-2-layer-1oz.json");
 
 /// [`JLCPCB_EXAMPLE_JSON`]'s profile.
 pub fn jlcpcb_example() -> Result<RuleProfile> {

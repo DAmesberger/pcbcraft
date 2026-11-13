@@ -242,15 +242,17 @@ pub fn form_rows(ui: &mut Ui, form: &mut PackageForm) -> bool {
 }
 
 /// `footprint` with its terminal lands replaced by the form's
-/// ([`samples::form_lands`]): a terminal's existing pad keeps its ID and
-/// number, new pads take fresh IDs, pads landing no terminal stay. `None`
-/// when the form has no lands for the package's terminals.
+/// ([`samples::form_lands_with`] `rules`' margins): a terminal's existing
+/// pad keeps its ID and number, new pads take fresh IDs, pads landing no
+/// terminal stay. `None` when the form has no lands for the package's
+/// terminals.
 pub fn lands_from_form(
     footprint: &FootprintDefinition,
     package: &PackageDefinition,
+    rules: &sparksmith_core::rules::DesignRules,
 ) -> Option<FootprintDefinition> {
     let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
-    let lands = samples::form_lands(&package.form, &terminals)?;
+    let lands = samples::form_lands_with(&package.form, &terminals, rules)?;
     let mut out = footprint.clone();
     let copper = |kind: PadKind| matches!(kind, PadKind::Smd | PadKind::PlatedThrough);
     out.pads
@@ -346,7 +348,14 @@ impl PartEditor {
             }
             // Range and lead-count problems of the stored form are package
             // findings: they show in Issues, not here.
-            let lands = lands_from_form(footprint, package);
+            // Estimated lands take the board's fab profile margins; a board
+            // without a profile has none to estimate with.
+            let lands = engine
+                .project()
+                .rules
+                .land_estimators()
+                .ok()
+                .and_then(|rules| lands_from_form(footprint, package, &rules));
             kit::actions(ui, |ui| {
                 let response = ui_kit::button(
                     ui,
@@ -726,7 +735,7 @@ mod tests {
         hole.kind = PadKind::NonPlatedHole;
         hole.terminal = None;
         fp.pads.push(hole);
-        let out = lands_from_form(&fp, &p).ok_or("expected lands")?;
+        let out = lands_from_form(&fp, &p, &Default::default()).ok_or("expected lands")?;
         assert_eq!(out.pads.len(), 9);
         let pad1 = out
             .pads
@@ -748,7 +757,9 @@ mod tests {
         });
         assert!(fit.is_ok_and(|f| f.rms_mm < 1e-9));
         // A form whose leads do not match the terminals has no lands.
-        assert!(lands_from_form(&fp, &package(Preset::Soic8.form(), 2)).is_none());
+        assert!(
+            lands_from_form(&fp, &package(Preset::Soic8.form(), 2), &Default::default()).is_none()
+        );
         Ok(())
     }
 }

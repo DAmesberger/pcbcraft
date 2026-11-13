@@ -13,6 +13,9 @@ workspace = true
 # default; the build profile benchmark (automation's tests/build_profile.rs)
 # turns it on.
 profile = ["solidcraft-engine/profile"]
+# Test fixtures (`Stack::default`) for other crates' tests, enabled only by
+# their dev-dependencies; the product never builds them.
+test-fixtures = ["sparksmith-core/test-fixtures"]
 
 [dependencies]
 sparksmith-core.workspace = true

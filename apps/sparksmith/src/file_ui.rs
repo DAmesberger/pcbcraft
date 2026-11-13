@@ -606,11 +606,14 @@ impl FileUi {
     }
     fn proceed(&mut self, transition: Transition) {
         match transition {
-            Transition::New => self.effects.push(Effect::Replace {
-                document: Box::new(new_project().to_file()),
-                path: None,
-                recovered: false,
-            }),
+            Transition::New => match new_project() {
+                Ok(engine) => self.effects.push(Effect::Replace {
+                    document: Box::new(engine.to_file()),
+                    path: None,
+                    recovered: false,
+                }),
+                Err(error) => self.status = Some((Level::Error, error)),
+            },
             Transition::Open(path) => {
                 if let Some(ticket) = self.begin(Kind::Open, None) {
                     if let Some(path) = path {
@@ -1275,26 +1278,32 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
     }
 }
 /// The project a launch without a file and File › New open: empty, with
-/// no parts, library or drafts, on the user's default fab profile
+/// no parts, library or drafts, on the shipped new board
+/// (`sparksmith_io::new_project`) and the user's default fab profile
 /// (Settings). Without one the board has no profile yet: the PCB editor
-/// asks for one (`PcbEditor::ask_for_profile`), JLCPCB 2-layer 1 oz
-/// preselected.
-pub(crate) fn new_project() -> Engine {
+/// asks for one (`PcbEditor::ask_for_profile`), the shipped default
+/// preselected. A missing or broken shipped library is an error naming
+/// the file.
+pub(crate) fn new_project() -> Result<Engine, String> {
+    let defaults = sparksmith_io::new_project::shipped().map_err(|e| e.to_string())?;
     let Some(profile) = sparksmith_io::rule_profiles::default_id_from_env()
         .ok()
         .flatten()
         .and_then(|id| sparksmith_io::rule_profiles::for_new_board_from_env(Some(&id)).ok())
     else {
-        return Engine::default();
+        return Ok(Engine::new(&defaults.board));
     };
-    let mut project = sparksmith_core::Project::default();
+    let mut project = sparksmith_core::Project::new(&defaults.board);
     project.rules.profile = Some(profile);
-    Engine::from_file(sparksmith_core::format::EditorFile {
-        version: sparksmith_core::format::FILE_VERSION,
-        project,
-        drafts: Default::default(),
-    })
-    .unwrap_or_default()
+    Engine::from_file_with(
+        sparksmith_core::format::EditorFile {
+            version: sparksmith_core::format::FILE_VERSION,
+            project,
+            drafts: Default::default(),
+        },
+        &defaults.presets.glass_dk,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn home_directory() -> PathBuf {
@@ -1370,7 +1379,7 @@ mod tests {
         assert_eq!(proposed_file_name(None, " a/b:c "), "abc.sparksmith");
         assert_eq!(
             proposed_file_name(None, "  "),
-            format!("{}.sparksmith", Project::default().name)
+            format!("{}.sparksmith", sparksmith_core::UNTITLED)
         );
         assert_eq!(
             proposed_file_name(Some(Path::new("/x/board.sparksmith")), "USB sensor board"),

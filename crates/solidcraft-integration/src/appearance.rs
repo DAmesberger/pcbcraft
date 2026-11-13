@@ -1543,7 +1543,7 @@ pub(crate) fn push(
         Some(board) => (board.fabrication, std::borrow::Cow::Borrowed(&board.stack)),
         None => (
             Fabrication::default(),
-            std::borrow::Cow::Owned(Stack::standard()?),
+            std::borrow::Cow::Owned(Stack::none()?),
         ),
     };
     let bounds = mesh.bounds();

@@ -14,8 +14,8 @@
 use super::{Error, Result};
 use crate::model::fill::KeepoutLayers;
 use crate::model::{
-    CopperFoil, CopperLayer, Dielectric, DielectricKind, GlassStyle, MAX_COPPER_LAYERS, Project,
-    Stackup, ViaSpan,
+    CopperLayer, DielectricKind, MAX_COPPER_LAYERS, Project,
+    Stackup, StackupPresets, ViaSpan,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -55,6 +55,7 @@ pub(super) fn apply(project: &mut Project, edit: StackupEdit) -> Result<()> {
         moves,
         removed,
     } = edit;
+    let stackup = stackup.keeping_unstated(&project.stackup);
     stackup.check()?;
     let map = move_map(&project.stackup, &stackup, &moves)?;
     if removed.len() > MAX_COPPER_LAYERS {
@@ -224,8 +225,8 @@ impl StackupDraft {
     /// Replace the draft's layers with a preset; foils keep their origin
     /// by position from the top while both have them, and the bottom foil
     /// stays the bottom.
-    pub fn use_preset(&mut self, count: usize) -> Result<()> {
-        let preset = Stackup::preset(count)?;
+    pub fn use_preset(&mut self, presets: &StackupPresets, count: usize) -> Result<()> {
+        let preset = presets.preset(count)?;
         let old = self.origin.clone();
         let n = preset.copper.len();
         self.origin = (0..n)
@@ -246,37 +247,24 @@ impl StackupDraft {
             mask_laminate_nm: self.stackup.mask_laminate_nm,
             silkscreen_top: self.stackup.silkscreen_top,
             silkscreen_bottom: self.stackup.silkscreen_bottom,
+            dk_estimates: self.stackup.dk_estimates.clone(),
             ..preset
         };
         Ok(())
     }
 
     /// Add one inner foil above the bottom foil, with a dielectric of
-    /// `kind` above it (1 oz copper; a 0.2 mm prepreg of 2116 glass or a
-    /// 0.4 mm core of 7628).
-    pub fn add_layer(&mut self, kind: DielectricKind) -> Result<()> {
+    /// `kind` above it, both as `presets` add them.
+    pub fn add_layer(&mut self, presets: &StackupPresets, kind: DielectricKind) -> Result<()> {
         let count = self.stackup.copper.len();
         if count >= MAX_COPPER_LAYERS {
             return Err(Error::Invalid(format!(
                 "a stackup has at most {MAX_COPPER_LAYERS} copper layers"
             )));
         }
-        let dielectric = match kind {
-            DielectricKind::Prepreg => Dielectric {
-                kind,
-                thickness_mm: 0.2,
-                glass: GlassStyle::Style2116,
-                dk: None,
-            },
-            DielectricKind::Core => Dielectric {
-                kind,
-                thickness_mm: 0.4,
-                glass: GlassStyle::Style7628,
-                dk: None,
-            },
-        };
+        let dielectric = presets.added(kind);
         let at = count.saturating_sub(1);
-        self.stackup.copper.insert(at, CopperFoil::ounces(1.0));
+        self.stackup.copper.insert(at, presets.foil());
         self.origin.insert(at, None);
         // Dielectric `at - 1` lay above the bottom foil; the new one goes
         // between it and the new foil.
@@ -289,14 +277,14 @@ impl StackupDraft {
     /// Add two inner foils above the bottom foil: a prepreg, then a core
     /// (in a 4-layer foil build, prepreg · core · prepreg becomes
     /// prepreg · core · prepreg · core · prepreg).
-    pub fn add_pair(&mut self) -> Result<()> {
+    pub fn add_pair(&mut self, presets: &StackupPresets) -> Result<()> {
         if self.stackup.copper.len() + 2 > MAX_COPPER_LAYERS {
             return Err(Error::Invalid(format!(
                 "a stackup has at most {MAX_COPPER_LAYERS} copper layers"
             )));
         }
-        self.add_layer(DielectricKind::Prepreg)?;
-        self.add_layer(DielectricKind::Core)
+        self.add_layer(presets, DielectricKind::Prepreg)?;
+        self.add_layer(presets, DielectricKind::Core)
     }
 
     /// Remove inner foil `index` and the dielectric below it. Outer foils

@@ -4153,7 +4153,7 @@ mod tests {
     pub(super) fn parts_engine() -> Result<Engine, Box<dyn std::error::Error>> {
         Ok(Engine::from_file(sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
-            project: sparksmith_core::catalog::synthetic::project(24)?,
+            project: sparksmith_core::catalog::synthetic::project(24, &sparksmith_core::NewBoard::fixture())?,
             drafts: Default::default(),
         })?)
     }

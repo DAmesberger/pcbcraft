@@ -890,6 +890,10 @@ pub fn default_prefix_for(
 /// then symbol, package, footprint and binding. Pure; refuses a blank
 /// name, a bad prefix, values outside the row's family or ranges, and a
 /// skeleton that does not fit the package.
+///
+/// A test fixture, never in the product: the fixture rules; the product
+/// calls [`new_from_template_with`] with the board's.
+#[cfg(any(test, feature = "test-fixtures"))]
 pub fn new_from_template(
     library: &Library,
     request: &NewFromTemplate,

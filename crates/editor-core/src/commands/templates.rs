@@ -53,7 +53,7 @@ pub(crate) fn new_from_template(
         footprint: FootprintRef::new(footprint, Revision::FIRST),
         binding: BindingRef::new(binding, Revision::FIRST),
     };
-    let rules = project.rules.land_estimators();
+    let rules = project.rules.land_estimators()?;
     let mut edits = catalog::new_from_template_with(
         &project.library,
         &request,
@@ -411,7 +411,7 @@ fn finish(
             (fresh, footprint_meta, footprint, 1, true)
         }
     };
-    let rules = document.project.rules.land_estimators();
+    let rules = document.project.rules.land_estimators()?;
     let mut rebuilt = rebuilt_footprint(&footprint, &next, lands, floor, &rules)?;
     let pads_after = u32::try_from(rebuilt.pads.len()).unwrap_or(u32::MAX);
     findings.extend(package_fit::placement_findings(

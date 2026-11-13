@@ -19,7 +19,8 @@
 //! effective rule.
 //!
 //! Every value here is pure data: no files and no fabricator data. The
-//! built-in profiles are files `sparksmith-io` reads (`rule_profiles::builtins`).
+//! shipped profiles are files in the shipped library that `sparksmith-io`
+//! reads (`rule_profiles::shipped_profiles`).
 use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -40,9 +41,6 @@ pub use netclass::{
 
 /// Largest length rule, in mm.
 pub const MAX_RULE_MM: f64 = 25.0;
-/// `board.outline_fit`'s default, mm: the chord tolerance the board solve
-/// used before free-form curves.
-pub const DEFAULT_OUTLINE_FIT_MM: f64 = 0.01;
 /// The range `board.outline_fit` takes, mm: finer fits need more arcs than
 /// an outline holds, coarser ones would move the board edge visibly.
 pub const OUTLINE_FIT_RANGE_MM: std::ops::RangeInclusive<f64> = 0.001..=1.0;
@@ -381,7 +379,6 @@ pub struct DesignRules {
     pub pair: PairRules,
     #[serde(default, skip_serializing_if = "EtchRules::is_unset")]
     pub etch: EtchRules,
-    #[serde(default, skip_serializing_if = "BoardRules::is_default")]
     pub board: BoardRules,
 }
 
@@ -393,21 +390,6 @@ pub struct BoardRules {
     /// curve (spline, ellipse, conic) may stray from it: what fills,
     /// checks, fabrication output and the 3D laminate read.
     pub outline_fit: f64,
-}
-
-impl Default for BoardRules {
-    fn default() -> Self {
-        Self {
-            outline_fit: DEFAULT_OUTLINE_FIT_MM,
-        }
-    }
-}
-
-impl BoardRules {
-    /// The default (left out of saved rules).
-    pub fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
 }
 
 impl DesignRules {
@@ -475,22 +457,12 @@ impl DesignRules {
     }
 }
 
+/// A test fixture, never in the product: the values Sparksmith's checks
+/// and land estimators used before rules were profile files (estimated,
+/// not a fabricator's qualification), kept so the tests measured against
+/// them still are. Production rules come from a profile file.
+#[cfg(any(test, feature = "test-fixtures"))]
 impl Default for DesignRules {
-    /// TODO(profile-files): only the library's land estimators
-    /// (`library::samples`, `package_form`, `templates`) still read these,
-    /// for parts made outside a project; they move to the board's profile
-    /// once units U2 lands. No project, profile or check reads them.
-    ///
-    /// The prototype values (estimated, not a fabricator qualification),
-    /// which equal the limits from before rules were configurable except
-    /// where a change was chosen: 0.2 mm copper clearance, copper at least
-    /// 0.3 mm from the board edge (it was unchecked, which let fill copper
-    /// reach 5 µm from the edge and still pass the production check, so a
-    /// new project could not be fabricated as shipped), 0.25 mm drill to
-    /// copper and hole to hole, 0.1 mm annular
-    /// ring and drill, 0.05 mm mask expansion, 0.1 mm mask web and silk
-    /// width, 0.6 mm silk text, 0.3/0.6 mm vias, tented, and the land
-    /// estimators' margins (`library::samples`, `package_form::tht`).
     fn default() -> Self {
         Self {
             copper: CopperRules {
@@ -547,7 +519,7 @@ impl Default for DesignRules {
                 gap_tolerance: 0.02,
             },
             etch: EtchRules::default(),
-            board: BoardRules::default(),
+            board: BoardRules { outline_fit: 0.01 },
         }
     }
 }
@@ -1188,18 +1160,12 @@ impl ProjectRules {
             .unwrap_or_else(|_| profile.rules().clone())
     }
 
-    /// The rules the land estimators read: [`Self::effective`] with a
-    /// profile, else the library's interim values.
-    ///
-    /// TODO(profile-files): once units U2 lands, the estimators
-    /// (`library::samples`, `package_form`, the footprint templates) take
-    /// their margins only from a profile and refuse without one.
-    pub fn land_estimators(&self) -> DesignRules {
-        if self.profile.is_some() {
-            self.effective()
-        } else {
-            DesignRules::default()
-        }
+    /// The rules the land estimators read: [`Self::effective`]. Without a
+    /// profile there are no margins to estimate lands with, so it refuses
+    /// ([`Self::require`]).
+    pub fn land_estimators(&self) -> Result<DesignRules> {
+        self.require()?;
+        Ok(self.effective())
     }
 
     /// These rules less the etch-hazard checks ([`EtchRules`]), which only

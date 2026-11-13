@@ -18,7 +18,7 @@ use sparksmith_core::library::templates::catalog::RowCitation;
 use sparksmith_core::library::templates::starter::{StarterRow, parse_all};
 use sparksmith_core::library::{DefinitionMeta, Library, Published};
 use sparksmith_core::product::SHORT_NAME as CLI;
-use sparksmith_core::{DefinitionId, DefinitionKind, DefinitionRef, Engine, Project, Revision};
+use sparksmith_core::{DefinitionId, DefinitionKind, DefinitionRef, Project, Revision};
 use std::collections::BTreeMap;
 
 /// The usage lines.
@@ -125,7 +125,7 @@ fn project(rows: &[StarterRow]) -> Result<(Project, Vec<DefinitionRef>)> {
             name: DEFAULT_NAME.into(),
             next_id: next,
             library,
-            ..Project::default()
+            ..Project::new(&sparksmith_io::new_project::shipped()?.board)
         },
         roots,
     ))
@@ -138,7 +138,7 @@ fn write(path: &str, name: &str, rows: &[StarterRow]) -> Result<Value> {
         return Err("output exists; choose a new folder".into());
     }
     let (project, roots) = project(rows)?;
-    let mut session = Session::new(Engine::from_file(EditorFile {
+    let mut session = Session::new(sparksmith_io::new_project::open(EditorFile {
         version: FILE_VERSION,
         project,
         drafts: Default::default(),
@@ -243,7 +243,7 @@ mod tests {
         assert_eq!(roots.len(), publishable);
         assert_eq!(project.library.package_rows.len(), publishable);
         assert!(project.next_id > u64::try_from(roots.len())?);
-        let engine = Engine::from_file(EditorFile {
+        let engine = sparksmith_core::Engine::from_file(EditorFile {
             version: FILE_VERSION,
             project,
             drafts: Default::default(),

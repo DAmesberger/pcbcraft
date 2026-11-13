@@ -634,16 +634,17 @@ pub fn preview_package(form: &PackageForm) -> PackageDefinition {
 }
 
 /// The pads Create or Apply builds for `form` with the row's cited land
-/// overrides `lands` (the core's `samples::template_lands`), or why it
-/// does not.
+/// overrides `lands` and the board's land margins `rules` (the core's
+/// `samples::template_lands_with`), or why it does not.
 pub fn preview_pads(
     family: FamilyKind,
     form: &PackageForm,
     lands: Option<&LandValues>,
+    rules: &sparksmith_core::rules::DesignRules,
 ) -> Result<Vec<Pad>, String> {
     let package = preview_package(form);
     let terminals: Vec<PackageTerminalId> = package.terminals.iter().map(|t| t.id).collect();
-    samples::template_lands(form, &terminals, lands)
+    samples::template_lands_with(form, &terminals, lands, rules)
         .ok_or_else(|| format!("These {} values give no lands", family_label(family)))
 }
 
@@ -1288,6 +1289,7 @@ impl TemplateGallery {
     /// The pads of the preview, rebuilt only when the values change.
     fn pads(
         &mut self,
+        engine: &Engine,
         family: FamilyKind,
         form: &PackageForm,
         lands: Option<&LandValues>,
@@ -1302,7 +1304,14 @@ impl TemplateGallery {
                 family,
                 form: form.clone(),
                 lands: lands.cloned(),
-                pads: Arc::new(preview_pads(family, form, lands)),
+                pads: Arc::new(
+                    engine
+                        .project()
+                        .rules
+                        .land_estimators()
+                        .map_err(|e| e.to_string())
+                        .and_then(|rules| preview_pads(family, form, lands, &rules)),
+                ),
             });
         }
         open.pads.as_ref().map(|p| Arc::clone(&p.pads))
@@ -1336,7 +1345,7 @@ impl TemplateGallery {
             // overrides no longer apply (as the core builds it).
             (Some(h), Some(f)) => {
                 let lands = h.lands.as_ref().filter(|_| *f == h.values);
-                self.pads(h.family, f, lands)
+                self.pads(engine, h.family, f, lands)
             }
             _ => None,
         };
@@ -2178,7 +2187,9 @@ mod tests {
     /// perimeter pads plus the exposed pad, one per terminal.
     #[test]
     fn previews_build_one_pad_per_terminal() -> Result<(), String> {
-        let chip_pads = preview_pads(FamilyKind::Chip, &chip(ChipKind::Capacitor), None)?;
+        let rules = sparksmith_core::rules::DesignRules::default();
+        let chip_pads =
+            preview_pads(FamilyKind::Chip, &chip(ChipKind::Capacitor), None, &rules)?;
         let landing = |pads: &[Pad]| {
             pads.iter()
                 .filter(|p| matches!(p.kind, PadKind::Smd | PadKind::PlatedThrough))
@@ -2192,7 +2203,7 @@ mod tests {
             package.terminals.last().map(|t| t.designation.as_str()),
             Some("EP")
         );
-        let qfn_pads = preview_pads(FamilyKind::NoLead, &qfn, None)?;
+        let qfn_pads = preview_pads(FamilyKind::NoLead, &qfn, None, &rules)?;
         assert_eq!(landing(&qfn_pads), package.terminals.len());
         Ok(())
     }

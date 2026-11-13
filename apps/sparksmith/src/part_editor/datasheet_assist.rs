@@ -21,7 +21,6 @@ use sparksmith_assist::model::{
 use sparksmith_assist::profile as run_profile;
 use sparksmith_assist::{AssistLibrary, Datasheet, Event, Goal, RunConfig};
 use sparksmith_automation::Session;
-use sparksmith_core::Engine;
 use sparksmith_ui::ui_kit::{self, Button};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -446,7 +445,8 @@ fn work(
     };
     let mut backend =
         model::connect(&plan.config.profile, &connection).map_err(|e| e.to_string())?;
-    let mut session = Session::new(Engine::default());
+    let mut session =
+        Session::new(sparksmith_io::new_project::engine().map_err(|e| e.to_string())?);
     let _ = tx.send(Message::Line(format!(
         "Run profile {}",
         plan.config.run_profile.name

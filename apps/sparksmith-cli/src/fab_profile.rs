@@ -12,14 +12,14 @@ use sparksmith_io::settings::UserDirs;
 use std::path::Path;
 
 /// The usage line(s).
-pub const USAGE: &str = "fab-profile list        list the user's fab profiles and the built-in ones
+pub const USAGE: &str = "fab-profile list        list the user's fab profiles and the shipped ones
   fab-profile import FILE.json
                                    add a fab profile file to the user's library
   fab-profile export ID|FILE.sparksmith NEW_FILE.json
                                    write a fab profile (or a project's effective rules)";
 
 fn library() -> Result<ProfileLibrary> {
-    Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?))
+    Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?)?)
 }
 
 fn summary(profile: &RuleProfile, kind: &str) -> serde_json::Value {

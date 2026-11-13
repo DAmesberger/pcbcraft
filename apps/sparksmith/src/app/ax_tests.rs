@@ -324,7 +324,7 @@ fn assert_empty(engine: &Engine, what: &str) -> Fallible {
 /// is no built-in sample design.
 #[test]
 fn a_launch_without_a_file_opens_an_empty_project() -> Fallible {
-    let ax = Ax::with_engine(file_ui::new_project(), Workspace::Schematic)?;
+    let ax = Ax::with_engine(file_ui::new_project()?, Workspace::Schematic)?;
     assert_empty(&ax.app.engine, "launch")
 }
 
@@ -333,7 +333,7 @@ fn a_launch_without_a_file_opens_an_empty_project() -> Fallible {
 /// (docs/e2e-run-4.md, finding 10).
 #[test]
 fn a_launch_frames_the_whole_empty_page() -> Fallible {
-    let mut ax = Ax::with_engine(file_ui::new_project(), Workspace::Schematic)?;
+    let mut ax = Ax::with_engine(file_ui::new_project()?, Workspace::Schematic)?;
     ax.frame(vec![]);
     let project = ax.app.engine.project();
     let sheet = project.sheets.list.first().ok_or("a first sheet")?;
@@ -420,7 +420,7 @@ fn file_new_opens_the_same_empty_project() -> Fallible {
         ax.app.engine.project().instances.is_empty()
     })?;
     assert_empty(&ax.app.engine, "File › New")?;
-    assert_eq!(ax.app.engine.to_file(), file_ui::new_project().to_file());
+    assert_eq!(ax.app.engine.to_file(), file_ui::new_project()?.to_file());
     Ok(())
 }
 

@@ -284,7 +284,7 @@ pub fn run(args: &[String]) -> Result<()> {
         datasheets: args.datasheets.clone(),
         notes: args.notes.clone(),
     };
-    let mut session = super::user_session(Engine::default());
+    let mut session = super::user_session(sparksmith_io::new_project::engine()?);
     let cancel = AtomicBool::new(false);
     let outcome = sparksmith_assist::run(
         &goal,

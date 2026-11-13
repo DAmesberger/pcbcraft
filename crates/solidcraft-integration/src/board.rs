@@ -46,7 +46,7 @@ use sparksmith_core::model::board::{
     ShapeFaultKind, SolvedBoard, SolvedCutout, SolvedEdge, SolvedMountingHole,
 };
 use sparksmith_core::model::dimension::FeatureGeometry;
-use sparksmith_core::rules::{DEFAULT_OUTLINE_FIT_MM, OUTLINE_FIT_RANGE_MM};
+use sparksmith_core::rules::OUTLINE_FIT_RANGE_MM;
 
 use crate::geom::Seg2;
 
@@ -86,7 +86,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
         evaluator_ref()
     }
 
-    fn rectangle(&self, size: Point) -> Result<BoardSketch> {
+    fn rectangle(&self, size: Point, outline_fit: f64) -> Result<BoardSketch> {
         let [w, h] = size;
         if !(w.is_finite() && h.is_finite() && w > 0.0 && h > 0.0)
             || w > MAX_COORD_MM
@@ -162,7 +162,7 @@ impl BoardShapeEvaluator for SketchBoardEvaluator {
             next_feature: 1,
             solve: SolveSummary::default(),
             solved: SolvedBoard::rectangle(size),
-            outline_fit: DEFAULT_OUTLINE_FIT_MM,
+            outline_fit,
             fault: None,
             idle: Vec::new(),
         };

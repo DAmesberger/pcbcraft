@@ -25,7 +25,7 @@ impl BoardShapeEvaluator for Host {
     fn evaluator(&self) -> EvaluatorRef {
         sparksmith_solidcraft::footprint::evaluator_ref()
     }
-    fn rectangle(&self, size: Point) -> Result<BoardSketch> {
+    fn rectangle(&self, size: Point, _outline_fit: f64) -> Result<BoardSketch> {
         board_of(size, Vec::new())
     }
     fn apply_sketch(&self, sketch: &SketchBlob, edit: &SketchEdit) -> Result<SketchOutcome> {
@@ -91,7 +91,7 @@ fn board_of(size: Point, parameters: Vec<FootprintParam>) -> Result<BoardSketch>
         next_feature: 1,
         solve: Default::default(),
         solved: SolvedBoard::rectangle(size),
-        outline_fit: sparksmith_core::rules::DEFAULT_OUTLINE_FIT_MM,
+        outline_fit: 0.01,
         fault: None,
         idle: Vec::new(),
     })

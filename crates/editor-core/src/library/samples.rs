@@ -552,7 +552,9 @@ fn no_lead_copper_gap(rules: &DesignRules) -> f64 {
     rules.mask.web_min + 2.0 * super::footprint::MASK_EXPANSION_NM.to_mm_f64()
 }
 
-/// [`form_lands_with`] under the default design-rule profile.
+/// A test fixture, never in the product: [`form_lands_with`] under the
+/// fixture rules ([`DesignRules::default`]).
+#[cfg(any(test, feature = "test-fixtures"))]
 pub fn form_lands(form: &PackageForm, terminals: &[PackageTerminalId]) -> Option<Vec<Pad>> {
     form_lands_with(form, terminals, &DesignRules::default())
 }
@@ -742,9 +744,14 @@ fn across_x(sides: LeadSides, per: [u32; 2], k: usize) -> bool {
 /// A component of `preset`'s package: one passive terminal per lead (and
 /// the exposed pad), a rectangular symbol with pins down both sides,
 /// form-derived lands and a straight terminal mapping. The package model
-/// is generated.
-pub fn packaged(name: &str, preset: Preset, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
-    packaged_form(name, preset.form(), preset.prefix(), refs)
+/// is generated. Lands are estimated with `rules`' margins.
+pub fn packaged(
+    name: &str,
+    preset: Preset,
+    refs: SampleRefs,
+    rules: &DesignRules,
+) -> Result<Vec<DraftEdit>> {
+    packaged_form(name, preset.form(), preset.prefix(), refs, rules)
 }
 
 /// [`packaged`] for any typed `form` and designator `prefix`.
@@ -753,6 +760,7 @@ pub fn packaged_form(
     form: PackageForm,
     prefix: &str,
     refs: SampleRefs,
+    rules: &DesignRules,
 ) -> Result<Vec<DraftEdit>> {
     build_packaged(
         &Packaged {
@@ -764,7 +772,7 @@ pub fn packaged_form(
             lands: None,
             provenance: PROVENANCE,
             template: false,
-            rules: &DesignRules::default(),
+            rules,
         },
         refs,
     )
@@ -779,6 +787,7 @@ pub fn packaged_symbol(
     prefix: &str,
     kind: SymbolKind,
     refs: SampleRefs,
+    rules: &DesignRules,
 ) -> Result<Vec<DraftEdit>> {
     build_packaged(
         &Packaged {
@@ -790,7 +799,7 @@ pub fn packaged_symbol(
             lands: None,
             provenance: PROVENANCE,
             template: false,
-            rules: &DesignRules::default(),
+            rules,
         },
         refs,
     )
@@ -857,6 +866,7 @@ pub struct TemplateSpec<'a> {
 /// The default profile's clearance between a no-lead perimeter land's
 /// heel and the exposed pad when the lands are estimated (original rule
 /// of thumb); estimates read the `exposed pad clearance` rule.
+#[cfg(any(test, feature = "test-fixtures"))]
 pub const EXPOSED_PAD_CLEARANCE_MM: f64 = 0.2;
 
 /// The five drafts of a component built from a typed `form` and a
@@ -867,6 +877,10 @@ pub const EXPOSED_PAD_CLEARANCE_MM: f64 = 0.2;
 /// and a straight terminal mapping. The package model is generated.
 /// Refuses a form that has no terminals and a two-terminal skeleton on a
 /// package of another count.
+///
+/// A test fixture, never in the product: the fixture rules; the product
+/// calls [`from_template_with`] with the board's.
+#[cfg(any(test, feature = "test-fixtures"))]
 pub fn from_template(spec: &TemplateSpec<'_>, refs: SampleRefs) -> Result<Vec<DraftEdit>> {
     from_template_with(spec, refs, &DesignRules::default())
 }
@@ -989,8 +1003,9 @@ pub fn form_terminal_count(form: &PackageForm) -> u32 {
         .unwrap_or(0)
 }
 
-/// [`heel_trim_with`] under the default design-rule profile
-/// ([`EXPOSED_PAD_CLEARANCE_MM`]).
+/// A test fixture, never in the product: [`heel_trim_with`] under the
+/// fixture rules.
+#[cfg(any(test, feature = "test-fixtures"))]
 pub fn heel_trim(form: &PackageForm) -> f64 {
     heel_trim_with(form, &DesignRules::default())
 }
@@ -1109,6 +1124,10 @@ fn axis_mut(p: &mut PointNm, axis: usize) -> &mut Nm {
 /// [`form_lands`], then the row's cited land overrides, or without them
 /// the estimated heel trim that keeps no-lead lands clear of an exposed
 /// pad. `None` when the form gives no lands for that many terminals.
+///
+/// A test fixture, never in the product: the fixture rules; the product
+/// calls [`template_lands_with`] with the board's.
+#[cfg(any(test, feature = "test-fixtures"))]
 pub fn template_lands(
     form: &PackageForm,
     terminals: &[PackageTerminalId],
@@ -2143,7 +2162,7 @@ mod tests {
         for preset in Preset::ALL {
             let mut engine = Engine::default();
             let refs = engine.reserve_lineages()?;
-            let edits = packaged(preset.label(), preset, refs)?;
+            let edits = packaged(preset.label(), preset, refs, &DesignRules::default())?;
             let Some(Definition::Package(package)) = edits
                 .iter()
                 .find(|e| e.id == refs.package.id)

@@ -57,4 +57,6 @@ block2 = "0.6"
 
 [dev-dependencies]
 sparksmith-core = { workspace = true, features = ["test-fixtures"] }
+sparksmith-automation = { workspace = true, features = ["test-fixtures"] }
+sparksmith-solidcraft = { workspace = true, features = ["test-fixtures"] }
 tempfile.workspace = true

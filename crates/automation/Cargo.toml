@@ -30,6 +30,9 @@ tokio = { workspace = true, features = ["rt", "sync", "macros"] }
 # `cargo test --workspace` and `cargo build -p sparksmith` each built
 # Solidcraft's engine, document, kernel and UI crates in their own variant.
 profile = ["sparksmith-solidcraft/profile"]
+# Test fixtures (`Session::default` on the core's fixture engine) for
+# other crates' tests, enabled only by their dev-dependencies.
+test-fixtures = ["sparksmith-core/test-fixtures"]
 
 [[test]]
 name = "build_profile"

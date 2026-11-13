@@ -82,9 +82,9 @@ pub struct Server {
 impl Server {
     /// Starts the session thread with `session` as the first project,
     /// gated by `policy`; projects opened later start from
-    /// [`Session::default`].
+    /// [`Session::lending`] and open or create their document.
     pub fn new(session: Session, policy: Policy) -> Result<Self, String> {
-        Self::with_new_projects(session, policy, Box::new(Session::default))
+        Self::with_new_projects(session, policy, Box::new(Session::lending))
     }
 
     /// [`Self::new`], with the sessions later projects start from made by

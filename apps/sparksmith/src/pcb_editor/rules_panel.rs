@@ -14,8 +14,9 @@
 //! rules that change, the overrides dropped and the board issues that
 //! appear or go; Switch then commits `rules.set_fab_profile` as one undo step.
 //! A new project without a profile opens the panel at "Choose a fab
-//! profile" ([`PcbEditor::ask_for_profile`]): the built-in JLCPCB 2-layer
-//! 1 oz is preselected, and Use profile sets it in one undo step.
+//! profile" ([`PcbEditor::ask_for_profile`]): the shipped library's
+//! default profile is preselected, and Use profile sets it in one undo
+//! step.
 //!
 //! The user profile library (`sparksmith_io::rule_profiles`) is file
 //! effects, not document edits: saving, renaming, deleting, importing and
@@ -253,10 +254,12 @@ impl RulesPanel {
     fn refresh(&mut self) {
         self.listing = match &self.library {
             Some(library) => library.list().map_err(|e| e.to_string()),
-            None => Ok(Listing {
-                builtins: rule_profiles::builtins(),
-                ..Listing::default()
-            }),
+            None => rule_profiles::shipped_from_env()
+                .map(|builtins| Listing {
+                    builtins,
+                    ..Listing::default()
+                })
+                .map_err(|e| e.to_string()),
         };
     }
 
@@ -264,8 +267,8 @@ impl RulesPanel {
         self.listing.as_ref().map_or(&[], |l| l.profiles.as_slice())
     }
 
-    /// The picker's profiles: the user's, then the built-ins none of them
-    /// replaces (all built-ins when the folder cannot be read).
+    /// The picker's profiles: the user's, then the shipped ones none of
+    /// them replaces (all shipped ones when the folder cannot be read).
     fn choices(&self) -> Vec<RuleProfile> {
         match &self.listing {
             Ok(listing) => listing
@@ -274,7 +277,7 @@ impl RulesPanel {
                 .chain(&listing.builtins)
                 .cloned()
                 .collect(),
-            Err(_) => rule_profiles::builtins(),
+            Err(_) => rule_profiles::shipped_from_env().unwrap_or_default(),
         }
     }
 
@@ -653,7 +656,7 @@ impl PcbEditor {
     pub(super) fn open_rules(&mut self, topic: Option<RuleTopic>) {
         let library = sparksmith_io::settings::UserDirs::from_env()
             .ok()
-            .map(|dirs| ProfileLibrary::from_dirs(&dirs));
+            .and_then(|dirs| ProfileLibrary::from_dirs(&dirs).ok());
         self.open_rules_in(library, topic);
     }
 
@@ -685,8 +688,8 @@ impl PcbEditor {
         self.ask_profile = true;
     }
 
-    /// Open the panel at "Choose a fab profile" with the built-in JLCPCB
-    /// 2-layer 1 oz preselected (the user's own copy when it has that id).
+    /// Open the panel at "Choose a fab profile" with the shipped library's
+    /// default preselected (the user's own copy when it has that id).
     pub(super) fn choose_profile(&mut self) {
         if self.rules.is_none() {
             self.open_rules(None);
@@ -695,14 +698,19 @@ impl PcbEditor {
             return;
         };
         let choices = panel.choices();
+        let default = match &panel.library {
+            Some(library) => library.default_id().ok(),
+            None => sparksmith_io::new_project::shipped()
+                .ok()
+                .map(|d| d.fab_profile),
+        };
         let id = choices
             .iter()
-            .find(|p| p.id == rule_profiles::DEFAULT_BUILTIN)
+            .find(|p| Some(&p.id) == default.as_ref())
             .or(choices.first())
-            .map_or_else(
-                || rule_profiles::DEFAULT_BUILTIN.to_owned(),
-                |p| p.id.clone(),
-            );
+            .map(|p| p.id.clone())
+            .or(default)
+            .unwrap_or_default();
         panel.mode = Mode::Choose {
             id,
             sent: None,
@@ -948,7 +956,7 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
                     concat!(
                         "Choose your fabricator's profile. ",
                         sparksmith_core::product_name!(),
-                        " has JLCPCB's built in; import another \
+                        " ships sourced profiles to choose from; import another \
                          fabricator's file (Your profiles › Import…) or write one from its \
                          capability page."
                     ),

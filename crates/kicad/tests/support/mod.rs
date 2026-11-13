@@ -5,6 +5,20 @@
 
 use std::fmt::Write as _;
 
+/// `sparksmith_kicad::import` onto the core's test-fixture board and
+/// stackup presets.
+pub fn import(
+    bytes: &[u8],
+) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
+    let presets = sparksmith_core::StackupPresets::fixture().map_err(|e| {
+        sparksmith_kicad::ImportError::Refused {
+            step: "fixture",
+            reason: e.to_string(),
+        }
+    })?;
+    sparksmith_kicad::import(bytes, &sparksmith_core::NewBoard::fixture(), &presets)
+}
+
 /// One pad as written in a board file.
 pub struct Pad {
     pub number: &'static str,

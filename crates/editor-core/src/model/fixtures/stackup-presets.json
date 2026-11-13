@@ -1,0 +1,33 @@
+{
+  "id": "test-fixture",
+  "name": "Test fixture stackups",
+  "copper_um": 35.0,
+  "mask_um": 12.0,
+  "mask_laminate_um": 20.0,
+  "two_layer_core": { "thickness_mm": 1.6, "glass": "style7628" },
+  "dielectric_mm": 1.6,
+  "dielectric_mm_up_to_layers": 10,
+  "dielectric_mm_per_layer_above": 0.16,
+  "prepreg_mm": 0.2,
+  "prepreg_mm_up_to_layers": 6,
+  "prepreg_mm_above": 0.1,
+  "prepreg_glass": [
+    { "from_mm": 0.2, "glass": "style2116" },
+    { "from_mm": 0.0, "glass": "style1080" }
+  ],
+  "core_glass": [
+    { "from_mm": 0.3, "glass": "style7628" },
+    { "from_mm": 0.0, "glass": "style2116" }
+  ],
+  "added_prepreg": { "thickness_mm": 0.2, "glass": "style2116" },
+  "added_core": { "thickness_mm": 0.4, "glass": "style7628" },
+  "glass_dk": {
+    "style106": 3.8,
+    "style1080": 4.0,
+    "style2116": 4.3,
+    "style7628": 4.6
+  },
+  "sources": {
+    "all": "Sparksmith test fixture: not shipped and not offered. Its numbers equal the shipped library/stackups family so tests measured against a 1.6 mm two-layer board still are; a sparksmith-io test holds them equal."
+  }
+}

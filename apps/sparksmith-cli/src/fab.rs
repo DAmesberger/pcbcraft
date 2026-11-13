@@ -171,7 +171,10 @@ mod tests {
         let arg = |p: &std::path::Path| p.display().to_string();
         use sparksmith_core::rules::fixtures;
         let mut session = sparksmith_automation::session::Session::new(
-            sparksmith_automation::session::showcase(fixtures::prototype()?)?,
+            sparksmith_automation::session::showcase(
+                &sparksmith_core::StackupPresets::fixture()?,
+                fixtures::prototype()?,
+            )?,
         );
         let revision = session.engine().revision();
         super::execute(

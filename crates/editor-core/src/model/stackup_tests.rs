@@ -53,7 +53,7 @@ fn the_rules_bound_the_count_require_pairs_and_one_dielectric_between_foils() ->
     let mut big = Stackup::preset(MAX_COPPER_LAYERS)?;
     big.check()?;
     let dielectric = big.dielectrics[0];
-    big.copper.extend([CopperFoil::ounces(1.0); 2]);
+    big.copper.extend([CopperFoil::of_um(35.0); 2]);
     big.dielectrics.extend([dielectric; 2]);
     assert!(matches!(big.check(), Err(Error::Invalid(m)) if m.contains("at most 64")));
     let mut gap = Stackup::preset(8)?;

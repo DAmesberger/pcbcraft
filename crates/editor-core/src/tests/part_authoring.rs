@@ -160,7 +160,7 @@ fn close(a: f64, b: f64) -> bool {
 
 #[test]
 fn a_pad_table_makes_the_footprint_and_one_undo_step() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = connector(&mut engine)?;
     let before_footprint = footprint(&engine, f.footprint)?;
     let before_package = package(&engine, f.package)?;
@@ -238,7 +238,7 @@ fn a_pad_table_makes_the_footprint_and_one_undo_step() -> Result<()> {
 
 #[test]
 fn a_bad_table_changes_nothing() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = connector(&mut engine)?;
     let before = Snapshot::of(&engine);
     let refused = |engine: &mut Engine, request: FootprintFromPads, code: &str| {
@@ -304,7 +304,7 @@ fn a_bad_table_changes_nothing() -> Result<()> {
 
 #[test]
 fn pads_land_terminals_only_as_the_table_says() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = connector(&mut engine)?;
     let mut request = table(f.footprint);
     for pad in &mut request.pads {
@@ -332,7 +332,7 @@ fn pads_land_terminals_only_as_the_table_says() -> Result<()> {
 
 #[test]
 fn replacing_keeps_identities_unused_and_rebuilds_the_drawings() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = connector(&mut engine)?;
     from_pads(&mut engine, table(f.footprint))?;
     let first = footprint(&engine, f.footprint)?;
@@ -354,7 +354,7 @@ fn replacing_keeps_identities_unused_and_rebuilds_the_drawings() -> Result<()> {
 
 #[test]
 fn a_set_placement_stays_and_a_plain_edit_is_stored_as_given() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = connector(&mut engine)?;
     // A plain draft edit moves the pads 11 mm along x and nothing else: pads
     // at 9.5, 11 and 12.5, no courtyard.
@@ -476,7 +476,7 @@ fn a_datum_offset_moves_the_body_to_the_same_place() -> Result<()> {
 
 #[test]
 fn the_standard_fields_import_in_one_step_and_read_their_units() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let revision = engine.revision();
     let Outcome::Imported { report } =
         library(&mut engine, LibraryCommand::ImportStandardFields {})?
@@ -545,7 +545,7 @@ fn the_standard_fields_import_in_one_step_and_read_their_units() -> Result<()> {
 
 #[test]
 fn the_standard_fields_query_gives_a_bundle_library_import_takes() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let QueryResult::StandardFields(bundle) = engine.query(Query::StandardFields {})? else {
         return Err(Error::Invalid("not the bundle".into()));
     };
@@ -610,7 +610,7 @@ fn restyle(
 
 #[test]
 fn a_symbol_is_redrawn_as_another_kind_keeping_its_unit() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = two_pin_box(&mut engine)?;
     let before = symbol(&engine, f.symbol)?;
     let revision = engine.revision();
@@ -659,7 +659,7 @@ fn a_symbol_is_redrawn_as_another_kind_keeping_its_unit() -> Result<()> {
 
 #[test]
 fn undo_returns_the_old_drawing() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = two_pin_box(&mut engine)?;
     let before = symbol(&engine, f.symbol)?;
     restyle(&mut engine, f.symbol, SymbolKind::Pushbutton, None)?;
@@ -670,7 +670,7 @@ fn undo_returns_the_old_drawing() -> Result<()> {
 
 #[test]
 fn a_redraw_that_does_not_fit_changes_nothing() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let f = two_pin_box(&mut engine)?;
     let before = Snapshot::of(&engine);
     let mut refused = |draft, kind, terminals, code: &str| {
@@ -703,7 +703,7 @@ fn a_redraw_that_does_not_fit_changes_nothing() -> Result<()> {
 
 #[test]
 fn a_symbol_of_several_units_is_not_redrawn() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let spec = Spec {
         name: "Dual",
         terminals: vec![(1, "A", passive()), (2, "B", passive())],
@@ -741,7 +741,7 @@ fn dbz() -> TabbedForm {
 
 #[test]
 fn a_tabbed_form_s_land_pattern_builds_the_pads() -> Result<()> {
-    let mut engine = Engine::default();
+    let mut engine = Engine::profiled()?;
     let new = |form: TabbedForm, name: &str| NewFromTemplate {
         row: RowSource::Custom {
             family: FamilyKind::Tabbed,

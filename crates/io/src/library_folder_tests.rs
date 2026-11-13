@@ -64,7 +64,7 @@ pub(crate) fn part_bundle(
     bytes: &[u8],
     first_lineage: u128,
 ) -> Result<(Bundle, PackedAsset)> {
-    let mut library = sparksmith_core::catalog::synthetic::project_with_parts(1)?.library;
+    let mut library = sparksmith_core::catalog::synthetic::project_with_parts(1, &sparksmith_core::NewBoard::fixture())?.library;
     let packed = asset(bytes);
     let part = library
         .parts

@@ -296,7 +296,7 @@ mod tests {
         let library_dir = tempfile::tempdir()?;
         let cache = tempfile::tempdir()?;
         let folder = create_folder(library_dir.path(), "Bench")?;
-        let mut project = sparksmith_core::catalog::synthetic::project(1_000)?;
+        let mut project = sparksmith_core::catalog::synthetic::project(1_000, &sparksmith_core::NewBoard::fixture())?;
         let roots: Vec<_> = project
             .library
             .latest_components()

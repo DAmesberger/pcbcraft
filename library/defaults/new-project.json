@@ -1,0 +1,8 @@
+{
+  "format": 1,
+  "about": "What a new project starts with. fab_profile names a profile in profiles/ (the user's Settings default overrides it); stackup names a family in stackups/ and copper_layers its preset; board_size_mm is the first board rectangle, a size to edit, not a limit.",
+  "fab_profile": "jlcpcb-2-layer-1oz",
+  "stackup": "fr4-1oz.json",
+  "copper_layers": 2,
+  "board_size_mm": [60.0, 40.0]
+}

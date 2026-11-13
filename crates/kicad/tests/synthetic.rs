@@ -13,8 +13,8 @@ use sparksmith_core::library::{HoleShape, MaskRule, PadKind, PadShape, PasteRule
 use sparksmith_core::{Layer, Project};
 use sparksmith_kicad::board::BoardError;
 use sparksmith_kicad::report::Case;
-use sparksmith_kicad::{ImportError, import};
-use support::{Board, Footprint, Pad};
+use sparksmith_kicad::ImportError;
+use support::{Board, Footprint, Pad, import};
 
 type Fallible<T> = Result<T, Box<dyn std::error::Error>>;
 

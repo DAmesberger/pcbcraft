@@ -14,7 +14,7 @@ use crate::refusal::{self, Origin};
 use egui::Ui;
 use sparksmith_core::{
     COPPER_UM_RANGE, CopperLayer, DIELECTRIC_MM_RANGE, DK_RANGE, DielectricKind, Engine,
-    GlassStyle, OUNCE_UM, Operation, Project, Stackup,
+    GlassStyle, OUNCE_UM, Operation, Project, Stackup, StackupPresets,
     layout::{
         LayoutCommand,
         restack::{DraftRow, StackupDraft},
@@ -35,6 +35,9 @@ pub(super) struct StackupSetup {
     sent: Option<u64>,
     refusal: Option<String>,
     opening: bool,
+    /// The shipped stackup family presets and added layers come from, or
+    /// why it could not be read.
+    presets: Result<StackupPresets, String>,
 }
 
 impl StackupSetup {
@@ -46,6 +49,9 @@ impl StackupSetup {
             sent: None,
             refusal: None,
             opening: true,
+            presets: sparksmith_io::new_project::shipped()
+                .map(|defaults| defaults.presets)
+                .map_err(|e| e.to_string()),
         }
     }
 
@@ -143,20 +149,28 @@ impl PcbEditor {
 /// The dialog's body: preset, total, the layer table, the add buttons and
 /// a row per removed layer that carries copper.
 fn body(ui: &mut Ui, setup: &mut StackupSetup, carried: &[CopperLayer]) {
+    let family = setup.presets.as_ref().ok();
+    let counts = || family.into_iter().flat_map(|_| Stackup::preset_counts());
     let presets: Vec<(Option<usize>, String)> = std::iter::once((None, "Custom".to_owned()))
-        .chain(Stackup::preset_counts().map(|n| (Some(n), format!("{n} layers"))))
+        .chain(counts().map(|n| (Some(n), format!("{n} layers"))))
         .collect();
-    let mut preset = Stackup::preset_counts().find(|n| {
-        Stackup::preset(*n).is_ok_and(|p| {
-            p.copper == setup.draft.stackup.copper
-                && p.dielectrics == setup.draft.stackup.dielectrics
+    let mut preset = counts().find(|n| {
+        family.is_some_and(|f| {
+            f.preset(*n).is_ok_and(|p| {
+                p.copper == setup.draft.stackup.copper
+                    && p.dielectrics == setup.draft.stackup.dielectrics
+            })
         })
     });
     if kit::choice_row(ui, "Preset", &mut preset, &presets)
         && let Some(count) = preset
-        && setup.draft.use_preset(count).is_ok()
+        && let Some(family) = family
+        && setup.draft.use_preset(family, count).is_ok()
     {
         setup.refusal = None;
+    }
+    if let Err(error) = &setup.presets {
+        kit::hint(ui, "No stackup presets", error);
     }
     kit::value_row(
         ui,
@@ -198,10 +212,15 @@ fn body(ui: &mut Ui, setup: &mut StackupSetup, carried: &[CopperLayer]) {
         }
     }
     kit::actions(ui, |ui| {
-        let full = setup.draft.stackup.copper.len() >= sparksmith_core::MAX_COPPER_LAYERS;
+        let family = setup.presets.as_ref().ok();
+        let full = setup.draft.stackup.copper.len() >= sparksmith_core::MAX_COPPER_LAYERS
+            || family.is_none();
         let pair = ui_kit::button(ui, "Add pair", Button::Enabled(!full))
             .on_hover_text("A prepreg and a core with two inner foils, above the bottom");
-        if pair.clicked() && setup.draft.add_pair().is_ok() {
+        if pair.clicked()
+            && let Some(family) = family
+            && setup.draft.add_pair(family).is_ok()
+        {
             setup.refusal = None;
         }
         for (kind, label) in [
@@ -210,7 +229,10 @@ fn body(ui: &mut Ui, setup: &mut StackupSetup, carried: &[CopperLayer]) {
         ] {
             let add = ui_kit::button(ui, label, Button::Enabled(!full))
                 .on_hover_text("One inner foil on it, above the bottom");
-            if add.clicked() && setup.draft.add_layer(kind).is_ok() {
+            if add.clicked()
+                && let Some(family) = family
+                && setup.draft.add_layer(family, kind).is_ok()
+            {
                 setup.refusal = None;
             }
         }
@@ -371,6 +393,7 @@ fn row_editor(ui: &mut Ui, draft: &mut StackupDraft, row: DraftRow) -> Option<Ro
         }
         DraftRow::Dielectric(i) => {
             let count = draft.stackup.dielectrics.len();
+            let estimates = draft.stackup.dk_estimates.0.clone();
             let d = draft.stackup.dielectrics.get_mut(i)?;
             let kinds = [DielectricKind::Core, DielectricKind::Prepreg]
                 .map(|k| (k, kind_label(k).to_owned()));
@@ -390,7 +413,12 @@ fn row_editor(ui: &mut Ui, draft: &mut StackupDraft, row: DraftRow) -> Option<Ro
             ]
             .map(|g| (g, glass_label(g).to_owned()));
             kit::choice_row(ui, "Glass", &mut d.glass, &glasses);
-            let mut dk = d.permittivity();
+            // No entered Dk and no estimate for the glass: the field
+            // starts at the bottom of the accepted range.
+            let mut dk = d
+                .dk
+                .or_else(|| estimates.get(d.glass))
+                .unwrap_or(*DK_RANGE.start());
             if kit::number_row(ui, "Dk", &mut dk, "", DK_RANGE) {
                 d.dk = Some(dk);
             }

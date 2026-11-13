@@ -99,7 +99,7 @@ pub fn inspect_bundle(
     };
     let project = Project {
         library,
-        ..Project::default()
+        ..Project::new(&crate::NewBoard::without_board())
     };
     let mut report = inspect(&project, &Drafts::default(), component, revision)?;
     report.entry.source = Source::Library(bundle.library);
@@ -129,7 +129,7 @@ mod tests {
 
     /// The promote bundle of the first synthetic component and its Part.
     fn bundle_of(kind: DefinitionKind) -> Fallible<(Project, Bundle, DefinitionRef)> {
-        let project = synthetic::project_with_parts(4)?;
+        let project = synthetic::project_with_parts(4, &crate::NewBoard::fixture())?;
         let root = match kind {
             DefinitionKind::Part => {
                 let part = project.library.latest_parts()[0];

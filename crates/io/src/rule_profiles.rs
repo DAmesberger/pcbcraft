@@ -7,12 +7,16 @@
 //! snapshot of its profile (`ProjectRules::profile`). The library supplies
 //! profiles to choose for a new board or to switch to: the ones a user
 //! imported, saved or wrote from a fabricator's published capabilities,
-//! and the read-only [`builtins`]: the sourced JLCPCB files in
-//! `examples/profiles/`, compiled in as written. A user profile with a
-//! built-in's id takes its place.
+//! and the read-only shipped ones ([`shipped_profiles`]): the sourced
+//! files in the shipped library's `profiles/` shelf, read at run time. A
+//! user profile with a shipped profile's id takes its place. Which profile
+//! a new board is offered first is shipped data too
+//! (`defaults/new-project.json`, [`crate::new_project`]), unless the
+//! user's Settings name another.
 use crate::library_folder::{pretty, read_bounded};
 use crate::persistence::{atomic_create, atomic_write};
 use crate::settings::UserDirs;
+use crate::shipped::{Shelf, ShippedLibrary};
 use crate::{Error, Result};
 use sparksmith_core::rules::{PROFILE_FILE_FORMAT, ProfileFile, RuleProfile};
 use std::path::{Path, PathBuf};
@@ -36,8 +40,8 @@ pub struct Problem {
 }
 
 /// What [`ProfileLibrary::list`] found: the readable profiles, sorted by
-/// name, every file it could not use, and the built-ins no user profile
-/// replaces.
+/// name, every file it could not use, and the shipped profiles no user
+/// profile replaces.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Listing {
     pub profiles: Vec<RuleProfile>,
@@ -45,34 +49,46 @@ pub struct Listing {
     pub builtins: Vec<RuleProfile>,
 }
 
-/// The built-in profile files: JLCPCB's published capabilities, every rule
-/// citing its row. The files stay in `examples/profiles/`, the one copy.
-const BUILTIN_FILES: [&str; 2] = [
-    include_str!("../../../examples/profiles/jlcpcb-2-layer-1oz.json"),
-    include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json"),
-];
-
-/// The built-in profile a new project is offered first.
-pub const DEFAULT_BUILTIN: &str = "jlcpcb-2-layer-1oz";
-
-/// The read-only profiles every install has, in file order. Each decodes
-/// like any profile file (a test holds them valid).
-pub fn builtins() -> Vec<RuleProfile> {
-    BUILTIN_FILES
+/// The shipped profiles: every `.json` file in the shipped library's
+/// `profiles/` shelf, in file-name order, each named `<id>.json`. A file
+/// that does not read as a profile is an error naming it.
+pub fn shipped_profiles(shipped: &ShippedLibrary) -> Result<Vec<RuleProfile>> {
+    let names = shipped.list(Shelf::Profiles, &format!(".{EXTENSION}"))?;
+    if names.len() > MAX_LIBRARY_PROFILES {
+        return Err(Error::TooLarge(format!(
+            "{} holds more than {MAX_LIBRARY_PROFILES} profiles",
+            shipped.shelf(Shelf::Profiles).display()
+        )));
+    }
+    let limit = u64::try_from(MAX_PROFILE_FILE_BYTES).unwrap_or(u64::MAX);
+    names
         .iter()
-        .filter_map(|text| decode(text.as_bytes()).ok())
+        .map(|name| {
+            let path = shipped.shelf(Shelf::Profiles).join(name);
+            let named = |e: Error| Error::Invalid(format!("{}: {e}", path.display()));
+            let profile = decode(&shipped.read(Shelf::Profiles, name, limit).map_err(named)?)
+                .map_err(named)?;
+            if name.strip_suffix(&format!(".{EXTENSION}")) != Some(profile.id.as_str()) {
+                return Err(named(Error::Invalid(format!(
+                    "the file name does not match its profile id {}",
+                    profile.id
+                ))));
+            }
+            Ok(profile)
+        })
         .collect()
 }
 
-/// The built-in profile `id`, if there is one.
-pub fn builtin(id: &str) -> Option<RuleProfile> {
-    builtins().into_iter().find(|p| p.id == id)
+/// [`shipped_profiles`] of the located shipped library.
+pub fn shipped_from_env() -> Result<Vec<RuleProfile>> {
+    shipped_profiles(&ShippedLibrary::locate()?)
 }
 
 /// The user profile library folder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProfileLibrary {
     dir: PathBuf,
+    shipped: ShippedLibrary,
 }
 
 /// `text` as a library id: lower-case ASCII letters, digits and single
@@ -204,17 +220,38 @@ fn not_found(id: &str) -> Error {
 }
 
 impl ProfileLibrary {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    /// The user profiles in `dir` over the profiles `shipped` holds.
+    pub fn new(dir: PathBuf, shipped: ShippedLibrary) -> Self {
+        Self { dir, shipped }
     }
 
-    /// `fab-profiles/` in the user config directory.
-    pub fn from_dirs(dirs: &UserDirs) -> Self {
-        Self::new(dirs.config.join(PROFILES_DIR))
+    /// `fab-profiles/` in the user config directory, over the located
+    /// shipped library.
+    pub fn from_dirs(dirs: &UserDirs) -> Result<Self> {
+        Ok(Self::new(
+            dirs.config.join(PROFILES_DIR),
+            ShippedLibrary::locate()?,
+        ))
     }
 
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// The shipped library the read-only profiles come from.
+    pub fn shipped(&self) -> &ShippedLibrary {
+        &self.shipped
+    }
+
+    /// The read-only shipped profiles ([`shipped_profiles`]).
+    pub fn builtins(&self) -> Result<Vec<RuleProfile>> {
+        shipped_profiles(&self.shipped)
+    }
+
+    /// The id of the profile a new board is offered first when the user's
+    /// Settings name none: shipped data (`defaults/new-project.json`).
+    pub fn default_id(&self) -> Result<String> {
+        Ok(crate::new_project::load(&self.shipped)?.fab_profile)
     }
 
     fn path(&self, id: &str) -> Result<PathBuf> {
@@ -290,7 +327,8 @@ impl ProfileLibrary {
                 .cmp(&b.name.to_lowercase())
                 .then_with(|| a.id.cmp(&b.id))
         });
-        let builtins = builtins()
+        let builtins = self
+            .builtins()?
             .into_iter()
             .filter(|b| !profiles.iter().any(|p| p.id == b.id))
             .collect();
@@ -301,10 +339,14 @@ impl ProfileLibrary {
         })
     }
 
-    /// One profile by id: the user's, else the built-in.
+    /// One profile by id: the user's, else the shipped one.
     pub fn get(&self, id: &str) -> Result<RuleProfile> {
         match self.user(id) {
-            Err(error) if error.code() == "not_found" => builtin(id).ok_or(error),
+            Err(error) if error.code() == "not_found" => self
+                .builtins()?
+                .into_iter()
+                .find(|p| p.id == id)
+                .ok_or(error),
             other => other,
         }
     }
@@ -460,14 +502,18 @@ impl ProfileLibrary {
 }
 
 /// The profile a new board starts with: `choice` (a library id), else the
-/// user's default (`UserSettings::default_rule_profile`), else the
-/// built-in [`DEFAULT_BUILTIN`]: a board is never created without rules.
+/// user's default (`UserSettings::default_rule_profile`), else the shipped
+/// default ([`ProfileLibrary::default_id`]): a board is never created
+/// without rules.
 pub fn for_new_board(
     library: &ProfileLibrary,
     choice: Option<&str>,
     default: Option<&str>,
 ) -> Result<RuleProfile> {
-    library.get(choice.or(default).unwrap_or(DEFAULT_BUILTIN))
+    match choice.or(default) {
+        Some(id) => library.get(id),
+        None => library.get(&library.default_id()?),
+    }
 }
 
 /// The user's default fab profile id (Settings), if one is set.
@@ -487,7 +533,7 @@ pub fn for_new_board_from_env(choice: Option<&str>) -> Result<RuleProfile> {
         None => default_id_from_env()?,
     };
     for_new_board(
-        &ProfileLibrary::from_dirs(&UserDirs::from_env()?),
+        &ProfileLibrary::from_dirs(&UserDirs::from_env()?)?,
         choice,
         default.as_deref(),
     )
@@ -497,11 +543,23 @@ pub fn for_new_board_from_env(choice: Option<&str>) -> Result<RuleProfile> {
 mod tests {
     use super::*;
 
-    /// The sourced JLCPCB profile shipped in `examples/profiles/`.
-    const JLCPCB: &str = include_str!("../../../examples/profiles/jlcpcb-2-layer-1oz.json");
+    fn shipped() -> Result<ShippedLibrary> {
+        ShippedLibrary::locate()
+    }
 
+    /// The text of a shipped profile file.
+    fn shipped_text(name: &str) -> Result<String> {
+        String::from_utf8(shipped()?.read(Shelf::Profiles, name, 1 << 20)?)
+            .map_err(|e| Error::Invalid(e.to_string()))
+    }
+
+    /// The shipped default profile (the sourced JLCPCB 2-layer file).
     fn jlcpcb() -> Result<RuleProfile> {
-        decode(JLCPCB.as_bytes())
+        decode(shipped_text("jlcpcb-2-layer-1oz.json")?.as_bytes())
+    }
+
+    fn library_in(dir: PathBuf) -> Result<ProfileLibrary> {
+        Ok(ProfileLibrary::new(dir, shipped()?))
     }
 
     fn user(name: &str) -> Result<RuleProfile> {
@@ -547,9 +605,10 @@ mod tests {
     #[test]
     fn the_jlcpcb_examples_split_holes_and_take_the_recommended_values() -> Result<()> {
         use sparksmith_core::rules::CopperObject::{NpthHole, Pad, PthHole, Track, ViaHole};
-        const FOUR: &str = include_str!("../../../examples/profiles/jlcpcb-4-layer-1oz.json");
+        let two = shipped_text("jlcpcb-2-layer-1oz.json")?;
+        let four = shipped_text("jlcpcb-4-layer-1oz.json")?;
         // (file, PTH ring, PTH to track, via hole to track)
-        for (text, ring, pth, via) in [(JLCPCB, 0.25, 0.35, 0.2), (FOUR, 0.2, 0.35, 0.2)] {
+        for (text, ring, pth, via) in [(two, 0.25, 0.35, 0.2), (four, 0.2, 0.35, 0.2)] {
             let p = decode(text.as_bytes())?;
             assert!(p.entries().all(|(_, e)| !e.source.is_empty()), "{}", p.id);
             let r = p.rules();
@@ -573,11 +632,11 @@ mod tests {
     #[test]
     fn save_list_rename_delete_round_trip() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
+        let library = library_in(dir.path().join(PROFILES_DIR))?;
         assert_eq!(
             library.list()?,
             Listing {
-                builtins: builtins(),
+                builtins: library.builtins()?,
                 ..Listing::default()
             },
             "missing folder: only the built-ins"
@@ -613,7 +672,7 @@ mod tests {
     #[test]
     fn bad_ids_are_refused() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().to_path_buf());
+        let library = library_in(dir.path().to_path_buf())?;
         let mut p = user("x")?;
         p.id = "../escape".into();
         assert!(library.create(&p).is_err(), "path in id");
@@ -624,13 +683,13 @@ mod tests {
 
     #[test]
     fn a_profile_without_a_source_or_rule_is_refused() -> Result<()> {
-        let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
+        let mut value: serde_json::Value = serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
         value["fab_profile"]["source"]["date"] = "11.11.2026".into();
         assert!(decode(&serde_json::to_vec(&value)?).is_err(), "date");
-        let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
+        let mut value: serde_json::Value = serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
         value["fab_profile"]["source"]["publisher"] = "".into();
         assert!(decode(&serde_json::to_vec(&value)?).is_err(), "publisher");
-        let mut value: serde_json::Value = serde_json::from_str(JLCPCB)?;
+        let mut value: serde_json::Value = serde_json::from_str(&shipped_text("jlcpcb-2-layer-1oz.json")?)?;
         if let Some(rules) = value["fab_profile"]["rules"].as_object_mut() {
             rules.remove("drill_min");
         }
@@ -647,7 +706,7 @@ mod tests {
     #[test]
     fn export_then_import_keeps_rules_and_sources() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
+        let library = library_in(dir.path().join(PROFILES_DIR))?;
         let fab = library.save_as(&user("Fab")?, "Fab")?;
         let file = dir.path().join("fab.json");
         export(&fab, &file)?;
@@ -668,7 +727,7 @@ mod tests {
     #[test]
     fn damaged_unsupported_and_misnamed_files_are_reported_not_dropped() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().to_path_buf());
+        let library = library_in(dir.path().to_path_buf())?;
         let good = library.save_as(&user("Good")?, "Good")?;
         std::fs::write(dir.path().join("broken.json"), "{\"format\":1")?;
         let mut newer =
@@ -704,7 +763,7 @@ mod tests {
     #[test]
     fn a_new_board_takes_the_choice_else_the_default_else_the_builtin() -> Result<()> {
         let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().to_path_buf());
+        let library = library_in(dir.path().to_path_buf())?;
         let a = library.save_as(&jlcpcb()?, "Fab A")?;
         let b = library.save_as(&jlcpcb()?, "Fab B")?;
         assert_eq!(for_new_board(&library, Some(&a.id), Some(&b.id))?, a);
@@ -718,24 +777,27 @@ mod tests {
         Ok(())
     }
 
-    /// The two sourced JLCPCB files are built in, listed after the user's
-    /// profiles and read-only; a user profile with a built-in's id takes
-    /// its place in the listing and in `get`.
+    /// The two sourced JLCPCB files ship, are listed after the user's
+    /// profiles and read-only; a user profile with a shipped profile's id
+    /// takes its place in the listing and in `get`. The shipped default is
+    /// data.
     #[test]
     fn builtins_are_listed_read_only_and_a_user_profile_replaces_one() -> Result<()> {
-        let all = builtins();
+        let dir = tempfile::tempdir()?;
+        let library = library_in(dir.path().join(PROFILES_DIR))?;
+        let all = library.builtins()?;
         assert_eq!(
             all.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
             ["jlcpcb-2-layer-1oz", "jlcpcb-4-layer-1oz"]
         );
         assert!(all.iter().all(|p| p.source.publisher == "JLCPCB"));
-        assert_eq!(builtin(DEFAULT_BUILTIN), Some(jlcpcb()?));
-        let dir = tempfile::tempdir()?;
-        let library = ProfileLibrary::new(dir.path().join(PROFILES_DIR));
-        assert_eq!(library.get(DEFAULT_BUILTIN)?, jlcpcb()?);
+        let default = library.default_id()?;
+        assert_eq!(default, "jlcpcb-2-layer-1oz");
+        let default = default.as_str();
+        assert_eq!(library.get(default)?, jlcpcb()?);
         // Read-only: no rename or delete, and no file is written.
-        assert!(library.rename(DEFAULT_BUILTIN, "Mine").is_err());
-        assert!(library.delete(DEFAULT_BUILTIN).is_err());
+        assert!(library.rename(default, "Mine").is_err());
+        assert!(library.delete(default).is_err());
         assert!(!library.dir().exists());
         // A saved copy is the user's own.
         let copy = library.save_as(&jlcpcb()?, "JLCPCB copy")?;
@@ -746,7 +808,7 @@ mod tests {
         edited.name = "JLCPCB house rules".into();
         export(&edited, &dir.path().join("house.json"))?;
         let imported = library.import(&dir.path().join("house.json"))?;
-        assert_eq!(imported.id, DEFAULT_BUILTIN);
+        assert_eq!(imported.id, default);
         let listing = library.list()?;
         assert_eq!(
             listing
@@ -756,10 +818,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["jlcpcb-4-layer-1oz"]
         );
-        assert_eq!(library.get(DEFAULT_BUILTIN)?.name, "JLCPCB house rules");
+        assert_eq!(library.get(default)?.name, "JLCPCB house rules");
         // Deleting the user's copy brings the built-in back.
-        library.delete(DEFAULT_BUILTIN)?;
-        assert_eq!(library.get(DEFAULT_BUILTIN)?, jlcpcb()?);
+        library.delete(default)?;
+        assert_eq!(library.get(default)?, jlcpcb()?);
         Ok(())
     }
 

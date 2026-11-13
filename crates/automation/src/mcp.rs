@@ -84,7 +84,7 @@ impl Server {
     pub fn live(client: live::Client) -> Self {
         Self {
             live: Some(client),
-            ..Self::new(Session::default(), Policy::default())
+            ..Self::new(Session::lending(), Policy::default())
         }
     }
     pub fn session(&self) -> &Session {

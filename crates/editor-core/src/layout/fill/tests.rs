@@ -813,7 +813,7 @@ fn with_solved_board(p: &mut Project, solved: crate::model::board::SolvedBoard) 
             result_hash: String::new(),
         },
         solved,
-        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        outline_fit: 0.01,
         fault: None,
         idle: Vec::new(),
     }));

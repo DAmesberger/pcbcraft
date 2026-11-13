@@ -346,7 +346,7 @@ fn sketched() -> Fallible<Project> {
             result_hash: String::new(),
         },
         solved,
-        outline_fit: crate::rules::DEFAULT_OUTLINE_FIT_MM,
+        outline_fit: 0.01,
         fault: None,
         idle: Vec::new(),
     }));
