@@ -176,8 +176,9 @@ impl Session {
         Ok(())
     }
 
-    /// `housing.update` with no enclosure linked: link the one at `path`.
-    fn housing_link(&mut self, params: UpdateParams) -> Result<Value> {
+    /// `housing.update` with no enclosure linked: the read that links the
+    /// one at `path`.
+    fn housing_link(&self, params: &UpdateParams) -> Result<HousingCommand> {
         let opened = self.open_enclosure(&params.path, &params.design)?;
         if let Some(expect) = params.expect_hash.as_deref()
             && housing::expected_hash(expect)? != opened.copy.hash
@@ -188,12 +189,7 @@ impl Session {
             .into());
         }
         let read = self.housing_read(&opened, &params.path, &params.design, None);
-        let mut reply = self.apply(
-            params.expected_revision,
-            Operation::Housing(HousingCommand::RecordLink { read }),
-        )?;
-        reply["housing"] = serde_json::to_value(self.engine.project().housing.as_deref())?;
-        Ok(reply)
+        Ok(HousingCommand::RecordLink { read })
     }
 
     /// `housing.follow`: a face (a housing reference) or a parameter (a
@@ -290,6 +286,18 @@ impl Session {
     /// `housing.update`: a link when none is linked; else the linked file,
     /// or another (a relink), applied at the hash its preview showed.
     pub(super) fn housing_update(&mut self, params: UpdateParams) -> Result<Value> {
+        let command = self.housing_update_command(&params)?;
+        let mut reply = self.apply(params.expected_revision, Operation::Housing(command))?;
+        reply["housing"] = serde_json::to_value(self.engine.project().housing.as_deref())?;
+        Ok(reply)
+    }
+
+    /// What `housing.update` would apply, read from the enclosure without
+    /// applying it: `housing.record_link` when none is linked, else
+    /// `housing.record_update` at the hash the preview showed. The desktop
+    /// reads it off the UI thread, on a session over a fork of the window's
+    /// engine, and applies it on its own engine as one undo step.
+    pub fn housing_update_command(&self, params: &UpdateParams) -> Result<HousingCommand> {
         if self.engine.project().housing.is_none() {
             return self.housing_link(params);
         }
@@ -307,12 +315,7 @@ impl Session {
             )
             .into());
         }
-        let mut reply = self.apply(
-            params.expected_revision,
-            Operation::Housing(HousingCommand::RecordUpdate { read }),
-        )?;
-        reply["housing"] = serde_json::to_value(self.engine.project().housing.as_deref())?;
-        Ok(reply)
+        Ok(HousingCommand::RecordUpdate { read })
     }
 
     /// The dry run of a publish on the linked enclosure at `enclosure`: the
