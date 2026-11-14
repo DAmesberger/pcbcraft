@@ -11,8 +11,8 @@ use super::copper::check_reach;
 use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
 use super::{
-    BoardCopper, CopperRing, EPS, Error, MAX_CHECK_PAIRS, Result, RouteEditSet, RouteRequest,
-    WorldPad, distance, invalid,
+    BoardCopper, CopperRing, EPS, Error, Result, RouteEditSet, RouteRequest,
+    WorldPad, check_pair_budget, distance, invalid,
 };
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, point_valid};
@@ -23,8 +23,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Most vias on one board.
-pub const MAX_VIAS: usize = 16_384;
 /// Largest via pad, mm: an input bound on the document, not a rule (the
 /// fab profile's `min drill` and `min via annular ring` are the limits
 /// vias are placed and checked against).
@@ -105,22 +103,20 @@ pub(super) fn insert(project: &mut Project, request: ViaRequest) -> Result<Id> {
 }
 
 fn unlocked(project: &mut Project, id: Id) -> Result<&mut Via> {
-    let via = project
-        .vias
-        .iter_mut()
-        .find(|v| v.id == id)
+    let at = project.vias.iter().position(|v| v.id == id);
+    unlocked_at(project, at)
+}
+
+/// The unlocked via at index `at` of the project's vias (as an id index
+/// found it); `None` is an unknown via.
+pub(super) fn unlocked_at(project: &mut Project, at: Option<usize>) -> Result<&mut Via> {
+    let via = at
+        .and_then(|k| project.vias.get_mut(k))
         .ok_or_else(|| Error::NotFound("unknown via".into()))?;
     if via.locked {
         return Err(Error::Conflict("via is locked".into()));
     }
     Ok(via)
-}
-
-/// Move an unlocked via without checking it; the caller checks it once
-/// the rest of its edit is in place.
-pub(super) fn place(project: &mut Project, id: Id, position: Point) -> Result<()> {
-    unlocked(project, id)?.position = position;
-    Ok(())
 }
 
 pub(super) fn move_to(project: &mut Project, id: Id, position: Point) -> Result<()> {
@@ -216,16 +212,6 @@ pub fn via_pad_clearance_conflict(
         )
 }
 
-fn budget(pairs: &mut usize) -> Result<()> {
-    *pairs += 1;
-    if *pairs > MAX_CHECK_PAIRS {
-        return Err(Error::Limit(
-            "via clearance budget exceeded; split this edit into smaller transactions".into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Refuse a via closer than the clearance rule to another net's copper on
 /// a layer it joins, as routing refuses a track.
 pub(super) fn check_clearance(project: &Project, id: Id) -> Result<()> {
@@ -243,23 +229,19 @@ pub(super) fn check_clearance(project: &Project, id: Id) -> Result<()> {
             limits.clearance_need(me.0, me.1, object, Some(net)).short()
         )))
     };
-    let mut pairs = 0usize;
     for track in project.tracks.iter().filter(|t| t.net != via.net) {
-        budget(&mut pairs)?;
         let need = limits.clearance(me.0, me.1, CopperObject::Track, Some(track.net));
         if via.on(track.layer, &layers) && ring.closer_than(&CopperRing::of_track(track), need) {
             return refuse("track", CopperObject::Track, track.net);
         }
     }
     for pad in super::pads(project).iter().filter(|p| p.net != via.net) {
-        budget(&mut pairs)?;
         let need = limits.clearance(me.0, me.1, CopperObject::Pad, Some(pad.net));
         if shares_layer(via, pad, &layers) && ring.closer_than(&CopperRing::of_pad(pad), need) {
             return refuse("pad", CopperObject::Pad, pad.net);
         }
     }
     for other in project.vias.iter().filter(|v| v.net != via.net) {
-        budget(&mut pairs)?;
         let need = limits.clearance(me.0, me.1, CopperObject::Via, Some(other.net));
         if layers
             .iter()
@@ -328,9 +310,16 @@ pub(super) fn findings(copper: &BoardCopper, project: &Project) -> Vec<Finding> 
     let vias = copper.vias();
     let drills: Vec<CopperRing> = vias.iter().map(CopperRing::of_drill).collect();
     let mut pairs = 0usize;
+    let budget = check_pair_budget(
+        copper
+            .pads()
+            .len()
+            .saturating_add(vias.len())
+            .saturating_add(tracks.len()),
+    );
     let over = |pairs: &mut usize, issues: &mut Vec<Finding>| {
         *pairs += 1;
-        let over = *pairs > MAX_CHECK_PAIRS;
+        let over = *pairs > budget;
         if over {
             issues.push(Finding::new(
                 "board.check_limit",
@@ -587,12 +576,9 @@ pub(super) fn set_lock(project: &mut Project, id: Id, locked: bool) -> Result<()
     Ok(())
 }
 
-/// Document rules over vias: bounded count, unique identities, known nets,
+/// Document rules over vias: unique identities, known nets,
 /// sane geometry inside the board, through vias only for now.
 pub(super) fn validate(project: &Project, nets: &BTreeSet<Id>) -> Result<()> {
-    if project.vias.len() > MAX_VIAS {
-        return invalid(&format!("prototype supports at most {MAX_VIAS} vias"));
-    }
     let mut ids = BTreeSet::new();
     for via in &project.vias {
         if via.id == 0 || via.id >= project.next_id || !ids.insert(via.id) {

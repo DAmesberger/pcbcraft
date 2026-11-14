@@ -40,7 +40,7 @@ use crate::model::Placement;
 use crate::model::Project;
 use crate::model::board::ConstraintTarget;
 use crate::model::dimension::{
-    BoardRef, FeatureRef, MAX_MODEL_TRACES, MAX_TRACE_NOTE, ModelEdgeRef, ModelFaceRef, ModelTrace,
+    BoardRef, FeatureRef, MAX_TRACE_NOTE, ModelEdgeRef, ModelFaceRef, ModelTrace,
     ReferenceStatus,
 };
 use crate::{CopperLayer, Layer};
@@ -685,11 +685,6 @@ pub fn refresh(
     new: &[BoardRef],
 ) -> Result<()> {
     let wanted = wanted(project);
-    if wanted.len() > MAX_MODEL_TRACES {
-        return Err(Error::Limit(format!(
-            "layout.dimension_limit: at most {MAX_MODEL_TRACES} 3D model references"
-        )));
-    }
     let mut next = Vec::with_capacity(wanted.len());
     for feature in wanted {
         let previous = project.model_traces.iter().find(|t| &t.feature == feature);
@@ -746,11 +741,6 @@ pub fn geometry(project: &Project, feature: &FeatureRef) -> Result<FeatureGeomet
 /// one per feature, finite geometry and a bounded note.
 pub fn validate(project: &Project) -> Result<()> {
     let traces = &project.model_traces;
-    if traces.len() > MAX_MODEL_TRACES {
-        return Err(Error::Limit(format!(
-            "layout.dimension_limit: at most {MAX_MODEL_TRACES} 3D model traces"
-        )));
-    }
     let mut seen = BTreeSet::new();
     for t in traces.iter() {
         let ok = t.feature.is_model()

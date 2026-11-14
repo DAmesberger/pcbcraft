@@ -20,7 +20,7 @@ mod tests;
 pub use rules::{KNOWN_CODES, group_title};
 
 use crate::completeness;
-use crate::diagnostics::{Error, Finding, ObjectRef, Result, Stage};
+use crate::diagnostics::{Finding, ObjectRef, Result, Stage};
 use crate::erc;
 use crate::layout;
 use crate::library::Drafts;
@@ -31,9 +31,6 @@ use serde::{Deserialize, Serialize};
 /// The longest issue title, in characters. Titles are designed for about 56
 /// characters at the smallest supported column width and clipped there.
 pub const MAX_TITLE: usize = crate::diagnostics::MAX_LINE;
-
-/// The most objects a `selection` scope may name.
-pub const MAX_SCOPE_OBJECTS: usize = 4096;
 
 /// How much an issue matters, most severe first. Core decides it; hosts only
 /// map it to a glyph and ink.
@@ -79,8 +76,8 @@ pub enum IssueScope {
     All,
     /// One area, such as the active workspace's.
     Area { area: IssueArea },
-    /// Issues that refer to at least one of these objects, at most
-    /// [`MAX_SCOPE_OBJECTS`].
+    /// Issues that refer to at least one of these objects (any number:
+    /// a selection of a whole board is matched by lookup).
     Selection { objects: Vec<ObjectRef> },
 }
 
@@ -249,13 +246,6 @@ fn report_in(
     graph: &layout::CopperGraph,
     settings: &layout::CheckSettings,
 ) -> Result<IssueReport> {
-    if let IssueScope::Selection { objects } = scope
-        && objects.len() > MAX_SCOPE_OBJECTS
-    {
-        return Err(Error::Limit(format!(
-            "An issue selection names at most {MAX_SCOPE_OBJECTS} objects."
-        )));
-    }
     let names = names::Names::new(project, drafts);
     let mut all = Vec::new();
     for (area, merged) in collect(project, drafts, graph, settings)? {
@@ -282,7 +272,10 @@ fn report_in(
         ))
     });
     let (rows, rest): (Vec<IssueRow>, Vec<IssueRow>) =
-        all.into_iter().partition(|r| in_scope(r, scope));
+        all.into_iter().partition({
+            let selected = Selected::of(scope);
+            move |r| in_scope(r, scope, &selected)
+        });
     let mut elsewhere = Vec::new();
     if matches!(scope, IssueScope::Area { .. }) {
         for area in [IssueArea::Component, IssueArea::Schematic, IssueArea::Board] {
@@ -377,29 +370,56 @@ pub(crate) fn finding_rows(project: &Project, findings: &[Finding]) -> Vec<Findi
 /// Whether a row is in scope. A selected instance also selects its pads,
 /// terminals, units, properties and symbols; a selected definition its
 /// local objects.
-fn in_scope(row: &IssueRow, scope: &IssueScope) -> bool {
+fn in_scope(row: &IssueRow, scope: &IssueScope, selected: &Selected) -> bool {
     match scope {
         IssueScope::All => true,
         IssueScope::Area { area } => row.area == *area,
-        IssueScope::Selection { objects } => row
-            .objects()
-            .any(|object| objects.iter().any(|selected| covers(selected, object))),
+        IssueScope::Selection { .. } => row.objects().any(|object| selected.covers(object)),
     }
 }
 
-fn covers(selected: &ObjectRef, object: &ObjectRef) -> bool {
-    if selected == object {
-        return true;
-    }
-    match (*selected, *object) {
-        (ObjectRef::Instance { id }, ObjectRef::Pad { instance, .. })
-        | (ObjectRef::Instance { id }, ObjectRef::Unit { instance, .. })
-        | (ObjectRef::Instance { id }, ObjectRef::Property { instance, .. }) => id == instance,
-        (ObjectRef::Instance { id }, ObjectRef::Terminal { endpoint }) => id == endpoint.instance,
-        (ObjectRef::Definition { id }, ObjectRef::LibraryObject { definition, .. }) => {
-            id == definition
+/// A selection scope's objects, by lookup: an object is covered when it
+/// is selected, or is a pad, unit, property or terminal of a selected
+/// instance, or a local object of a selected definition.
+#[derive(Default)]
+struct Selected {
+    objects: std::collections::HashSet<ObjectRef>,
+    instances: std::collections::HashSet<crate::ids::Id>,
+    definitions: std::collections::HashSet<crate::ids::DefinitionId>,
+}
+
+impl Selected {
+    fn of(scope: &IssueScope) -> Self {
+        let mut selected = Self::default();
+        if let IssueScope::Selection { objects } = scope {
+            for object in objects {
+                selected.objects.insert(*object);
+                match *object {
+                    ObjectRef::Instance { id } => {
+                        selected.instances.insert(id);
+                    }
+                    ObjectRef::Definition { id } => {
+                        selected.definitions.insert(id);
+                    }
+                    _ => {}
+                }
+            }
         }
-        _ => false,
+        selected
+    }
+
+    fn covers(&self, object: &ObjectRef) -> bool {
+        if self.objects.contains(object) {
+            return true;
+        }
+        match *object {
+            ObjectRef::Pad { instance, .. }
+            | ObjectRef::Unit { instance, .. }
+            | ObjectRef::Property { instance, .. } => self.instances.contains(&instance),
+            ObjectRef::Terminal { endpoint } => self.instances.contains(&endpoint.instance),
+            ObjectRef::LibraryObject { definition, .. } => self.definitions.contains(&definition),
+            _ => false,
+        }
     }
 }
 

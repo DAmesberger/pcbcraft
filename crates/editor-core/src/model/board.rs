@@ -14,9 +14,9 @@ use crate::library::{Outline, Segment};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Cutouts, slots, mounting holes and named edges on one board.
-pub const MAX_CUTOUTS: usize = 256;
-pub const MAX_MOUNTING_HOLES: usize = 256;
+/// Named edges on one board's sketch. Cutouts, slots and mounting holes
+/// have no count of their own: each is a loop or point of the host sketch,
+/// which `MAX_SKETCH_BYTES` bounds.
 pub const MAX_NAMED_EDGES: usize = 1024;
 
 /// The names a rectangular board's edges carry, counter-clockwise from

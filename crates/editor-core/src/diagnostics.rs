@@ -144,7 +144,7 @@ pub struct Diagnostic {
 }
 
 /// An object a finding refers to, by stable identity.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, Hash)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ObjectRef {
     Instance {

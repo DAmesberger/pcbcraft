@@ -38,13 +38,17 @@ use sparksmith_core::library::footprint_source::{
 };
 use sparksmith_core::model::board::{ConstraintTarget, arc_geometry};
 use sparksmith_core::model::dimension::{
-    BoardRef, FeatureRef, MAX_PART_DIMENSIONS, PartAxis, PartDimension, PartRelation,
+    BoardRef, FeatureRef, PartAxis, PartDimension, PartRelation,
 };
 
 /// Targets one parts solve takes.
 pub const MAX_SOLVE_PARTS: usize = 256;
 /// Features of one target in one solve.
 pub const MAX_PART_FEATURES: usize = 64;
+/// Dimensions one parts solve takes: a bound on one solver call (whose
+/// work grows faster than linearly), not on how many dimensions a board
+/// keeps.
+pub const MAX_SOLVE_DIMENSIONS: usize = 4096;
 /// Solves one placement of pins may run (the halving fallback included).
 const MAX_PIN_SOLVES: usize = 1024;
 /// Length of each frame's construction axis, mm.
@@ -604,10 +608,10 @@ fn solve_outcome(request: &PartsRequest<'_>) -> Outcome<PartsSolution> {
             format!("a parts solve takes 1–{MAX_SOLVE_PARTS} parts"),
         ));
     }
-    if request.dimensions.len() > MAX_PART_DIMENSIONS {
+    if request.dimensions.len() > MAX_SOLVE_DIMENSIONS {
         return Err(problem(
             "layout.dimension_limit",
-            format!("a parts solve takes at most {MAX_PART_DIMENSIONS} dimensions"),
+            format!("a parts solve takes at most {MAX_SOLVE_DIMENSIONS} dimensions"),
         ));
     }
     let values = params::evaluate(&request.board.parameters, &[])

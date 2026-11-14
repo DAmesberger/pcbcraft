@@ -28,7 +28,7 @@
 //! reads the copper of higher-ranking fills, so one pass computes them in
 //! rank order; fresh stored copper is reused.
 use super::geom::{self, Region, RegionIndex, Ring};
-use super::{FILL_CHORD_MM, MAX_FILL_VERTICES};
+use super::FILL_CHORD_MM;
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::Id;
@@ -586,11 +586,9 @@ impl<'a> Ctx<'a> {
             }
             kept.push(region);
         }
-        let mut vertices = 0usize;
         let regions = kept
             .into_iter()
             .filter_map(|mut region| {
-                vertices = vertices.saturating_add(region.iter().map(Vec::len).sum());
                 if region.is_empty() {
                     return None;
                 }
@@ -601,11 +599,6 @@ impl<'a> Ctx<'a> {
                 })
             })
             .collect();
-        if vertices > MAX_FILL_VERTICES {
-            return Err(Error::Limit(format!(
-                "fill.limit: the fill has {vertices} vertices, more than {MAX_FILL_VERTICES}; split it or raise its minimum width"
-            )));
-        }
         Ok(FilledCopper {
             key,
             regions,

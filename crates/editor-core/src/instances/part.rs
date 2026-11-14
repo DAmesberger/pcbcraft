@@ -39,10 +39,6 @@ pub fn binding_name(library: &Library, b: BindingRef) -> String {
     }
 }
 
-/// Instances one `instance.assign_part` changes together (one Resolve-parts
-/// group).
-pub const MAX_ASSIGN_INSTANCES: usize = 256;
-
 /// The invariant: a pinned Part revision is in the project library.
 pub(super) fn check_part(library: &Library, instance: &ComponentInstance) -> Result<()> {
     match instance.part {
@@ -341,10 +337,11 @@ fn findings_with(
 /// otherwise the whole command fails with a conflict naming the instance
 /// and the field, and nothing changes.
 pub fn assign_part(project: &mut Project, instances: &[Id], part: Option<PartRef>) -> Result<()> {
-    if instances.is_empty() || instances.len() > MAX_ASSIGN_INSTANCES {
-        return Err(invalid(format!(
-            "Assign a Part to between 1 and {MAX_ASSIGN_INSTANCES} instances at a time."
-        )));
+    // Each names a distinct instance, so the project bounds the list.
+    if instances.is_empty() || instances.len() > project.instances.len() {
+        return Err(invalid(
+            "Assign a Part to at least one of the project's instances.".into(),
+        ));
     }
     let unique: BTreeSet<Id> = instances.iter().copied().collect();
     if unique.len() != instances.len() {

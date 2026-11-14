@@ -10,15 +10,12 @@ use crate::model::{
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Initial board rule, in mm. A future rules document replaces this explicit
 /// prototype default; it must not be mistaken for a manufacturer qualification.
 pub const CLEARANCE_MM: f64 = 0.2;
 const EPS: f64 = 1e-8;
-const MAX_TRACKS: usize = 2_000;
-/// Most footprint pads placed on one board.
-pub const MAX_PLACED_PADS: usize = 4_096;
 /// Where a part's datum may lie, mm, on both axes: the working area. A
 /// part may sit off the board (the board's surroundings are its staging
 /// area); DRC reports its copper past the edge. Every board lies within
@@ -34,7 +31,7 @@ pub mod courtyard;
 pub mod dimensions;
 pub mod etch;
 pub mod fill;
-mod grid;
+pub mod grid;
 pub mod impedance;
 pub mod legend;
 pub mod length;
@@ -63,16 +60,30 @@ pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
 pub(crate) use courtyard::limit_finding as courtyard_limit_finding;
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
-    BoardDrawing, MAX_PLACED_GRAPHIC_VERTICES, PlacedGraphic, PlacedHole, PlacedItem,
+    BoardDrawing, PlacedGraphic, PlacedHole, PlacedItem,
     PlacedKeepout, PlacedPad, pick_graphic, pick_pad, placed_graphics, placed_keepouts,
     placed_pads, placement_transform,
 };
 pub use via::{LayerChangeRequest, ViaRequest, via_pad_clearance_conflict};
-/// Most nearby copper pairs one check compares (shapes whose bounds come
-/// within [`copper::check_reach`]; farther pairs are never compared, so
-/// a board of the most vias, pads and tracks is checked whole). Only
-/// copper piled on copper reaches it.
-const MAX_CHECK_PAIRS: usize = 1_000_000;
+/// Nearby copper pairs one check may compare per shape on average, and
+/// at least [`MIN_CHECK_PAIRS`] in all. Pairs are only shapes whose bounds
+/// come within [`copper::check_reach`] (the bounds grids never offer
+/// farther ones), so a routed board of any size stays far below it: a
+/// shape has a handful of neighbours, not hundreds. Only copper piled on
+/// copper (a file with thousands of shapes stacked on one spot, which
+/// would make a check quadratic) reaches it. It bounds density, never how
+/// many objects a design has.
+const CHECK_PAIRS_PER_SHAPE: usize = 256;
+/// The pair budget of a check over few shapes.
+const MIN_CHECK_PAIRS: usize = 1_000_000;
+
+/// The most nearby pairs a check over `shapes` copper shapes compares
+/// ([`CHECK_PAIRS_PER_SHAPE`]).
+pub(crate) fn check_pair_budget(shapes: usize) -> usize {
+    shapes
+        .saturating_mul(CHECK_PAIRS_PER_SHAPE)
+        .max(MIN_CHECK_PAIRS)
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
@@ -901,17 +912,20 @@ fn invalid<T>(message: &str) -> Result<T> {
 }
 
 fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
-    if edits.add.len()
-        + edits.replace.len()
-        + edits.remove.len()
-        + edits.vias.len()
-        + edits.remove_vias.len()
-        + edits.restore.len()
-        + edits.move_vias.len()
-        > MAX_TRACKS
-    {
-        return Err(Error::Limit("routing edit exceeds prototype limit".into()));
-    }
+    // Tracks and vias by identity, so an edit costs its own size plus one
+    // pass over the board, never edits × board.
+    let track_at: HashMap<Id, usize> = project
+        .tracks
+        .iter()
+        .enumerate()
+        .map(|(k, t)| (t.id, k))
+        .collect();
+    let via_at: HashMap<Id, usize> = project
+        .vias
+        .iter()
+        .enumerate()
+        .map(|(k, v)| (v.id, k))
+        .collect();
     let mut touched = BTreeSet::new();
     for id in edits
         .remove
@@ -922,10 +936,9 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         if !touched.insert(id) {
             return invalid("track appears more than once in routing edit");
         }
-        let previous = project
-            .tracks
-            .iter()
-            .find(|t| t.id == id)
+        let previous = track_at
+            .get(&id)
+            .and_then(|k| project.tracks.get(*k))
             .ok_or_else(|| Error::NotFound("routing edit references unknown track".into()))?;
         if previous.locked {
             return Err(Error::Conflict(
@@ -939,10 +952,10 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         .map(|net| net.id)
         .collect::<BTreeSet<_>>();
     for track in &edits.replace {
-        if project
-            .tracks
-            .iter()
-            .any(|old| old.id == track.id && old.net != track.net)
+        if track_at
+            .get(&track.id)
+            .and_then(|k| project.tracks.get(*k))
+            .is_some_and(|old| old.net != track.net)
         {
             return Err(Error::Conflict(
                 "routing edits cannot silently change a track's net".into(),
@@ -959,8 +972,8 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         }
         if track.id == 0
             || track.id >= project.next_id
-            || project.tracks.iter().any(|t| t.id == track.id)
-            || project.vias.iter().any(|v| v.id == track.id)
+            || track_at.contains_key(&track.id)
+            || via_at.contains_key(&track.id)
         {
             return invalid("a restored track needs a free identity issued before");
         }
@@ -974,14 +987,17 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         if !point_valid(moved.position) {
             return invalid("via coordinates must be finite");
         }
-        via::place(project, moved.id, moved.position)?;
+        via::unlocked_at(project, via_at.get(&moved.id).copied())?.position = moved.position;
     }
-    let mut removed_vias = BTreeSet::new();
+    let mut removed_vias = HashSet::new();
     for id in edits.remove_vias.iter().copied() {
         if !removed_vias.insert(id) {
             return invalid("via appears more than once in routing edit");
         }
-        via::delete(project, id)?;
+        via::unlocked_at(project, via_at.get(&id).copied())?;
+    }
+    if !removed_vias.is_empty() {
+        project.vias.retain(|v| !removed_vias.contains(&v.id));
     }
     let mut added_vias = Vec::with_capacity(edits.vias.len());
     for request in edits.vias {
@@ -990,16 +1006,21 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
         }
         added_vias.push(via::insert(project, request)?);
     }
-    project.tracks.retain(|t| !edits.remove.contains(&t.id));
     let mut changed = BTreeSet::new();
-    for track in edits.replace {
-        changed.insert(track.id);
-        let target = project
-            .tracks
-            .iter_mut()
-            .find(|t| t.id == track.id)
-            .ok_or_else(|| Error::NotFound("missing replacement target".into()))?;
-        *target = track;
+    if !edits.replace.is_empty() {
+        let tracks = &mut *project.tracks;
+        for track in edits.replace {
+            changed.insert(track.id);
+            let target = track_at
+                .get(&track.id)
+                .and_then(|k| tracks.get_mut(*k))
+                .ok_or_else(|| Error::NotFound("missing replacement target".into()))?;
+            *target = track;
+        }
+    }
+    if !edits.remove.is_empty() {
+        let removed: HashSet<Id> = edits.remove.iter().copied().collect();
+        project.tracks.retain(|t| !removed.contains(&t.id));
     }
     for track in edits.restore {
         changed.insert(track.id);
@@ -1033,10 +1054,16 @@ fn apply_routes(project: &mut Project, edits: RouteEditSet) -> Result<()> {
     );
     let mut near = Vec::new();
     let mut check_pairs = 0usize;
+    let pair_budget = check_pair_budget(
+        track_rings
+            .len()
+            .saturating_add(via_rings.len())
+            .saturating_add(copper.pads().len()),
+    );
     use crate::rules::CopperObject::{Pad, Track as TrackObject, Via as ViaObject};
     let mut budget = |pairs: usize| {
         check_pairs = check_pairs.saturating_add(pairs);
-        if check_pairs > MAX_CHECK_PAIRS {
+        if check_pairs > pair_budget {
             return Err(Error::Limit(
                 "routing clearance budget exceeded; split this routing edit into smaller transactions".into(),
             ));
@@ -1307,39 +1334,21 @@ pub fn validate(project: &Project) -> Result<()> {
     {
         return invalid("board dimensions must be 5–1000 mm");
     }
-    if project.tracks.len() > MAX_TRACKS {
-        return invalid("prototype supports at most 2000 track segments");
-    }
     instances::text::check(project)?;
     let mut placed = BTreeSet::new();
-    let mut pad_count = 0usize;
-    let mut graphic_vertices = 0usize;
     for placement in &project.placements {
-        if !placed.insert(placement.instance) || project.instance(placement.instance).is_none() {
-            return invalid("duplicate or unknown placement instance");
-        }
-        let physical = project
+        let Some(instance) = project
             .instance(placement.instance)
-            .and_then(|instance| instances::resolve(&project.library, instance).ok())
-            .and_then(|r| r.physical);
-        let Some(physical) = physical else {
-            return invalid("a placement requires a resolvable physical choice");
+            .filter(|_| placed.insert(placement.instance))
+        else {
+            return invalid("duplicate or unknown placement instance");
         };
-        pad_count = pad_count.saturating_add(physical.footprint.definition.pads.len());
-        if pad_count > MAX_PLACED_PADS {
-            return invalid("prototype supports at most 4096 placed pads");
-        }
-        graphic_vertices = graphic_vertices.saturating_add(
-            physical
-                .footprint
-                .definition
-                .graphics
-                .iter()
-                .map(|g| g.item.vertices())
-                .sum::<usize>(),
-        );
-        if graphic_vertices > MAX_PLACED_GRAPHIC_VERTICES {
-            return invalid("prototype supports at most 262144 placed footprint graphic vertices");
+        if instances::resolve(&project.library, instance)
+            .ok()
+            .and_then(|r| r.physical)
+            .is_none()
+        {
+            return invalid("a placement requires a resolvable physical choice");
         }
         if !in_working_area(placement.position) {
             return Err(Error::Invalid(format!(

@@ -18,7 +18,7 @@
 //! in millimetres; a stored [`Corner`] is whole nanometres, read as a
 //! [`Bend`] and stored again through [`Bend::stored`].
 use super::wiring::{self, JUNCTION_TOLERANCE_MM, WireTarget, end_position, simplified};
-use super::{Error, MAX_CORNERS, MAX_WIRES, Project, Result, invalid, not_found};
+use super::{Error, MAX_CORNERS, Project, Result, invalid, not_found};
 use crate::geometry::{self, Point};
 use crate::ids::Id;
 use crate::instances;
@@ -574,11 +574,6 @@ fn mm(value: f64) -> String {
 pub(super) fn remove_segment(project: &mut Project, id: Id, index: usize) -> Result<()> {
     let (path, _) = editable(project, id)?;
     let (head, tail) = split_at(&path, index).ok_or_else(no_segment)?;
-    if head.is_some() && tail.is_some() && project.wires.len() >= MAX_WIRES {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 wires.".into(),
-        ));
-    }
     let position = project
         .wires
         .iter()

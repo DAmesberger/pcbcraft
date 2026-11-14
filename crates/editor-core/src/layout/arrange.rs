@@ -20,9 +20,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Most parts one command moves.
-pub const MAX_ARRANGED: usize = 4_096;
-
 /// Coordinates closer than this (mm) count as the same: a part already in
 /// line does not move.
 const SAME_MM: f64 = 1e-9;
@@ -58,19 +55,12 @@ impl CopperMove {
         if !point_valid(self.by) {
             return Err(Error::Invalid("the copper's slide is not finite".into()));
         }
-        let count = self.tracks.len() + self.vias.len();
-        if count > super::several::MAX_OBJECTS {
-            return Err(Error::Limit(format!(
-                "one command moves at most {} tracks and vias, not {count}",
-                super::several::MAX_OBJECTS
-            )));
-        }
         let mut seen = BTreeSet::new();
+        let tracks: std::collections::HashMap<Id, &crate::model::Track> =
+            project.tracks.iter().map(|t| (t.id, t)).collect();
         for &id in &self.tracks {
-            let track = project
-                .tracks
-                .iter()
-                .find(|t| t.id == id)
+            let track = tracks
+                .get(&id)
                 .ok_or_else(|| Error::NotFound(format!("unknown track {id}")))?;
             if !seen.insert(id) {
                 return Err(Error::Invalid(format!("track {id} is named twice")));
@@ -168,7 +158,7 @@ fn parts<'a>(
     fewest: usize,
     what: &str,
 ) -> Result<Vec<(&'a Placement, (Point, Point))>> {
-    parts_named(project, instances, what)?;
+    parts_named(project, instances)?;
     let mut out = Vec::with_capacity(instances.len());
     for &id in instances {
         if let Some(placement) = project.placement_of(id) {
@@ -325,7 +315,7 @@ pub fn move_parts(
     if let Some(copper) = copper {
         copper.check(project)?;
     }
-    parts_named(project, &instances, "layout.move_parts")?;
+    parts_named(project, &instances)?;
     for m in moves {
         if !point_valid(m.position) || !m.rotation_deg.is_finite() {
             return Err(Error::Invalid(format!(
@@ -352,13 +342,7 @@ pub fn move_parts(
 }
 
 /// Every named part once and placed (an outline is not needed to move it).
-fn parts_named(project: &Project, instances: &[Id], what: &str) -> Result<()> {
-    if instances.len() > MAX_ARRANGED {
-        return Err(Error::Limit(format!(
-            "{what} takes at most {MAX_ARRANGED} parts, not {}",
-            instances.len()
-        )));
-    }
+fn parts_named(project: &Project, instances: &[Id]) -> Result<()> {
     let mut seen = BTreeSet::new();
     for &id in instances {
         if !seen.insert(id) {

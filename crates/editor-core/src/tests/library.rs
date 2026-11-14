@@ -1418,7 +1418,7 @@ fn samples_carry_standard_drawings_that_publish_without_lint() -> Result<()> {
 }
 
 #[test]
-fn layout_validate_bounds_placed_footprint_graphic_vertices() -> Result<()> {
+fn layout_validate_has_no_cap_on_placed_footprint_graphic_vertices() -> Result<()> {
     let engine = Engine::demo()?;
     let f = demo_fixture(&engine)?;
     let mut project = engine.project().clone();
@@ -1447,7 +1447,9 @@ fn layout_validate_bounds_placed_footprint_graphic_vertices() -> Result<()> {
         .instance(template.instance)
         .cloned()
         .ok_or_else(|| Error::NotFound("demo instance".into()))?;
-    let limit = crate::layout::MAX_PLACED_GRAPHIC_VERTICES / 8192;
+    // Past the former board-wide cap of 262,144 vertices (32 such parts):
+    // how much a design draws is the design's own.
+    let count = 40;
     let add = |project: &mut crate::model::Project| {
         let id = project.next_id;
         project.next_id += 1;
@@ -1461,17 +1463,9 @@ fn layout_validate_bounds_placed_footprint_graphic_vertices() -> Result<()> {
             ..template.clone()
         });
     };
-    while project.placements.len() < limit {
+    while project.placements.len() < count {
         add(&mut project);
     }
     crate::layout::validate(&project)?;
-    add(&mut project);
-    let error = crate::layout::validate(&project).err();
-    assert!(
-        error
-            .as_ref()
-            .is_some_and(|e| e.to_string().contains("graphic vertices")),
-        "{error:?}"
-    );
     Ok(())
 }

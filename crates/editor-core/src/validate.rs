@@ -2,7 +2,7 @@
 //! it restates none of their rules.
 use crate::diagnostics::{Error, Result};
 use crate::ids::Id;
-use crate::instances::{self, MAX_INSTANCES};
+use crate::instances;
 use crate::library::{self, Drafts};
 use crate::model::Project;
 use crate::{layout, nets, schematic};
@@ -22,10 +22,16 @@ pub fn edited(before: &Project, after: &Project) -> Result<()> {
     if before.library != after.library {
         library::validate(&after.library)?;
     }
-    project_except_library(after)
+    // An edit that left the schematic as it was (a board edit) skips its
+    // instance, schematic and net rules, which read only the schematic.
+    project_checks(after, !before.same_schematic(after))
 }
 
 fn project_except_library(p: &Project) -> Result<()> {
+    project_checks(p, true)
+}
+
+fn project_checks(p: &Project, schematic: bool) -> Result<()> {
     if p.material_table != crate::materials::BUILTIN_REVISION {
         return Err(Error::Unsupported(format!(
             "material table revision {} is not this build's ({}); package looks would change",
@@ -62,9 +68,6 @@ fn project_except_library(p: &Project) -> Result<()> {
             return Err(Error::Invalid("invalid global identity allocation".into()));
         }
     }
-    if p.instances.len() > MAX_INSTANCES {
-        return Err(Error::Invalid("too many component instances".into()));
-    }
     p.rules.validate()?;
     if !p.production.within_bounds() {
         return Err(Error::Invalid(
@@ -76,10 +79,12 @@ fn project_except_library(p: &Project) -> Result<()> {
     if let Some(link) = p.assembly_link.as_deref() {
         crate::interface::assembly_link::check_link(link)?;
     }
-    instances::check_all(p)?;
-    instances::check_designators(p)?;
-    schematic::validate(p)?;
-    nets::validate(p)?;
+    if schematic {
+        instances::check_all(p)?;
+        instances::check_designators(p)?;
+        schematic::validate(p)?;
+        nets::validate(p)?;
+    }
     layout::validate(p)?;
     Ok(())
 }

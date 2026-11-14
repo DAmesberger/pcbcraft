@@ -27,12 +27,9 @@ mod part;
 pub mod pins;
 pub mod text;
 pub use part::{
-    MAX_ASSIGN_INSTANCES, assign_part, binding_name, part_findings, republished_part, requirements,
+    assign_part, binding_name, part_findings, republished_part, requirements,
 };
 
-pub const MAX_INSTANCES: usize = 4096;
-/// Symbol occurrences in one project; [`add_occurrence`] enforces it.
-pub const MAX_OCCURRENCES: usize = 16384;
 /// Terminals one `instance.set_no_connect` changes.
 pub const MAX_NO_CONNECT_EDIT: usize = 256;
 
@@ -611,8 +608,8 @@ pub(crate) fn instance_mut(project: &mut Project, id: Id) -> Result<&mut Compone
         .ok_or_else(|| Error::NotFound("Unknown component instance.".into()))
 }
 
-/// The one occurrence constructor: allocate and record an occurrence within
-/// [`MAX_OCCURRENCES`]. Callers check the instance afterwards.
+/// The one occurrence constructor: allocate and record an occurrence.
+/// Callers check the instance afterwards.
 pub(crate) fn add_occurrence(
     project: &mut Project,
     instance: Id,
@@ -620,11 +617,6 @@ pub(crate) fn add_occurrence(
     position: PointNm,
     sheet: SheetId,
 ) -> Result<Id> {
-    if project.occurrences.len() >= MAX_OCCURRENCES {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 symbol occurrences.".into(),
-        ));
-    }
     if project.sheet(sheet).is_none() {
         return Err(Error::NotFound("Unknown sheet.".into()));
     }
@@ -644,11 +636,6 @@ pub(crate) fn add_occurrence(
 /// Create an instance and the occurrence of its first unit. Callers stage
 /// this on a candidate project they discard on failure.
 pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
-    if project.instances.len() >= MAX_INSTANCES {
-        return Err(Error::Limit(
-            "This edition supports at most 4096 component instances.".into(),
-        ));
-    }
     let Some(component) = project.library.component(request.component) else {
         return Err(Error::NotFound(
             "Choose a published component revision first.".into(),
@@ -693,11 +680,6 @@ pub fn place_off_sheet(
     physical: PhysicalChoice,
     designator: Option<String>,
 ) -> Result<Id> {
-    if project.instances.len() >= MAX_INSTANCES {
-        return Err(Error::Limit(
-            "This edition supports at most 4096 component instances.".into(),
-        ));
-    }
     let Some(published) = project.library.component(component) else {
         return Err(Error::NotFound(
             "Choose a published component revision first.".into(),
@@ -743,8 +725,8 @@ pub fn next_designator(project: &Project, prefix: &str) -> Result<String> {
             "The component's designator prefix ‘{prefix}’ is not 1–8 uppercase letters; give a designator."
         )));
     }
-    // Numbers already taken under this prefix. At most MAX_INSTANCES are, so
-    // a free number lies within 1..=MAX_INSTANCES + 1.
+    // Numbers already taken under this prefix. At most one per instance
+    // is, so a free number lies within 1..=instances + 1.
     let taken: BTreeSet<usize> = project
         .instances
         .iter()
@@ -760,7 +742,7 @@ pub fn next_designator(project: &Project, prefix: &str) -> Result<String> {
             digits.parse().ok()
         })
         .collect();
-    (1..=MAX_INSTANCES + 1)
+    (1..=project.instances.len().saturating_add(1))
         .find(|n| !taken.contains(n))
         .map(|n| format!("{prefix}{n}"))
         .ok_or_else(|| Error::Limit("No free designator number is left.".into()))

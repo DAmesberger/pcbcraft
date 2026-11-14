@@ -116,10 +116,24 @@ impl<'a> BoardRules<'a> {
         let classes = if rules.net_classes.is_empty() {
             BTreeMap::new()
         } else {
+            // Explicit assignments by net once, so classing every net is
+            // one pass, not nets × assignments.
+            let assigned: BTreeMap<Id, NetClassId> = rules
+                .assignments
+                .iter()
+                .rev()
+                .map(|a| (a.net, a.class))
+                .collect();
             project
                 .nets
                 .iter()
-                .filter_map(|n| Some((n.id, rules.class_of(n.id, &n.name)?)))
+                .filter_map(|n| {
+                    let class = match assigned.get(&n.id) {
+                        Some(class) => Some(*class),
+                        None => rules.pattern_class(&n.name),
+                    };
+                    Some((n.id, class?))
+                })
                 .collect()
         };
         let pair_halves = rules

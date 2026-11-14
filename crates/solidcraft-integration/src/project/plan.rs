@@ -15,7 +15,7 @@
 use super::fill::{self, MODEL_CHORD_MM, TILE_MM, Tile};
 use super::fit;
 use super::{
-    MAX_DRILLS, PlacedPad, mm_slug, other, placed_pads, polygon, track_outline, without_nested,
+    PlacedPad, mm_slug, other, placed_pads, polygon, track_outline, without_nested,
 };
 use crate::material::{self, BodyKind, Material};
 use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM};
@@ -286,8 +286,7 @@ impl BoardPlan {
 
 /// The plan of `project`'s board. Refused (as the build refuses it) when
 /// the document does not validate, a via is blind or buried, a pad with
-/// copper has no outline, a track has no length or the board holds more
-/// drills than [`MAX_DRILLS`].
+/// copper has no outline or a track has no length.
 pub fn of(project: &Project) -> Result<BoardPlan> {
     sparksmith_core::validate::project(project).map_err(|e| Error::Invalid(e.to_string()))?;
     project
@@ -669,11 +668,6 @@ fn laminate(
         .iter()
         .flat_map(|pad| pad.drills().into_iter().map(|d| pad.board(&d)))
         .collect();
-    if pad_drills.len().saturating_add(project.vias.len()) > MAX_DRILLS {
-        return Err(Error::Invalid(format!(
-            "the board has more than {MAX_DRILLS} drilled holes"
-        )));
-    }
     let via_drills = project.vias.iter().map(|via| Contour::Circle {
         center: via.position,
         radius: pad_outline::plated_drill_radius(via.drill),

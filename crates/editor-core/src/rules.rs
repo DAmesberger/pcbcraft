@@ -36,7 +36,7 @@ pub use profile::{
 };
 
 pub use netclass::{
-    ClassClearance, MAX_NET_CLASSES, NetClass, NetClassAssignment, NetClassId, NetClassPattern,
+    ClassClearance, NetClass, NetClassAssignment, NetClassId, NetClassPattern,
     NetClassSpec, glob_matches,
 };
 
@@ -1240,12 +1240,15 @@ impl ProjectRules {
             .iter()
             .find(|a| a.net == net)
             .map(|a| a.class)
-            .or_else(|| {
-                self.patterns
-                    .iter()
-                    .find(|p| glob_matches(&p.pattern, net_name))
-                    .map(|p| p.class)
-            })
+            .or_else(|| self.pattern_class(net_name))
+    }
+
+    /// The class of the first name pattern matching `net_name`.
+    pub fn pattern_class(&self, net_name: &str) -> Option<NetClassId> {
+        self.patterns
+            .iter()
+            .find(|p| glob_matches(&p.pattern, net_name))
+            .map(|p| p.class)
     }
 
     /// The clearance between two objects of different nets: the largest

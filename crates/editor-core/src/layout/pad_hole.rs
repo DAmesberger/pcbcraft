@@ -23,7 +23,9 @@ use super::connectivity::CopperGraph;
 use super::copper::{check_reach, limit_finding};
 use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
-use super::{BoardCopper, CopperRing, EPS, MAX_CHECK_PAIRS, PlacedPad, pad_labels, placed_pads};
+use super::{
+    BoardCopper, CopperRing, EPS, PlacedPad, check_pair_budget, pad_labels, placed_pads,
+};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::Shape;
 use crate::ids::{Id, PadId};
@@ -141,6 +143,7 @@ pub(super) fn findings(
     let joined = Joined::of(graph);
     let mut near = Vec::new();
     let mut pairs = 0usize;
+    let budget = check_pair_budget(shapes.len().saturating_add(holes.len()));
     for (i, hole) in holes.iter().take(pad_holes).enumerate() {
         let Some(pad) = hole.pad.and_then(|k| placed.get(k)) else {
             continue;
@@ -156,7 +159,7 @@ pub(super) fn findings(
                 continue;
             }
             pairs += 1;
-            if pairs > MAX_CHECK_PAIRS {
+            if pairs > budget {
                 issues.push(limit_finding());
                 return issues;
             }
@@ -185,7 +188,7 @@ pub(super) fn findings(
             .filter_map(|j| holes.get(*j))
         {
             pairs += 1;
-            if pairs > MAX_CHECK_PAIRS {
+            if pairs > budget {
                 issues.push(limit_finding());
                 return issues;
             }

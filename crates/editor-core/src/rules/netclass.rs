@@ -13,12 +13,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Most net classes in one project.
-pub const MAX_NET_CLASSES: usize = 128;
-/// Most explicit assignments and name patterns.
-pub const MAX_ASSIGNMENTS: usize = 65_536;
-pub const MAX_PATTERNS: usize = 256;
-
 /// Project-local class identity; never reused.
 #[derive(
     Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
@@ -234,15 +228,6 @@ fn class_problem(c: &NetClass) -> Option<String> {
 }
 
 pub(super) fn validate(rules: &ProjectRules) -> Result<()> {
-    if rules.net_classes.len() > MAX_NET_CLASSES
-        || rules.assignments.len() > MAX_ASSIGNMENTS
-        || rules.patterns.len() > MAX_PATTERNS
-        || rules.class_clearances.len() > MAX_NET_CLASSES * MAX_NET_CLASSES
-    {
-        return Err(Error::Limit(
-            "net_class.limit: too many net class entries".into(),
-        ));
-    }
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
     for c in &rules.net_classes {

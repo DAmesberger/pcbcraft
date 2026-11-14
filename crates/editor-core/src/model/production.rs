@@ -4,8 +4,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Waivers on one project.
-pub const MAX_WAIVERS: usize = 4096;
+/// Keys one `fabrication.waive` request names: a bound on the request, not
+/// on how many waivers a design keeps (it keeps any number).
+pub const MAX_WAIVE_KEYS: usize = 4096;
 /// Bytes of a waiver key or reason.
 pub const MAX_WAIVER_TEXT: usize = 1024;
 
@@ -39,19 +40,22 @@ impl Production {
         self.waivers.is_empty()
     }
 
+    /// The waiver of `key`, by binary search: keys are sorted on a valid
+    /// document ([`Self::within_bounds`]).
     pub fn waiver(&self, key: &str) -> Option<&Waiver> {
-        self.waivers.iter().find(|w| w.key == key)
+        self.waivers
+            .binary_search_by(|w| w.key.as_str().cmp(key))
+            .ok()
+            .and_then(|k| self.waivers.get(k))
     }
 
-    /// Count, text bounds, printable text and unique sorted keys.
+    /// Text bounds, printable text and unique sorted keys.
     pub fn within_bounds(&self) -> bool {
-        self.waivers.len() <= MAX_WAIVERS
-            && self.waivers.iter().all(|w| {
-                !w.key.trim().is_empty()
-                    && w.key.len() <= MAX_WAIVER_TEXT
-                    && w.reason.len() <= MAX_WAIVER_TEXT
-                    && !w.key.chars().chain(w.reason.chars()).any(char::is_control)
-            })
-            && self.waivers.windows(2).all(|p| p[0].key < p[1].key)
+        self.waivers.iter().all(|w| {
+            !w.key.trim().is_empty()
+                && w.key.len() <= MAX_WAIVER_TEXT
+                && w.reason.len() <= MAX_WAIVER_TEXT
+                && !w.key.chars().chain(w.reason.chars()).any(char::is_control)
+        }) && self.waivers.windows(2).all(|p| p[0].key < p[1].key)
     }
 }

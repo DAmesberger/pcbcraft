@@ -12,11 +12,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// Most stored graphic vertices placed on one board (a target). Enforced by
-/// `layout::validate`, so [`placed_graphics`] stays bounded on a valid
-/// document.
-pub const MAX_PLACED_GRAPHIC_VERTICES: usize = 262_144;
-
 /// Footprint-local to board coordinates for one placement: move the package
 /// datum to the origin and undo its rotation, reflect across the x-axis on
 /// the bottom (rigid Rx(pi)), rotate by the placement, then move to the

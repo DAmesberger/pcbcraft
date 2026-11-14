@@ -209,7 +209,7 @@ These signatures are fixed and wired: every surface above runs on them. A slice 
 
 - `Severity { Error, Warning, ToDo, Info }`, ordered most severe first;
 - `IssueArea { Component, Schematic, Board }`;
-- `IssueScope { All, Area { area }, Selection { objects } }` (at most `MAX_SCOPE_OBJECTS`);
+- `IssueScope { All, Area { area }, Selection { objects } }` (any number of objects, matched by lookup);
 - `IssueGroup { code, key, title }`;
 - `IssueDetail { cause, fix }`;
 - `IssueRow { severity, area, group, title, detail, finding }`, where `finding` is the unchanged `Finding` (code, raw message, every `ObjectRef`, `blocks`);

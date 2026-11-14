@@ -15,12 +15,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Most differential pairs in one project.
-pub const MAX_PAIRS: usize = 1024;
-/// Most length groups in one project.
-pub const MAX_GROUPS: usize = 256;
-/// Most nets and pairs one length group lists.
-pub const MAX_GROUP_MEMBERS: usize = 256;
 /// Single-ended impedance targets accepted, Ω.
 pub const IMPEDANCE_RANGE: std::ops::RangeInclusive<f64> = 10.0..=200.0;
 /// Differential impedance targets accepted, Ω.
@@ -264,11 +258,6 @@ fn name_ok(name: &str) -> bool {
 /// exist is the layout validation's (`layout::length::validate`), which
 /// sees nets.
 pub(super) fn validate(rules: &ProjectRules) -> Result<()> {
-    if rules.diff_pairs.len() > MAX_PAIRS || rules.length_groups.len() > MAX_GROUPS {
-        return Err(Error::Limit(
-            "diff_pair.limit: too many pairs or length groups".into(),
-        ));
-    }
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
     let mut halves = BTreeSet::new();
@@ -321,12 +310,6 @@ pub(super) fn validate(rules: &ProjectRules) -> Result<()> {
         if !length_ok(group.tolerance) || !group.target.is_none_or(length_ok) {
             return Err(Error::Invalid(format!(
                 "length_group.bounds: length group {} needs lengths of 0–10000 mm",
-                group.name
-            )));
-        }
-        if group.nets.len() + group.pairs.len() > MAX_GROUP_MEMBERS {
-            return Err(Error::Limit(format!(
-                "length_group.limit: length group {} has too many members",
                 group.name
             )));
         }

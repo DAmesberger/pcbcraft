@@ -701,3 +701,57 @@ fn ten_thousand_vias_are_all_checked_within_a_budget() -> Result<()> {
     );
     Ok(())
 }
+
+/// No cap on design size: a board past the former caps (16,384 vias,
+/// 2,000 tracks, 10,000 objects a command) opens, is checked whole and
+/// takes edits naming all of its copper at once.
+#[test]
+fn a_board_past_the_former_caps_opens_checks_and_edits() -> Result<()> {
+    use crate::layout::several::Objects;
+    let project = via_board(17_000, 2_500)?;
+    assert!(project.vias.len() > 16_384 && project.tracks.len() > 2_000);
+    let mut engine = engine_for(project)?;
+    let findings = crate::layout::checks_with(
+        engine.project(),
+        &engine.copper_graph(),
+        engine.check_settings(),
+    );
+    assert!(
+        findings.iter().all(|f| f.code != "board.check_limit"),
+        "the checks stopped at a limit"
+    );
+    let vias: Vec<Id> = engine.project().vias.iter().map(|v| v.id).collect();
+    let tracks: Vec<Id> = engine.project().tracks.iter().map(|t| t.id).collect();
+    let at = engine.revision();
+    let before = engine.project().clone();
+    engine.apply(
+        at,
+        Operation::Layout(LayoutCommand::LockObjects {
+            objects: Objects {
+                vias: vias.clone(),
+                ..Default::default()
+            },
+            locked: true,
+        }),
+    )?;
+    assert!(engine.project().vias.iter().all(|v| v.locked));
+    // A board edit leaves the schematic and its nets as they were: not
+    // derived again, and still shared with the step before.
+    let after = engine.project();
+    assert!(after.same_schematic(&before));
+    assert!(crate::shared::Shared::ptr_eq(&after.nets, &before.nets));
+    engine.undo()?;
+    let at = engine.revision();
+    engine.apply(
+        at,
+        Operation::Layout(LayoutCommand::DeleteObjects {
+            objects: Objects {
+                tracks,
+                vias,
+                ..Default::default()
+            },
+        }),
+    )?;
+    assert!(engine.project().tracks.is_empty() && engine.project().vias.is_empty());
+    Ok(())
+}

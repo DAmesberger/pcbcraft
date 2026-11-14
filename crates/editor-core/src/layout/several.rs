@@ -4,16 +4,13 @@
 //! refuses it (a locked track or via is not deleted), and one refusal
 //! refuses the whole command.
 use super::fill::{self, FillCommand};
-use super::{RouteEditSet, apply_routes, via};
+use super::{RouteEditSet, apply_routes};
 use crate::diagnostics::{Error, Result};
 use crate::ids::Id;
 use crate::model::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
-
-/// Most objects one command names.
-pub const MAX_OBJECTS: usize = 10_000;
+use std::collections::{BTreeSet, HashMap};
 
 /// The board objects a command names, by kind.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -35,11 +32,6 @@ impl Objects {
         let count = self.parts.len() + self.tracks.len() + self.vias.len() + self.fills.len();
         if count == 0 {
             return Err(Error::Invalid("name at least one object".into()));
-        }
-        if count > MAX_OBJECTS {
-            return Err(Error::Limit(format!(
-                "one command takes at most {MAX_OBJECTS} objects, not {count}"
-            )));
         }
         for ids in [&self.parts, &self.tracks, &self.vias, &self.fills] {
             let mut seen = BTreeSet::new();
@@ -108,17 +100,17 @@ pub fn delete(project: &mut Project, objects: &Objects) -> Result<Vec<KeptPart>>
             designator,
         });
     }
-    if !objects.tracks.is_empty() {
+    // One routing edit removes them all, by identity: a whole board's
+    // copper costs one pass, not one per object.
+    if !objects.tracks.is_empty() || !objects.vias.is_empty() {
         apply_routes(
             project,
             RouteEditSet {
                 remove: objects.tracks.clone(),
+                remove_vias: objects.vias.clone(),
                 ..Default::default()
             },
         )?;
-    }
-    for &id in &objects.vias {
-        via::delete(project, id)?;
     }
     for &id in &objects.fills {
         fill::apply(project, FillCommand::Delete { id })?;
@@ -130,24 +122,54 @@ pub fn delete(project: &mut Project, objects: &Objects) -> Result<Vec<KeptPart>>
 pub fn lock(project: &mut Project, objects: &Objects, locked: bool) -> Result<()> {
     objects.check()?;
     let missing = |kind: &str, id: Id| Error::NotFound(format!("unknown {kind} {id}"));
-    for &id in &objects.parts {
-        project
-            .placements
-            .iter_mut()
-            .find(|p| p.instance == id)
-            .ok_or_else(|| missing("placed part", id))?
-            .locked = locked;
+    // By identity through one index per kind, so locking a whole board
+    // is linear in it.
+    fn set<T>(
+        items: &mut [T],
+        ids: &[Id],
+        key: impl Fn(&T) -> Id,
+        mut lock: impl FnMut(&mut T),
+        missing: impl Fn(Id) -> Error,
+    ) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        let at: HashMap<Id, usize> = items.iter().enumerate().map(|(k, t)| (key(t), k)).collect();
+        for &id in ids {
+            let item = at
+                .get(&id)
+                .and_then(|k| items.get_mut(*k))
+                .ok_or_else(|| missing(id))?;
+            lock(item);
+        }
+        Ok(())
     }
-    for &id in &objects.tracks {
-        project
-            .tracks
-            .iter_mut()
-            .find(|t| t.id == id)
-            .ok_or_else(|| missing("track", id))?
-            .locked = locked;
+    if !objects.parts.is_empty() {
+        set(
+            &mut project.placements,
+            &objects.parts,
+            |p| p.instance,
+            |p| p.locked = locked,
+            |id| missing("placed part", id),
+        )?;
     }
-    for &id in &objects.vias {
-        via::set_lock(project, id, locked)?;
+    if !objects.tracks.is_empty() {
+        set(
+            &mut project.tracks,
+            &objects.tracks,
+            |t| t.id,
+            |t| t.locked = locked,
+            |id| missing("track", id),
+        )?;
+    }
+    if !objects.vias.is_empty() {
+        set(
+            &mut project.vias,
+            &objects.vias,
+            |v| v.id,
+            |v| v.locked = locked,
+            |_| Error::NotFound("unknown via".into()),
+        )?;
     }
     for &id in &objects.fills {
         project
