@@ -188,7 +188,7 @@ fn values_and_sources_read_as_text() -> TestResult {
     );
     assert_eq!(
         source_line(&fixtures::jlcpcb_example()?.source),
-        "JLCPCB · PCB Manufacturing & Assembly Capabilities · read 2026-11-11"
+        "JLCPCB · PCB Manufacturing & Assembly Capabilities · read 2026-11-14"
     );
     // Every label the panel shows passes the message style check.
     for key in RuleKey::all() {
@@ -365,6 +365,76 @@ fn a_profile_switch_is_previewed_then_one_undo_step() -> TestResult {
     assert!(texts(&output).iter().any(|t| t == "Test fine"));
     engine.undo()?;
     assert_eq!(engine.project().rules, fixtures::rules()?, "one undo step");
+    Ok(())
+}
+
+/// A profile's manufacturing options show under its source; choosing
+/// another choice shows the limits that change first, then Use commits
+/// `rules.set_fab_options` as one undo step.
+#[test]
+fn a_fab_option_is_previewed_then_one_undo_step() -> TestResult {
+    let mut engine = Engine::demo()?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::SetProfile {
+            profile: Box::new(fixtures::jlcpcb_example()?),
+            keep_overrides: false,
+        }),
+    )?;
+    let before = engine.project().rules.clone();
+    let ctx = context();
+    let mut editor = PcbEditor::default();
+    editor.open_rules_in(None, None);
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    for label in ["JLCPCB values", "Recommended", "Solder mask colour"] {
+        assert!(shown.iter().any(|t| t == label), "{label}: {shown:?}");
+    }
+    assert!(click(&mut editor, &engine, &ctx, "Recommended")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "Absolute minimum")?.is_none());
+    assert_eq!(editor.subject(), Subject::Review);
+    assert_eq!(engine.project().rules, before, "previewing changes nothing");
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    let shown = texts(&output);
+    assert!(
+        shown
+            .iter()
+            .any(|t| t.starts_with("JLCPCB values: Absolute minimum · 5 rules change")),
+        "{shown:?}"
+    );
+    assert!(
+        shown
+            .iter()
+            .any(|t| t == "Min PTH annular ring: 0.25 mm → 0.18 mm"),
+        "{shown:?}"
+    );
+    let apply = click(&mut editor, &engine, &ctx, "Use these limits")?.ok_or("Use did nothing")?;
+    let Operation::Rules(RulesCommand::SetOptions { options }) = &apply else {
+        return Err("Use issued another command".into());
+    };
+    assert_eq!(options.get("limits").map(String::as_str), Some("minimum"));
+    engine.apply(engine.revision(), apply)?;
+    assert_eq!(
+        engine
+            .project()
+            .rules
+            .effective()
+            .holes
+            .pth_annular_ring_min,
+        0.18
+    );
+    let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
+    assert_eq!(editor.subject(), Subject::Dialog, "back to the table");
+    let shown = texts(&output);
+    assert!(shown.iter().any(|t| t == "Absolute minimum"), "{shown:?}");
+    assert!(
+        !shown
+            .iter()
+            .any(|t| t == "Differs from the library version"),
+        "other choices are not a different profile"
+    );
+    engine.undo()?;
+    assert_eq!(engine.project().rules, before, "one undo step");
     Ok(())
 }
 

@@ -31,7 +31,8 @@ pub mod profile;
 pub mod signal;
 
 pub use profile::{
-    DrillFiles, PROFILE_FILE_FORMAT, ProfileFile, ProfileSource, RuleEntry, RuleProfile, Setting,
+    DrillFiles, FabChoice, FabOption, PROFILE_FILE_FORMAT, ProfileFile, ProfileSource, RuleCase,
+    RuleEntry, RuleProfile, Setting,
 };
 
 pub use netclass::{
@@ -1189,7 +1190,7 @@ impl ProjectRules {
                 (RuleKey::CopperAngleMin, RuleValue::Angle(0.0)),
                 (RuleKey::SliverWidthMin, RuleValue::Length(0.0)),
             ] {
-                let source = p.entry(key).map(|e| e.source.clone()).unwrap_or_default();
+                let source = p.active(key).map(|(_, s)| s.to_owned()).unwrap_or_default();
                 let _ = p.set(key, RuleEntry::value(zero, &source));
             }
         }
@@ -1379,7 +1380,8 @@ impl ProjectRules {
 /// `{"command":"rules.set_fab_profile","params":{"profile":{...},"keep_overrides":true}}`
 /// with a profile from `rules.fab_profiles`;
 /// `{"command":"rules.set_override","params":{"key":{"rule":"clearance","a":"track","b":"via"},"value":{"kind":"length","value":0.15}}}`;
-/// `{"command":"rules.clear_override","params":{"key":{"rule":"mask_web_min"}}}`.
+/// `{"command":"rules.clear_override","params":{"key":{"rule":"mask_web_min"}}}`;
+/// `{"command":"rules.set_fab_options","params":{"options":{"mask_colour":"black_white"}}}`.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "command", content = "params", deny_unknown_fields)]
 pub enum RulesCommand {
@@ -1394,6 +1396,15 @@ pub enum RulesCommand {
         profile: Box<RuleProfile>,
         #[serde(default)]
         keep_overrides: bool,
+    },
+    /// Choose manufacturing options of the board's profile. `options` maps
+    /// option id → choice id, as `rules.effective` lists them; options not
+    /// named keep their choice. The limits become those the profile gives for the
+    /// choices; overrides are kept and must stay valid
+    /// (`rules.override_conflict`). Preview with `rules.preview_fab_options`.
+    #[serde(rename = "rules.set_fab_options")]
+    SetOptions {
+        options: std::collections::BTreeMap<String, String>,
     },
     /// Set (or replace) the project override of one rule. The value's kind
     /// must match the rule (`rules.value_kind`) and the effective rules
@@ -1458,6 +1469,7 @@ pub enum RulesCommand {
 // A new command chooses its permission class here.
 declare_classes!(RulesCommand {
     SetProfile "rules.set_fab_profile" Edit "Set the fab profile",
+    SetOptions "rules.set_fab_options" Edit "Choose fab profile options",
     SetOverride "rules.set_override" Edit "Override a rule",
     ClearOverride "rules.clear_override" Edit "Clear a rule override",
     AddNetClass "net_class.add" Edit "Add a net class",
@@ -1514,6 +1526,11 @@ fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<si
             set_profile(rules, *profile, keep_overrides)?;
             return Ok(None);
         }
+        RulesCommand::SetOptions { options } => {
+            let profile = with_options(rules, &options)?;
+            set_profile(rules, profile, true)?;
+            return Ok(None);
+        }
         RulesCommand::SetOverride { key, value } => {
             let key = key.normalized();
             rules.overrides.retain(|o| o.key.normalized() != key);
@@ -1538,6 +1555,16 @@ fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<si
     }
     rules.validate()?;
     Ok(added)
+}
+
+/// The board's profile with `options` chosen (`rules.set_fab_options`):
+/// `rules.no_fab_profile` without one, `rules.fab_option` for an option or
+/// choice it does not offer.
+pub fn with_options(
+    rules: &ProjectRules,
+    options: &std::collections::BTreeMap<String, String>,
+) -> Result<RuleProfile> {
+    rules.require()?.with_choices(options)
 }
 
 /// `rules.set_fab_profile`: the profile itself must be valid and kept
@@ -1598,13 +1625,20 @@ pub struct RulesReport {
     pub class_clearances: Vec<ClassClearance>,
 }
 
-/// A profile's identity and source, without its rules.
+/// A profile's identity, source and manufacturing options, without its
+/// rules.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct ProfileSummary {
     pub id: String,
     pub name: String,
     pub source: ProfileSource,
     pub drill_files: DrillFiles,
+    /// The manufacturing options it offers (`rules.set_fab_options`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<FabOption>,
+    /// The board's choice of each option (option id → choice id).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub chosen: std::collections::BTreeMap<String, String>,
 }
 
 impl ProfileSummary {
@@ -1614,6 +1648,8 @@ impl ProfileSummary {
             name: profile.name.clone(),
             source: profile.source.clone(),
             drill_files: profile.drill_files.clone(),
+            options: profile.options().to_vec(),
+            chosen: profile.chosen().clone(),
         }
     }
 }
@@ -1624,17 +1660,17 @@ pub fn report(rules: &ProjectRules) -> RulesReport {
     let rows = RuleKey::all()
         .into_iter()
         .map(|key| {
-            let entry = rules.profile.as_ref().and_then(|p| p.entry(key));
+            let entry = rules.profile.as_ref().and_then(|p| p.active(key));
             RuleRow {
                 key,
                 group: key.group(),
                 label: key.label(),
                 profile: key.get(rules.profile.as_ref().map_or(&unset, |p| p.rules())),
-                formula: entry.and_then(|e| match &e.setting {
+                formula: entry.as_ref().and_then(|(setting, _)| match setting {
                     Setting::Formula(f) => Some(f.clone()),
                     Setting::Value(_) => None,
                 }),
-                value_source: entry.map(|e| e.source.clone()).unwrap_or_default(),
+                value_source: entry.map(|(_, s)| s.to_owned()).unwrap_or_default(),
                 value: key.get(&effective),
                 source: rules.source_of(key),
             }

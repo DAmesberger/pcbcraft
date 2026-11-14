@@ -162,3 +162,55 @@ fn a_new_project_takes_the_builtin_jlcpcb_profile_unless_one_is_named() -> Falli
     assert_eq!(second["result"]["value"], "jlcpcb-4-layer-1oz", "{second}");
     Ok(())
 }
+
+/// The CLI reaches a profile's manufacturing options as the desktop does:
+/// `rules.effective` lists them with the board's choices,
+/// `rules.preview_fab_options` shows the limits that change and
+/// `rules.set_fab_options` applies them, never asking.
+#[test]
+fn a_session_previews_and_sets_fab_options() -> Fallible {
+    let dir = tempfile::tempdir()?;
+    let (config, cache) = (dir.path().join("config"), dir.path().join("cache"));
+    let minimum = json!({"options": {"limits": "minimum"}});
+    let effective =
+        json!({"command": "project.query", "params": {"query": "rules.effective", "params": {}}});
+    let replies = session(
+        &config,
+        &cache,
+        &[
+            json!({"command": "project.new", "params": {"expected_revision": 0}}),
+            effective.clone(),
+            json!({"command": "project.query", "params": {
+                "query": "rules.preview_fab_options", "params": minimum}}),
+            json!({"command": "project.apply", "params": {"expected_revision": 1, "operation": {
+                "editor": "Rules",
+                "operation": {"command": "rules.set_fab_options", "params": minimum}}}}),
+            effective,
+        ],
+    )?;
+    let [new, before, preview, applied, after] = replies.as_slice() else {
+        return Err(format!("five replies expected: {replies:?}").into());
+    };
+    assert_eq!(new["ok"], true, "{new}");
+    let profile = &before["result"]["result"]["profile"];
+    let options: Vec<&str> = profile["options"]
+        .as_array()
+        .ok_or("options")?
+        .iter()
+        .filter_map(|o| o["id"].as_str())
+        .collect();
+    assert_eq!(options, ["limits", "mask_colour", "drill"], "{before}");
+    assert_eq!(profile["chosen"]["limits"], "recommended", "{before}");
+    let changes = preview["result"]["result"]["changes"]
+        .as_array()
+        .ok_or("changes")?;
+    assert_eq!(changes.len(), 5, "{preview}");
+    assert_eq!(applied["ok"], true, "{applied}");
+    let after = &after["result"]["result"];
+    assert_eq!(after["profile"]["chosen"]["limits"], "minimum", "{after}");
+    assert_eq!(
+        after["effective"]["holes"]["pth_annular_ring_min"], 0.18,
+        "{after}"
+    );
+    Ok(())
+}

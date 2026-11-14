@@ -22,14 +22,21 @@ fn library() -> Result<ProfileLibrary> {
     Ok(ProfileLibrary::from_dirs(&UserDirs::from_env()?)?)
 }
 
+/// A profile's identity, source and manufacturing options with their
+/// choices (`rules.set_fab_options` picks one per option for a board).
 fn summary(profile: &RuleProfile, kind: &str) -> serde_json::Value {
-    json!({
+    let mut value = json!({
         "id": profile.id,
         "name": profile.name,
         "kind": kind,
         "source": profile.source,
         "drill_files": profile.drill_files,
-    })
+    });
+    if !profile.options().is_empty() {
+        value["options"] = json!(profile.options());
+        value["chosen"] = json!(profile.chosen());
+    }
+    value
 }
 
 /// The project's rules as a profile: its snapshot with every project

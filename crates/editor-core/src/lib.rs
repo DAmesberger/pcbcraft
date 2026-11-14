@@ -385,6 +385,12 @@ pub enum Query {
         #[serde(default)]
         keep_overrides: bool,
     },
+    /// What `rules.set_fab_options` with these choices would change: rules
+    /// and the board issues that would appear or go.
+    #[serde(rename = "rules.preview_fab_options")]
+    PreviewOptions {
+        options: std::collections::BTreeMap<String, String>,
+    },
     /// Every net class with its resolved width, via and clearance, and
     /// every net with its class and how it got it (explicit or pattern).
     #[serde(rename = "net_class.list")]
@@ -515,6 +521,7 @@ declare_classes!(Query {
     RulesEffective "rules.effective" Read "Effective rules",
     RuleProfiles "rules.fab_profiles" Read "List fab profiles",
     PreviewProfile "rules.preview_fab_profile" Read "Preview a fab profile",
+    PreviewOptions "rules.preview_fab_options" Read "Preview fab profile options",
     NetClasses "net_class.list" Read "List net classes",
     PreviewNetClassPatterns "net_class.preview_patterns" Read "Preview net class patterns",
     BoardShape "board.shape" Read "Board shape",
@@ -1941,6 +1948,13 @@ impl Engine {
                     .cloned()
                     .collect(),
             )),
+            Query::PreviewOptions { options } => {
+                let profile = rules::with_options(&self.document.project.rules, &options)?;
+                self.query(Query::PreviewProfile {
+                    profile: Box::new(profile),
+                    keep_overrides: true,
+                })
+            }
             Query::PreviewProfile {
                 profile,
                 keep_overrides,
