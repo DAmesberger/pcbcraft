@@ -573,6 +573,7 @@ mod tests {
 
     #[test]
     fn the_contract_table() {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         use CodeScheme::*;
         assert_eq!(code(Resistor3Digit, 10e3).as_deref(), Some("103"));
         assert_eq!(code(Resistor4Digit, 10e3).as_deref(), Some("1002"));
@@ -622,6 +623,7 @@ mod tests {
 
     #[test]
     fn eia96_covers_the_series_and_multipliers() -> Result<()> {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         use CodeScheme::Eia96;
         assert_eq!(code(Eia96, 976e5).as_deref(), Some("96F"));
         assert_eq!(code(Eia96, 0.1).as_deref(), Some("01Z"));
@@ -631,7 +633,8 @@ mod tests {
         assert_eq!(code(Eia96, 10.3e3), None, "103 is not an E96 value");
         assert_eq!(code(Eia96, 1e8), None, "above the F multiplier");
         // The series is strictly increasing within one decade.
-        let e96 = &standards::get()?.marking.e96.values;
+        let standards = standards::get()?;
+        let e96 = &standards.marking.e96.values;
         assert_eq!(e96.len(), 96);
         assert!(e96.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(e96[67], 499);
@@ -652,6 +655,7 @@ mod tests {
 
     #[test]
     fn voltage_letters_come_from_the_named_table() -> Result<()> {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         let tantalum = CodeScheme::VoltageLetter {
             table: TableRef("tantalum".into()),
         };
@@ -668,6 +672,7 @@ mod tests {
 
     #[test]
     fn auto_picks_the_first_representable_scheme() -> Result<()> {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         use CodeScheme::*;
         let auto = Auto {
             schemes: vec![Eia96, Resistor4Digit, Resistor3Digit],
@@ -686,6 +691,7 @@ mod tests {
 
     #[test]
     fn colour_bands() -> Result<()> {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         // 4.7 kΩ ±5 %: yellow violet red gold (index 10).
         assert_eq!(bands(4.7e3, Some(0.05))?, Some(vec![4, 7, 2, 10]));
         // 10 kΩ ±1 %: brown black orange brown.
@@ -705,7 +711,9 @@ mod tests {
 
     #[test]
     fn broken_tables_are_refused() -> Result<()> {
-        let shipped = &standards::get()?.marking;
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
+        let standards = standards::get()?;
+        let shipped = &standards.marking;
         let rebuilt = |edit: &dyn Fn(&mut MarkingCodes)| {
             let mut codes = shipped.clone();
             edit(&mut codes);

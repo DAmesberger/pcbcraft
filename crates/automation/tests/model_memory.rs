@@ -67,7 +67,7 @@ fn bump(engine: &mut Engine, name: &str, by: f64) {
 #[ignore = "memory; run by hand"]
 fn esp32_an_updated_model_holds_what_a_fresh_build_holds() {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(base) = live() else {
         eprintln!("no `heap` here: nothing measured");
         return;

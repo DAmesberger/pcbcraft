@@ -76,6 +76,7 @@ fn geometry_of(model: &NativeModel, pick: impl Fn(&Source) -> bool) -> Vec<&Geom
 
 #[test]
 fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, tracks, vias) = four_layer()?;
     let stackup = project.stackup.clone();
     let model = build(&project)?;
@@ -152,6 +153,7 @@ fn inner_copper_and_via_barrels_are_saved_copper_at_their_stackup_heights() -> R
 
 #[test]
 fn the_laminate_is_physical_around_inner_copper_and_drills() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, _, _) = four_layer()?;
     let baseline = {
         let mut bare = project.clone();
@@ -216,6 +218,7 @@ fn baseline_removed(project: &Project) -> Result<f64> {
 
 #[test]
 fn stackup_parameters_drive_the_saved_board_after_reopening() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, tracks, vias) = four_layer()?;
     let original = build(&project)?;
     let temporary = tempfile::tempdir()?;
@@ -260,6 +263,7 @@ fn stackup_parameters_drive_the_saved_board_after_reopening() -> Result<()> {
 
 #[test]
 fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, _, vias) = four_layer()?;
     let model = build(&project)?;
     let t = project.stackup.dielectric_mm();
@@ -332,6 +336,7 @@ fn tented_vias_dome_under_the_mask_and_open_ones_show_rings_and_a_dark_bore() ->
 /// expansion, as the Gerber mask draws it (`Via::mask_opening`).
 #[test]
 fn an_open_via_s_mask_opening_follows_the_mask_expansion_rule() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::rules::{RuleKey, RuleOverride, RuleValue};
     let (mut project, _, _) = four_layer()?;
     project.rules = sparksmith_core::rules::fixtures::rules().map_err(invalid)?;
@@ -361,6 +366,7 @@ fn an_open_via_s_mask_opening_follows_the_mask_expansion_rule() -> Result<()> {
 
 #[test]
 fn every_display_layer_names_its_copper_layer_or_side() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, _, _) = four_layer()?;
     let model = build(&project)?;
     let mut seen = BTreeSet::new();
@@ -412,6 +418,7 @@ fn every_display_layer_names_its_copper_layer_or_side() -> Result<()> {
 
 #[test]
 fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = Engine::demo().map_err(invalid)?.project().clone();
     let model = build(&project)?;
     let films: Vec<&Geometry> = model
@@ -467,6 +474,7 @@ fn silkscreen_prints_the_legend_on_the_mask_clear_of_openings() -> Result<()> {
 /// lands only (the barrels go with the vias).
 #[test]
 fn a_through_hole_pad_s_lands_and_barrels_carry_their_own_layers() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = Engine::showcase().map_err(invalid)?.project().clone();
     let model = build(&project)?;
     let through: BTreeSet<u64> = model
@@ -507,6 +515,7 @@ fn a_through_hole_pad_s_lands_and_barrels_carry_their_own_layers() -> Result<()>
 /// its stackup height, and the laminate is the twelve-layer dielectric.
 #[test]
 fn a_twelve_layer_board_saves_deep_inner_copper_at_its_height() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut project, tracks, _) = four_layer()?;
     project.stackup = Stackup::preset(12).map_err(invalid)?;
     let layer = CopperLayer::Inner(9);
@@ -548,6 +557,7 @@ fn a_twelve_layer_board_saves_deep_inner_copper_at_its_height() -> Result<()> {
 /// over copper stands the stackup's mask thickness over its foil.
 #[test]
 fn native_heights_agree_with_the_stack() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use crate::stack::{Slot, Stack};
     let (mut project, _, _) = four_layer()?;
     let mut stackup = Stackup::preset(4).map_err(invalid)?;

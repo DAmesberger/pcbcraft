@@ -94,7 +94,7 @@ impl Availability {
         let paths = paths.to_vec();
         let known = self.missing.clone();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let missing: BTreeSet<PathBuf> = paths
                 .into_iter()
                 .filter(|p| !p.try_exists().unwrap_or(false))
@@ -103,7 +103,7 @@ impl Availability {
                 ctx.request_repaint();
             }
             let _ = sender.send(missing);
-        });
+        }));
         self.pending = Some(receiver);
     }
 }

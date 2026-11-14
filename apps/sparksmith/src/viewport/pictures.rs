@@ -302,6 +302,7 @@ mod esp32;
 #[test]
 fn the_overview_shows_a_sheen_on_the_mask_without_clipping()
 -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = Gpu::new() else {
         if std::env::var_os("SPARKSMITH_REQUIRE_GPU").is_some() {
             return Err("SPARKSMITH_REQUIRE_GPU is set but no GPU adapter was found".into());
@@ -1465,6 +1466,7 @@ fn generated_capacitor_board() -> Result<Project, Box<dyn std::error::Error>> {
 /// board's mask.
 #[test]
 fn a_generated_part_shows_its_model_in_3d() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let project = generated_capacitor_board()?;
     let model = sparksmith_solidcraft::project::build_flat(
         &project,

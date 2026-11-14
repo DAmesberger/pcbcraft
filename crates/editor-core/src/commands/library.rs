@@ -306,7 +306,7 @@ pub enum LibraryCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(LibraryCommand {
+declare_entries!(LibraryCommand in library {
     NewDraft "library.new_draft" Edit "New draft",
     DraftFrom "library.draft_from" Edit "Draft from a revision",
     DraftClosure "library.draft_closure" Edit "Draft a definition and its parts",
@@ -335,10 +335,10 @@ declare_classes!(LibraryCommand {
     FindOrCreate "library.find_or_create" Ask "Find or create a generic part",
     PackageFromTemplate "library.package_from_template" Edit "Package from a row",
     SavePackageRow "library.save_package_row" Edit "Save a package row",
-    PinoutApply "library.pinout_apply" Edit "Apply a pinout import",
+    PinoutApply "library.pinout_apply" Edit "Apply a pinout import" [review],
     ImportModel "library.import_model" Edit "Import a 3D model",
     PackArtwork "library.pack_artwork" Edit "Pack marking artwork",
-    Generate "library.generate" Edit "Generate a part",
+    Generate "library.generate" Edit "Generate a part" [in generators],
 });
 
 fn close_by_default() -> bool {

@@ -270,6 +270,7 @@ mod tests {
     #[test]
     fn a_display_transform_moves_cached_meshes_without_a_rebuild()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let project = crate::model_scene::tests::demo_project()?;
         let model = sparksmith_solidcraft::project::build(&project)?;
         let mut viewport = Viewport::detached();
@@ -296,6 +297,7 @@ mod tests {
     #[test]
     fn a_display_transform_moves_instanced_bodies_by_their_placements()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         // A round hole is one wall face on this kernel: enough holes for the
         // laminate to count as a large body.
         let project = crate::model_scene::tests::via_project(512)?;

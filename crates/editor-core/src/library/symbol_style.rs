@@ -552,7 +552,8 @@ pub fn generate(
             terminals.len()
         )));
     }
-    let drawings = &standards::get()?.symbols;
+    let standards = standards::get()?;
+    let drawings = &standards.symbols;
     let drawing = drawings
         .drawing(kind)
         .ok_or_else(|| Error::NotFound(format!("symbol.kind: no {} drawing", kind.label())))?;

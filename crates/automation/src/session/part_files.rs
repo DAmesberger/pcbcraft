@@ -95,7 +95,7 @@ pub(crate) type WireValues = std::collections::BTreeMap<String, WireValue>;
 #[serde(deny_unknown_fields)]
 pub struct CheckPartFileParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub path: Option<sparksmith_core::permission::FilePath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin: Option<String>,
     /// Literal values by the part's own parameter names:
@@ -112,7 +112,7 @@ pub struct UsePartFileParams {
     /// The package draft that uses the part file.
     pub package: DefinitionId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub path: Option<sparksmith_core::permission::FilePath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin: Option<String>,
     #[serde(default, deserialize_with = "wire_values")]

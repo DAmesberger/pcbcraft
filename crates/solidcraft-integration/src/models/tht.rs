@@ -535,6 +535,7 @@ mod tests {
 
     #[test]
     fn axial_leads_bend_down_at_the_lead_pitch() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let form = ThtForm::new(
             ThtKind::Axial {
                 body_diameter_nm: nm(2.5),
@@ -558,6 +559,7 @@ mod tests {
 
     #[test]
     fn radial_leads_go_straight_down_or_formed_out() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let mut form = ThtForm::new(
             ThtKind::Radial {
                 body_diameter_nm: nm(5.0),
@@ -584,6 +586,7 @@ mod tests {
 
     #[test]
     fn dip_strips_run_counter_clockwise_and_bend_down_at_the_rows() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let form = ThtForm::new(
             ThtKind::Dip {
                 pins: 8,
@@ -611,6 +614,7 @@ mod tests {
 
     #[test]
     fn to_rows_are_straight_or_formed() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let mut form = ThtForm::new(
             ThtKind::To {
                 pins: 3,

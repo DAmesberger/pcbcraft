@@ -432,7 +432,7 @@ impl RulesPanel {
             .pick_file();
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let job = match pollster::block_on(future) {
                 None => Job::Cancelled,
                 Some(file) => Job::Imported(
@@ -444,7 +444,7 @@ impl RulesPanel {
             };
             let _ = sender.send(job);
             ctx.request_repaint();
-        });
+        }));
         self.job = Some(receiver);
     }
 
@@ -461,7 +461,7 @@ impl RulesPanel {
             .save_file();
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let job = match pollster::block_on(future) {
                 None => Job::Cancelled,
                 Some(file) => {
@@ -475,7 +475,7 @@ impl RulesPanel {
             };
             let _ = sender.send(job);
             ctx.request_repaint();
-        });
+        }));
         self.job = Some(receiver);
     }
 }

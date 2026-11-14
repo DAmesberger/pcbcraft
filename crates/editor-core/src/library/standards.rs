@@ -2,21 +2,27 @@
 //! shipped library (`docs/shipped-library.md`): the standard fields, the
 //! value marking codes, the generic-part search grammar and the schematic
 //! symbol drawings. The core holds none of them in code and reads no file:
-//! `sparksmith-io` loads them and [`install`]s one [`Standards`] value for
-//! the process at startup, before any engine runs. Everything that needs a
-//! standard asks [`get`], which refuses when nothing was installed rather
-//! than falling back to a value written here.
+//! `sparksmith-io` loads them into a [`Context`], the host's explicit data
+//! for an engine, which the host hands to each engine it makes
+//! ([`crate::Engine::set_context`]). Nothing is installed for the process:
+//! two engines in one process may carry different standards.
 //!
-//! The shipped library does not change while the program runs, so the
-//! value is installed once; installing an equal value again is a no-op.
+//! While an engine applies an operation or answers a query, its context is
+//! the current one on that thread ([`Context::enter`]); everything that
+//! needs a standard asks [`get`], which refuses when no context is current
+//! rather than falling back to a value written here. A host that draws or
+//! builds outside the engine (a symbol preview, a 3D build on a worker
+//! thread) enters the context it holds first.
 use super::marking::codes::MarkingCodes;
 use super::standard_fields::StandardFields;
 use super::symbol_style::SymbolDrawings;
 use crate::diagnostics::{Error, Result};
+use crate::materials::MaterialLibrary;
 use crate::quantity::{self, Decimal, UnitOfMeasure, UnitSet};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use std::sync::OnceLock;
+use std::cell::RefCell;
+use std::sync::Arc;
 
 /// The data-file format every standards file states.
 pub const FORMAT: u32 = 1;
@@ -73,36 +79,130 @@ impl Standards {
     }
 }
 
-static INSTALLED: OnceLock<Standards> = OnceLock::new();
+/// The host's data an engine works with: the standards and, for 3D, the
+/// material library. Explicit: the host builds one from the shipped
+/// library and hands it to each engine and session; nothing in the process
+/// holds one for everybody.
+#[derive(Debug)]
+pub struct Context {
+    standards: Arc<Standards>,
+    /// The material library, or why loading it failed: a host without 3D
+    /// still runs every request that does not build a model. Built models
+    /// keep references into it, so it lives as long as the program: a host
+    /// makes one context at startup, not one per request.
+    materials: std::result::Result<&'static MaterialLibrary, String>,
+}
 
-/// Install the process's standards. A second install of an equal value is
-/// a no-op; a different one is refused, since engines already running
-/// would otherwise see two sets.
-pub fn install(standards: Standards) -> Result<()> {
-    let installed = INSTALLED.get_or_init(|| standards.clone());
-    if *installed == standards {
-        Ok(())
-    } else {
-        Err(Error::Conflict(
-            "other standards were already loaded in this process".into(),
-        ))
+thread_local! {
+    /// The contexts entered on this thread, innermost last.
+    static CURRENT: RefCell<Vec<Arc<Context>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A context entered on this thread ([`Context::enter`]); leaving the
+/// scope restores the one before.
+#[must_use = "the context is current only while the scope lives"]
+pub struct Scope {
+    /// Not `Send`: a scope belongs to the thread that entered it.
+    _thread: std::marker::PhantomData<*const ()>,
+}
+
+impl Drop for Scope {
+    fn drop(&mut self) {
+        CURRENT.with(|current| {
+            current.borrow_mut().pop();
+        });
     }
 }
 
-/// The installed standards. Test builds load the repository's shipped
-/// library on first use; the product installs them at startup
-/// (`sparksmith_io::standards`).
-pub fn get() -> Result<&'static Standards> {
-    #[cfg(any(test, feature = "test-fixtures"))]
-    if INSTALLED.get().is_none() {
-        install(fixture::shipped()?)?;
+impl Context {
+    /// A context with `standards` and no material library yet.
+    pub fn new(standards: Standards) -> Self {
+        Self {
+            standards: Arc::new(standards),
+            materials: Err(
+                "the material library was not loaded: the program loads the shipped library's materials/ folder before it builds a 3D model"
+                    .into(),
+            ),
+        }
     }
-    INSTALLED.get().ok_or_else(|| {
-        Error::NotFound(
-            "the shipped standards were not loaded: the program must load its shipped library at startup"
-                .into(),
-        )
-    })
+
+    /// This context with the material library, or why it failed to load.
+    /// The library is kept for the rest of the program (see `materials`).
+    #[must_use]
+    pub fn with_materials(
+        mut self,
+        materials: std::result::Result<MaterialLibrary, String>,
+    ) -> Self {
+        self.materials = materials.map(|library| &*Box::leak(Box::new(library)));
+        self
+    }
+
+    pub fn standards(&self) -> &Arc<Standards> {
+        &self.standards
+    }
+
+    /// The material library, or why it is not there.
+    pub fn materials(&self) -> Result<&'static MaterialLibrary> {
+        self.materials
+            .as_ref()
+            .copied()
+            .map_err(|why| Error::Invalid(why.clone()))
+    }
+
+    /// Make this context current on this thread until the scope ends.
+    pub fn enter(self: &Arc<Self>) -> Scope {
+        CURRENT.with(|current| current.borrow_mut().push(Arc::clone(self)));
+        Scope {
+            _thread: std::marker::PhantomData,
+        }
+    }
+
+    /// The context current on this thread: what a worker thread enters to
+    /// go on with its parent's.
+    pub fn current() -> Result<Arc<Self>> {
+        CURRENT
+            .with(|current| current.borrow().last().cloned())
+            .ok_or_else(|| {
+                Error::NotFound(
+                    "no context: the program hands its engine the shipped standards and materials before it uses them"
+                        .into(),
+                )
+            })
+    }
+
+    /// The repository's shipped standards and materials as test builds
+    /// compile them in, made once per test process: a fixture, never in
+    /// the product.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn fixture() -> Result<Arc<Self>> {
+        static FIXTURE: std::sync::OnceLock<std::result::Result<Arc<Context>, String>> =
+            std::sync::OnceLock::new();
+        FIXTURE
+            .get_or_init(|| {
+                let materials = fixture::materials().map_err(|e| e.to_string());
+                fixture::shipped()
+                    .map(|standards| Arc::new(Context::new(standards).with_materials(materials)))
+                    .map_err(|e| e.to_string())
+            })
+            .clone()
+            .map_err(Error::Invalid)
+    }
+}
+
+/// `work` with this thread's current context entered, for another thread
+/// to run: a worker reads the same standards and materials as the thread
+/// that started it.
+pub fn carried<T>(work: impl FnOnce() -> T + Send) -> impl FnOnce() -> T + Send {
+    let context = Context::current().ok();
+    move || {
+        let _context = context.as_ref().map(|c| c.enter());
+        work()
+    }
+}
+
+/// The standards of the current context ([`Context::current`]).
+pub fn get() -> Result<Arc<Standards>> {
+    Context::current().map(|context| Arc::clone(&context.standards))
 }
 
 /// The families that build on demand.
@@ -337,6 +437,19 @@ pub mod fixture {
 
     /// The standards of the repository's `library/`, parsed as
     /// `sparksmith-io` parses the installed folder.
+    /// The repository's shipped material library.
+    pub fn materials() -> Result<MaterialLibrary> {
+        MaterialLibrary::load(|name| match name {
+            "package-materials.json" => Ok(shipped!("materials/package-materials.json").into()),
+            "board-looks.json" => Ok(shipped!("materials/board-looks.json").into()),
+            "finishes.json" => Ok(shipped!("materials/finishes.json").into()),
+            "appearance.json" => Ok(shipped!("materials/appearance.json").into()),
+            other => Err(Error::NotFound(format!(
+                "library/materials/{other} is not a fixture file"
+            ))),
+        })
+    }
+
     pub fn shipped() -> Result<Standards> {
         let fields = StandardFields::new(
             parse(
@@ -375,5 +488,77 @@ pub mod fixture {
             .collect::<Result<Vec<_>>>()?;
         let symbols = SymbolDrawings::new(style, kinds)?;
         Standards::new(fields, marking, generic, symbols)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Engine, Query, QueryResult};
+
+    /// A resistor the shipped grammar's own example names.
+    fn example() -> Result<String> {
+        Context::fixture()?
+            .standards()
+            .generic
+            .families
+            .iter()
+            .find(|family| family.family == GenericFamily::Resistor)
+            .and_then(|family| family.examples.first().cloned())
+            .ok_or_else(|| Error::NotFound("a resistor example".into()))
+    }
+
+    fn resistors(engine: &Engine) -> Result<usize> {
+        match engine.query(Query::GenericParts { query: example()? })? {
+            QueryResult::GenericParts(report) => Ok(report.candidates.len()),
+            _ => Err(Error::Invalid("not a generic-parts report".into())),
+        }
+    }
+
+    /// Two engines in one process, handed different standards, answer the
+    /// same query each by its own.
+    #[test]
+    fn two_engines_with_different_standards_answer_differently() -> Result<()> {
+        let shipped = Context::fixture()?;
+        let mut fewer = (**shipped.standards()).clone();
+        fewer
+            .generic
+            .families
+            .retain(|family| family.family != GenericFamily::Resistor);
+        let fewer = Arc::new(Context::new(fewer));
+        let mut a = Engine::default();
+        a.set_context(Arc::clone(&shipped));
+        let mut b = Engine::default();
+        b.set_context(fewer);
+        assert!(resistors(&a)? > 0);
+        assert_eq!(resistors(&b)?, 0);
+        // And again, so neither changed what the other reads.
+        assert!(resistors(&a)? > 0);
+        Ok(())
+    }
+
+    /// Nothing is installed for the process: outside an engine's call and
+    /// with no context entered, a standard is refused, not made up.
+    #[test]
+    fn without_a_context_a_standard_is_refused() -> Result<()> {
+        assert!(get().is_err());
+        let context = Context::fixture()?;
+        {
+            let _scope = context.enter();
+            assert!(get().is_ok());
+        }
+        assert!(get().is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn a_worker_carries_its_parents_context() -> Result<()> {
+        let context = Context::fixture()?;
+        let _scope = context.enter();
+        let worker = std::thread::spawn(carried(|| get().is_ok()));
+        assert_eq!(worker.join().ok(), Some(true));
+        let bare = std::thread::spawn(|| get().is_ok());
+        assert_eq!(bare.join().ok(), Some(false));
+        Ok(())
     }
 }

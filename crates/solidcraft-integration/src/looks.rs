@@ -1,63 +1,43 @@
 //! The material library the 3D view and the exact export read: package
 //! materials, board and finish looks, film thicknesses and display-layer
-//! sizes. It is shipped data that `sparksmith-io` loads; the program hands
-//! it in once ([`ensure`], at start-up or before its first 3D build) and
-//! every build after that reads the same values, so the live view and the
-//! export never differ and no build reloads it.
+//! sizes. It is shipped data that `sparksmith-io` loads into the host's
+//! context ([`sparksmith_core::library::standards::Context`]); a build reads
+//! the library of the context current on its thread, so the live view and
+//! the export of one host never differ and no build reloads it.
 //!
-//! Before it is handed in, or when loading it failed, every build that
-//! needs it fails with that error: there are no values in code to fall
-//! back to.
+//! With no context current, or when loading the library failed, every
+//! build that needs it fails with that error: there are no values in code
+//! to fall back to.
 use crate::{Error, Result};
+use sparksmith_core::library::standards::Context;
 use sparksmith_core::materials::MaterialLibrary;
-use std::sync::OnceLock;
+#[cfg(any(test, feature = "test-fixtures"))]
+use std::sync::Arc;
 
-/// The library, or why loading it failed.
-static LOADED: OnceLock<std::result::Result<MaterialLibrary, String>> = OnceLock::new();
-
-/// The loaded library, running `load` the first time this process asks.
-/// A failed load is kept: later calls return the same error.
-pub fn ensure<E: std::fmt::Display>(
-    load: impl FnOnce() -> std::result::Result<MaterialLibrary, E>,
-) -> Result<&'static MaterialLibrary> {
-    LOADED
-        .get_or_init(|| load().map_err(|error| error.to_string()))
-        .as_ref()
-        .map_err(|message| Error::Invalid(message.clone()))
-}
-
-/// The library handed in with [`ensure`].
+/// The library of the current context.
 pub fn get() -> Result<&'static MaterialLibrary> {
-    match LOADED.get() {
-        Some(loaded) => loaded
-            .as_ref()
-            .map_err(|message| Error::Invalid(message.clone())),
-        #[cfg(test)]
-        None => ensure(source_tree),
-        #[cfg(not(test))]
-        None => Err(Error::Invalid(
-            "Sparksmith's material data is not loaded: the program loads the shipped library's materials/ folder before it builds a 3D model.".into(),
-        )),
-    }
+    Context::current()
+        .and_then(|context| context.materials())
+        .map_err(|e| Error::Invalid(e.to_string()))
 }
 
-/// This crate's own tests read the repository's `library/materials/`.
-#[cfg(test)]
-fn source_tree() -> std::result::Result<MaterialLibrary, sparksmith_core::Error> {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
-    MaterialLibrary::load(|name| {
-        std::fs::read_to_string(dir.join(name))
-            .map_err(|error| sparksmith_core::Error::Invalid(error.to_string()))
-    })
+/// A build that spreads over cores carries the current context to each.
+pub use sparksmith_core::library::standards::carried;
+
+/// A context for this crate's tests: the core's fixture, with the
+/// repository's standards and materials.
+#[cfg(any(test, feature = "test-fixtures"))]
+pub fn test_context() -> Result<Arc<Context>> {
+    Context::fixture().map_err(|e| Error::Invalid(e.to_string()))
 }
 
 /// The library as a [`crate::stack::Stack`] carries it: compared by
-/// identity and shown by name only, since there is one per process.
+/// identity and shown by name only.
 #[derive(Clone, Copy)]
 pub struct Looks(pub &'static MaterialLibrary);
 
 impl Looks {
-    /// The loaded library ([`get`]).
+    /// The current context's library ([`get`]).
     pub fn get() -> Result<Self> {
         get().map(Self)
     }

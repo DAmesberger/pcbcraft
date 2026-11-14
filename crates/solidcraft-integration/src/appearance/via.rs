@@ -272,6 +272,7 @@ mod tests {
 
     #[test]
     fn a_tented_via_shows_a_closed_mask_dome_on_each_side() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let board = board()?;
         let mut out = Vec::new();
         via_layers(&mut out, &board, &via(true))?;
@@ -306,6 +307,7 @@ mod tests {
 
     #[test]
     fn an_open_via_shows_a_dark_bore_and_lands_with_mask_openings() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let board = board()?;
         let open = via(false);
         let mut out = Vec::new();

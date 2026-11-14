@@ -46,6 +46,7 @@ fn conventions() -> [SymbolConventions; 2] {
 /// geometry, sequential IDs, designator text and sane bounds.
 #[test]
 fn every_kind_is_a_valid_symbol_on_the_grid() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     for conventions in conventions() {
         for kind in drawn() {
             let symbol = build(kind, conventions)?;
@@ -107,6 +108,7 @@ fn every_kind_is_a_valid_symbol_on_the_grid() -> Result<()> {
 
 #[test]
 fn two_terminal_kinds_share_one_pin_span() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     for kind in drawn().filter(|k| k.terminal_count() == Some(2)) {
         let symbol = build(kind, SymbolConventions::default())?;
         let mut ends: Vec<Point> = unit(&symbol)?
@@ -159,6 +161,7 @@ fn shapes(symbol: &SymbolDefinition) -> Vec<(Shape, Fill)> {
 /// body the editor grows) or an open zigzag.
 #[test]
 fn resistor_style_follows_the_conventions() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let iec = build(SymbolKind::Resistor, SymbolConventions::default())?;
     let first = unit(&iec)?.graphic(GraphicId(2)).map(|g| &g.item);
     assert!(matches!(
@@ -187,6 +190,7 @@ fn resistor_style_follows_the_conventions() -> Result<()> {
 /// its − plate and marks + on terminal 1's side.
 #[test]
 fn capacitors_draw_plates_and_polarity() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let plain = build(SymbolKind::Capacitor, SymbolConventions::default())?;
     let plates = shapes(&plain);
     assert_eq!(plates.len(), 2);
@@ -216,6 +220,7 @@ fn capacitors_draw_plates_and_polarity() -> Result<()> {
 /// Diodes put the cathode (terminal 1) at the bar, the triangle's apex.
 #[test]
 fn diodes_put_the_cathode_at_the_bar() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     for kind in [
         SymbolKind::Diode,
         SymbolKind::Zener,
@@ -248,6 +253,7 @@ fn diodes_put_the_cathode_at_the_bar() -> Result<()> {
 /// N-channel towards the channel, P-channel away.
 #[test]
 fn transistor_arrows_point_the_right_way() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let tip = |kind| -> Result<Point> {
         let symbol = build(kind, SymbolConventions::default())?;
         shapes(&symbol)
@@ -295,6 +301,7 @@ fn prefixes_name_their_kinds() {
 /// so it is a deliberate update of this hash.
 #[test]
 fn the_shipped_drawings_do_not_change() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     use sha2::{Digest, Sha256};
     let mut hash = Sha256::new();
     for kind in drawn() {

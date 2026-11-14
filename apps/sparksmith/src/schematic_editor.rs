@@ -4541,6 +4541,7 @@ mod tests {
     #[test]
     fn the_sheet_draws_and_picks_symbols_through_core_queries()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let engine = Engine::demo()?;
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);

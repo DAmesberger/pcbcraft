@@ -488,6 +488,7 @@ mod tests {
     /// positions, and its designator and name are drawn.
     #[test]
     fn every_generated_symbol_kind_paints() -> sparksmith_core::Result<()> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         use sparksmith_core::functions::{Direction, TerminalFunctions};
         use sparksmith_core::library::symbol_style::{self, SymbolConventions, SymbolKind};
         use sparksmith_core::library::{ComponentDefinition, Library, Terminal, TerminalClass};

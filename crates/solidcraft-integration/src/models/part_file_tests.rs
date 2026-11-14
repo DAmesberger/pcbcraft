@@ -190,6 +190,7 @@ fn the_wroom3_marking_planes_are_the_module_anchors() -> Fallible {
 /// the same body count; equal union bounds; equal materials.
 #[test]
 fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let package = wroom3_package();
     let mut generated = Native::new("generated")?;
     let def = models::build_definition(&mut generated, "pkgT", &package)?;
@@ -265,6 +266,7 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
 /// definition keeps live, prefixed parameters.
 #[test]
 fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut values = PartValues::new();
     values.insert("can_height".into(), PartValue::Nm(2_000_000));
     let part = evaluate(bytes(), &values)?;

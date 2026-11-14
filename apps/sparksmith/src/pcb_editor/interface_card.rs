@@ -942,11 +942,11 @@ impl PcbEditor {
         let repaint = ctx.clone();
         if std::thread::Builder::new()
             .name("sparksmith-interface-picker".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let picked = pollster::block_on(future).map(|f| f.path().to_path_buf());
                 let _ = sender.send(picked);
                 repaint.request_repaint();
-            })
+            }))
             .is_ok()
         {
             self.interface.picking = Some((pick, receiver));
@@ -994,8 +994,8 @@ impl PcbEditor {
             tier: Some(*tier),
             path: design
                 .filter(|d| d.exists())
-                .map(|d| d.to_string_lossy().into_owned()),
-            assembly_path: linked_design.map(|e| e.to_string_lossy().into_owned()),
+                .map(|d| d.to_string_lossy().into_owned().into()),
+            assembly_path: linked_design.map(|e| e.to_string_lossy().into_owned().into()),
         };
         let params = PublishPreviewParams {
             assembly_path: params.assembly_path.filter(|_| params.path.is_some()),
@@ -1015,10 +1015,12 @@ impl PcbEditor {
         let params = PreviewParams {
             path: resolved(file, &link.assembly_hint)
                 .to_string_lossy()
-                .into_owned(),
+                .into_owned()
+                .into(),
             design: resolved(file, &link.design_hint)
                 .to_string_lossy()
-                .into_owned(),
+                .into_owned()
+                .into(),
         };
         let running = interface_host::start(
             ctx,
@@ -1045,8 +1047,8 @@ impl PcbEditor {
             return;
         };
         let params = UpdateParams {
-            path: path.to_string_lossy().into_owned(),
-            design: design.to_string_lossy().into_owned(),
+            path: path.to_string_lossy().into_owned().into(),
+            design: design.to_string_lossy().into_owned().into(),
             expect_hash: None,
             resolve: Vec::new(),
             expected_revision: engine.revision(),
@@ -1529,7 +1531,7 @@ impl PcbEditor {
                                     *publishing = true;
                                     review.refusal = None;
                                     start = Some(Job::Publish(PublishParams {
-                                        path: path.to_string_lossy().into_owned(),
+                                        path: path.to_string_lossy().into_owned().into(),
                                         tier: *tier,
                                         expected_revision: engine.revision(),
                                     }));
@@ -1604,10 +1606,12 @@ impl PcbEditor {
                             start = Some(Job::AssemblyUpdate(UpdateParams {
                                 path: resolved(file, &link.assembly_hint)
                                     .to_string_lossy()
-                                    .into_owned(),
+                                    .into_owned()
+                                    .into(),
                                 design: resolved(file, &link.design_hint)
                                     .to_string_lossy()
-                                    .into_owned(),
+                                    .into_owned()
+                                    .into(),
                                 expect_hash: Some(p.expect_hash.to_string()),
                                 resolve,
                                 expected_revision: engine.revision(),

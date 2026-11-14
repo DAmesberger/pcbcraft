@@ -207,7 +207,7 @@ pub enum AssemblyCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(AssemblyCommand {
+declare_entries!(AssemblyCommand in model3d {
     RecordLink "assembly.record_link" Edit "Link a linked design",
     RecordUpdate "assembly.record_update" Edit "Update from the linked design",
     RecordReference "assembly.record_reference" Edit "Follow assembly geometry",
@@ -2089,8 +2089,8 @@ pub fn guard_edits(
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct FollowParams {
-    pub path: String,
-    pub design: String,
+    pub path: crate::permission::FilePath,
+    pub design: crate::permission::FilePath,
     #[serde(default)]
     pub body: Option<String>,
     #[serde(default)]
@@ -2110,8 +2110,8 @@ pub struct FollowParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewParams {
-    pub path: String,
-    pub design: String,
+    pub path: crate::permission::FilePath,
+    pub design: crate::permission::FilePath,
 }
 
 // `assembly.update`: link the linked design at `path` when none is linked;
@@ -2121,8 +2121,8 @@ pub struct PreviewParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateParams {
-    pub path: String,
-    pub design: String,
+    pub path: crate::permission::FilePath,
+    pub design: crate::permission::FilePath,
     #[serde(default)]
     pub expect_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

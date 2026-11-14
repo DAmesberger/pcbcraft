@@ -17,10 +17,10 @@ fn names(family: &str) -> Vec<&'static str> {
 }
 
 #[test]
-fn the_catalog_has_its_265_entries() {
-    assert_eq!(names("command").len(), Request::CLASSES.len());
-    assert_eq!(names("operation").len(), Operation::classes().count());
-    assert_eq!(names("query").len(), Query::CLASSES.len());
+fn the_catalog_has_its_264_entries() {
+    assert_eq!(names("command").len(), Request::ENTRIES.len());
+    assert_eq!(names("operation").len(), Operation::entries().count());
+    assert_eq!(names("query").len(), Query::ENTRIES.len());
     // The three tables above keep the per-family counts honest; this total
     // changes with every new request, operation or query. 262 after the fab
     // profile options; then fill.set_pad_override, component.place_board_only
@@ -62,19 +62,38 @@ fn every_entry_has_a_one_line_summary_within_budget() {
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
 
+/// Every entry is declared beside its enum, in a declared module, and
+/// what its declaration says reaches its metadata.
 #[test]
-fn the_metadata_lists_name_catalog_entries() {
-    let entry = |name: &str| metadata::entries().iter().find(|e| e.name == name);
-    for name in metadata::LONG
+fn every_entry_is_declared_in_a_module() {
+    let modules: std::collections::BTreeSet<&str> = sparksmith_core::permission::MODULES
         .iter()
-        .chain(metadata::LINKED)
-        .chain(metadata::REVIEWED)
-    {
-        assert!(entry(name).is_some(), "{name} is not a catalog entry");
+        .map(|m| m.id)
+        .collect();
+    for entry in metadata::entries() {
+        assert!(
+            modules.contains(entry.module),
+            "{}: {}",
+            entry.name,
+            entry.module
+        );
     }
-    for name in metadata::OUTSIDE_DOCUMENT {
-        assert_eq!(entry(name).map(|e| e.family), Some("command"), "{name}");
-    }
+    let entry = |name: &str| metadata::entries().iter().find(|e| e.name == name);
+    let refill = entry("fill.refill");
+    assert_eq!(refill.map(|e| (e.module, e.long)), Some(("layout", true)));
+    let favourite = entry("library.favourite");
+    assert!(favourite.is_some_and(|e| {
+        e.reach
+            .contains(sparksmith_core::permission::Reach::Settings)
+    }));
+    let open = entry("project.open");
+    assert!(open.is_some_and(|e| e.module == "files"
+        && e.reach.contains(sparksmith_core::permission::Reach::Files)
+        && e.effect == sparksmith_core::permission::Effect::World));
+    let via = entry("layout.add_via");
+    assert!(via.is_some_and(
+        |e| e.reach.is_empty() && e.effect == sparksmith_core::permission::Effect::Revision
+    ));
 }
 
 #[test]
@@ -84,13 +103,23 @@ fn kind_and_person_follow_the_class_and_paths() {
             (Class::Never, _) => None,
             (Class::Ask, _) | (_, true) => Some(Kind::Action),
             (Class::Read, false) => Some(Kind::Query),
-            (Class::Edit, false) => Some(Kind::Operation),
+            (Class::Show | Class::Edit, false) => Some(Kind::Operation),
         };
         assert_eq!(entry.kind, expected, "{}", entry.name);
         if entry.kind == Some(Kind::Action) {
             assert_eq!(entry.person, Some(Person::Approval), "{}", entry.name);
         }
-        if metadata::REVIEWED.contains(&entry.name.as_str()) {
+        let reviewed = entry.kind != Some(Kind::Action)
+            && entry.class != Class::Never
+            && sparksmith_core::permission::find(
+                Request::ENTRIES
+                    .iter()
+                    .chain(Operation::entries())
+                    .chain(Query::ENTRIES),
+                &entry.name,
+            )
+            .is_some_and(|d| d.person == Person::Review);
+        if reviewed {
             assert_eq!(entry.person, Some(Person::Review), "{}", entry.name);
         }
         if entry.family == "query" {
@@ -113,7 +142,7 @@ fn kind_and_person_follow_the_class_and_paths() {
 #[test]
 fn annotations_follow_the_class() {
     for entry in metadata::entries() {
-        let outside = entry.takes_path || metadata::OUTSIDE_DOCUMENT.contains(&entry.name.as_str());
+        let outside = entry.takes_path || !entry.reach.is_empty();
         let expected = match entry.class {
             Class::Read => Some(Annotations {
                 read_only: true,
@@ -121,7 +150,7 @@ fn annotations_follow_the_class() {
                 idempotent: true,
                 open_world: outside,
             }),
-            Class::Edit => Some(Annotations {
+            Class::Show | Class::Edit => Some(Annotations {
                 read_only: false,
                 destructive: Some(false),
                 idempotent: false,
@@ -185,6 +214,7 @@ fn the_tools_carry_the_catalog_titles_and_annotations() -> Fallible<()> {
 fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
     let mut server = crate::mcp::Server::new(
         Session::new(showcase(
+            sparksmith_core::library::standards::Context::fixture()?,
             &sparksmith_core::StackupPresets::fixture()?,
             sparksmith_core::rules::fixtures::prototype()?,
         )?),
@@ -201,6 +231,7 @@ fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
             .map_or(0, str::len)
     };
     let revision = showcase(
+        sparksmith_core::library::standards::Context::fixture()?,
         &sparksmith_core::StackupPresets::fixture()?,
         sparksmith_core::rules::fixtures::prototype()?,
     )?

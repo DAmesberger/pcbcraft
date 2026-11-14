@@ -14,14 +14,6 @@ pub mod session;
 pub use gate::{Caller, Decision, Mode, Policy, Question, Refusal};
 pub use session::{Request, Session, part_files};
 
-/// Load the shipped material library (`materials/` of the shipped library)
-/// once for this process: every 3D build and export reads it. A failure
-/// is kept and returned, naming the file, by the first build that needs
-/// the data, so requests without 3D still run.
-pub fn load_materials() {
-    let _ = sparksmith_solidcraft::looks::ensure(sparksmith_io::materials::load_shipped);
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error(transparent)]

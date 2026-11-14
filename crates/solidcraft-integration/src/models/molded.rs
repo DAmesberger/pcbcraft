@@ -407,6 +407,7 @@ mod tests {
 
     #[test]
     fn every_lead_kind_builds_disjoint_bodies_on_its_lead_points() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for lead in ALL {
             let pkg = package(form(lead));
             let points = pkg.form.lead_points();
@@ -455,6 +456,7 @@ mod tests {
 
     #[test]
     fn the_band_marks_terminal_one_in_the_core_s_band_area() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for lead in ALL {
             let f = form(lead);
             let area = f
@@ -486,6 +488,7 @@ mod tests {
 
     #[test]
     fn a_melf_is_glass_between_tin_caps_and_the_moulded_bodies_are_epoxy() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let mut native = Native::new("models")?;
         let def = build_definition(&mut native, "pkgt", &package(form(MoldedLead::Melf)))?;
         let material = |role| {
@@ -511,6 +514,7 @@ mod tests {
 
     #[test]
     fn the_body_is_rounded_by_a_named_radius() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let pkg = package(form(MoldedLead::JLead));
         let mut native = Native::new("models")?;
         build_definition(&mut native, "pkgt", &pkg)?;

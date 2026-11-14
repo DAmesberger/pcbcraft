@@ -500,8 +500,8 @@ fn params(emitter: Emitter, path: Option<String>, template_file: Option<String>)
     FirmwareParams {
         instance: 4,
         emitter,
-        path,
-        template_file,
+        path: path.map(Into::into),
+        template_file: template_file.map(Into::into),
     }
 }
 

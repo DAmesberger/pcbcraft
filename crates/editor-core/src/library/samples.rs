@@ -2094,6 +2094,7 @@ mod tests {
     /// resistors resistor symbols and its ICs and header boxes.
     #[test]
     fn showcase_instances_draw_their_kinds_symbols() -> Result<()> {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         let engine = Engine::showcase()?;
         let project = engine.project();
         let expect = [

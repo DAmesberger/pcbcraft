@@ -178,6 +178,7 @@ fn track_outlines_are_stadiums_with_round_caps() {
 
 #[test]
 fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = fixture()?;
     let (r1, r2) = instances(&project)?;
     let model = build(&project)?;
@@ -271,6 +272,7 @@ fn native_project_has_analytic_board_copper_and_rigid_top_bottom_placements() ->
 /// `memory_tests`.)
 #[test]
 fn geometry_holds_no_evaluated_body_once_its_model_is_gone() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = fixture()?;
     let model = build(&project)?;
     let world = std::sync::Arc::downgrade(
@@ -296,6 +298,7 @@ fn geometry_holds_no_evaluated_body_once_its_model_is_gone() -> Result<()> {
 
 #[test]
 fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = fixture()?;
     for track in &mut project.tracks {
         track.start = [5.0, 25.0];
@@ -325,6 +328,7 @@ fn diagonal_traces_have_round_caps_on_both_copper_layers() -> Result<()> {
 
 #[test]
 fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = fixture()?;
     let (r1, r2) = instances(&project)?;
     let original = build(&project)?;
@@ -410,6 +414,7 @@ fn native_reopen_retains_sources_and_parameter_driven_board_parts_and_copper() -
 
 #[test]
 fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut package = Engine::demo()
         .map_err(|error| Error::Verification(error.to_string()))?
         .project()
@@ -464,6 +469,7 @@ fn authoring_preview_uses_package_dimensions_and_model_offsets() -> Result<()> {
 /// while they keep their R designators.
 #[test]
 fn placed_body_follows_the_package_body_not_the_designator() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = fixture()?;
     let (r1, _) = instances(&project)?;
     for instance in &mut project.instances {
@@ -736,6 +742,7 @@ fn first_hit(model: &NativeModel, at: [f64; 2], down: bool) -> Option<&Geometry>
 
 #[test]
 fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let model = build(&fixture()?)?;
     looks_match_the_native_file(&model)?;
     for geometry in &model.geometry {
@@ -793,6 +800,7 @@ fn bodies_carry_kinds_and_the_looks_stored_in_the_native_file() -> Result<()> {
 
 #[test]
 fn exposed_pads_stand_above_the_mask_and_tracks_are_capped() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = fixture()?;
     let model = build(&project)?;
     let mask_top = top_z(&model, BodyKind::MaskTop)?;
@@ -886,6 +894,7 @@ fn no_cap_over_a_pad(model: &NativeModel, caps: &[&Geometry]) {
 
 #[test]
 fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = fixture()?;
     let (r1, _) = instances(&project)?;
     let net = project.tracks[0].net;
@@ -956,6 +965,7 @@ fn mask_caps_stop_at_mask_openings_and_exposed_track_copper_is_plated() -> Resul
 
 #[test]
 fn native_bodies_are_disjoint_except_where_copper_joins_copper() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = fixture()?;
     let (r1, _) = instances(&project)?;
     let pad = layout::pads(&project)
@@ -1057,6 +1067,7 @@ fn every_footprint_pad_is_enumerated_and_unconnected_ones_have_no_net() -> Resul
 
 #[test]
 fn chip_terminations_wrap_the_ends_and_solder_wets_the_lands_on_both_sides() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     // The demo's centred chips get a fillet at every land; the fixture's
     // offset bodies leave one end hanging off its land, which gets none.
     let demo = build(&envelope_demo()?)?;
@@ -1071,6 +1082,7 @@ fn chip_terminations_wrap_the_ends_and_solder_wets_the_lands_on_both_sides() -> 
 /// on its land and against the end face of a real termination body.
 #[test]
 fn generated_chips_get_solder_fillets_against_their_terminations() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let demo = build(
         Engine::demo()
             .map_err(|error| Error::Verification(error.to_string()))?
@@ -1113,6 +1125,7 @@ fn generated_chips_get_solder_fillets_against_their_terminations() -> Result<()>
 /// solder cone round every pin on the far side, centred on the pin's land.
 #[test]
 fn generated_feet_and_header_pins_get_solder_joints() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let model = build(&project)?;
     let part = |designator: &str| {
@@ -1275,6 +1288,7 @@ fn check_chip_parts(model: &NativeModel) -> Result<()> {
 /// they are for the default fabrication.
 #[test]
 fn fabrication_restyles_display_layers_and_leaves_the_native_model_alone() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::{MaskColour, MaskFinish, PadFinish};
     let plain = build(&fixture()?)?;
     let mut project = fixture()?;
@@ -1443,6 +1457,7 @@ fn kind(model: &NativeModel, kind: BodyKind) -> Vec<&Geometry> {
 
 #[test]
 fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = shaped()?;
     let model = build(&project)?;
     let substrate = kind(&model, BodyKind::Substrate);
@@ -1555,6 +1570,7 @@ fn every_pad_shape_is_exact_native_copper_in_its_placed_frame() -> Result<()> {
 
 #[test]
 fn mask_openings_and_finish_follow_the_shapes_and_tented_lands_stay_covered() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = shaped()?;
     let model = build(&project)?;
     let mask = |layer: Layer| {
@@ -1620,6 +1636,7 @@ fn mask_openings_and_finish_follow_the_shapes_and_tented_lands_stay_covered() ->
 
 #[test]
 fn shaped_copper_survives_reopening_and_follows_the_board_thickness() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = shaped()?;
     let (r1, _) = instances(&project)?;
     let original = build(&project)?;
@@ -1652,6 +1669,7 @@ fn shaped_copper_survives_reopening_and_follows_the_board_thickness() -> Result<
 
 #[test]
 fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = envelope_demo()?;
     let package = &mut project.library.packages[0].definition;
     set_body(package, None);
@@ -1712,6 +1730,7 @@ fn an_envelope_follows_its_turned_placement_and_datum_like_its_2d_outline() -> R
 #[test]
 fn a_saved_board_reopens_with_every_instance_on_its_one_shared_generated_definition() -> Result<()>
 {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::library::GeneratedMaterials;
     // The demo's chip package with a generated model: two instances, one
     // on each side, both occurrences of one definition.
@@ -1870,6 +1889,7 @@ pub(super) fn via_board(count: usize) -> Result<Project> {
 /// reopening it finds each via's copper again.
 #[test]
 fn many_vias_are_placements_of_one_definition_and_survive_reopening() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = via_board(600)?;
     // A second via size gets a definition of its own.
     if let Some(via) = project.vias.last_mut() {
@@ -1960,6 +1980,7 @@ fn many_vias_are_placements_of_one_definition_and_survive_reopening() -> Result<
 /// one never cancelled builds as `build` does.
 #[test]
 fn a_cancelled_build_stops_and_an_uncancelled_one_completes() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use std::sync::Arc;
     use std::sync::atomic::AtomicBool;
     let project = Engine::demo()
@@ -2124,6 +2145,7 @@ pub(super) fn library_demo() -> Result<Project> {
 /// lead bound to its terminal, and the model material's full look drawn.
 #[test]
 fn a_library_model_builds_on_the_board_as_one_shared_definition() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = library_demo()?;
     let (r1, r2) = instances(&project)?;
     let built = build(&project)?;
@@ -2245,6 +2267,7 @@ pub(super) fn showcase() -> Result<Project> {
 /// laminate's foil levels.
 #[test]
 fn the_build_makes_the_plans_flat_bodies_and_no_others() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for project in [shaped()?, showcase()?] {
         let plan = plan::of(&project)?;
         assert!(
@@ -2262,6 +2285,7 @@ fn the_build_makes_the_plans_flat_bodies_and_no_others() -> Result<()> {
 /// not built and one built in another shape.
 #[test]
 fn the_parity_check_finds_a_dropped_added_or_reshaped_body() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let model = build(&project)?;
     let plan = plan::of(&project)?;
@@ -2302,6 +2326,7 @@ fn the_parity_check_finds_a_dropped_added_or_reshaped_body() -> Result<()> {
 /// lies in its layer's foil, and a barrel spans the laminate.
 #[test]
 fn plan_bodies_lie_in_their_layers() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for project in [shaped()?, showcase()?] {
         let plan = plan::of(&project)?;
         let stackup = &project.stackup;

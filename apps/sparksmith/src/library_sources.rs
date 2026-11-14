@@ -1016,7 +1016,7 @@ impl LibrarySources {
             let (saver, saves) = mpsc::channel::<(u64, UserSettings)>();
             let path = dirs.settings_path();
             let events = self.sender.clone();
-            std::thread::spawn(move || {
+            std::thread::spawn(sparksmith_core::library::standards::carried(move || {
                 while let Ok(mut save) = saves.recv() {
                     while let Ok(newer) = saves.try_recv() {
                         save = newer;
@@ -1027,7 +1027,7 @@ impl LibrarySources {
                         break;
                     }
                 }
-            });
+            }));
             saver
         });
         self.saves.0 = self.saves.0.wrapping_add(1);
@@ -1100,7 +1100,7 @@ impl LibrarySources {
         let cache = self.dirs.as_ref().map(|d| d.cache.clone());
         let sender = self.sender.clone();
         let repaint = self.repaint.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let mut sources: Vec<SourceView> = settings
                 .iter()
                 .map(|setting| load(setting, cache.as_deref()))
@@ -1110,7 +1110,7 @@ impl LibrarySources {
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
             }
-        });
+        }));
     }
 
     /// Take finished background work. Returns whether anything changed.
@@ -1216,7 +1216,7 @@ impl LibrarySources {
         };
         let sender = self.sender.clone();
         let repaint = self.repaint.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let result = folder::read_bundle(
                 &folder,
                 SourceRevision {
@@ -1233,7 +1233,7 @@ impl LibrarySources {
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
             }
-        });
+        }));
     }
 
     /// Bundles read since the last call, in the order they finished.
@@ -1328,7 +1328,7 @@ impl LibrarySources {
         let ticket = self.writes;
         let sender = self.sender.clone();
         let repaint = self.repaint.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let result = folder::write_bundle(&folder, &bundle)
                 .map(|report| report.written.len())
                 .map_err(|e| e.to_string());
@@ -1336,7 +1336,7 @@ impl LibrarySources {
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
             }
-        });
+        }));
         if let Some(promote) = &mut self.promote {
             promote.writing = Some(ticket);
             promote.error = None;
@@ -1451,7 +1451,7 @@ impl LibrarySources {
         let future = dialog.pick_folder();
         let sender = self.sender.clone();
         let repaint = self.repaint.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let picked = match pollster::block_on(future).map(|h| h.path().to_path_buf()) {
                 None => Picked::Cancelled,
                 Some(path) if create => match folder::create_folder(&path, &folder_name(&path)) {
@@ -1467,7 +1467,7 @@ impl LibrarySources {
             if let Some(ctx) = repaint {
                 ctx.request_repaint();
             }
-        });
+        }));
     }
 
     /// Per frame: take background results, keep the promote preview current
@@ -2301,6 +2301,7 @@ mod tests {
     /// inspect report is what the catalog strip summarises.
     #[test]
     fn a_folder_item_opens_as_a_read_only_preview() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("sample");
         let created = folder::create_folder(&path, "Sample Parts")?;

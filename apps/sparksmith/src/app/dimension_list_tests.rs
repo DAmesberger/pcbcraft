@@ -40,6 +40,7 @@ const ORIGIN: &str = "Origin \u{2192} left edge";
 
 #[test]
 fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let engine = esp32()?;
     let project = engine.project();
     let j1 = project
@@ -241,6 +242,7 @@ fn j1s_dimension_rows_edit_delete_and_follow_3d() -> Fallible {
 /// issues badge, not under it.
 #[test]
 fn the_updating_chip_sits_beside_the_issues_badge() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let engine = esp32()?;
     let project = engine.project();
     let u1 = project

@@ -70,6 +70,11 @@ fn run() -> Result<()> {
         return generators::run(rest);
     }
     if let Some((command, rest)) = args.split_first()
+        && command == "surface"
+    {
+        return surface(rest);
+    }
+    if let Some((command, rest)) = args.split_first()
         && command == "kicad-compare"
     {
         return kicad_compare::run(rest);
@@ -87,6 +92,7 @@ fn run() -> Result<()> {
             connectivity::check()?;
             f64_lengths::check()?;
             format_lock::check()?;
+            surface(&["--check".into()])?;
             licences::check()?;
             brand_crates::check()?;
             clean_room::check()?;
@@ -146,10 +152,47 @@ fn run() -> Result<()> {
         _ => Err(
             "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
              | licences --check | brand-crates | clean-room | no-builtin-data | generic-terms | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
-             | format-lock [--update] | kicad-compare [--design PATH]"
+             | format-lock [--update] | surface --check | --update | kicad-compare [--design PATH]"
                 .into(),
         ),
     }
+}
+
+/// `cargo xtask surface --check | --update`: the catalog against the
+/// committed `crates/automation/surface.lock` (per module its version and
+/// digest, per entry its class and parameter digests). A change without the
+/// version it needs fails; `--update` records the lock once the versions
+/// are right. The catalog is built from the automation crate's types, so
+/// the check is that crate's test `session::surface::tests::the_lock_holds`.
+fn surface(args: &[String]) -> Result<()> {
+    let update = match args {
+        [flag] if flag == "--check" => false,
+        [flag] if flag == "--update" => true,
+        _ => return Err("usage: cargo xtask surface --check | --update".into()),
+    };
+    let mut command = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()));
+    command
+        .args([
+            "test",
+            "--locked",
+            "--profile",
+            "ci",
+            "-p",
+            "sparksmith-automation",
+            "--lib",
+            "session::surface::tests::the_lock_holds",
+            "--",
+            "--exact",
+        ])
+        .current_dir(root()?);
+    if update {
+        command.env("SPARKSMITH_SURFACE_UPDATE", "1");
+    }
+    let status = command.status()?;
+    if !status.success() {
+        return Err(format!("surface {} failed: {status}", args.join(" ")).into());
+    }
+    Ok(())
 }
 
 /// Execute a crate's wasm proof tests in Node, separately from the

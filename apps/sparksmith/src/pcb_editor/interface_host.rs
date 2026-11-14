@@ -93,12 +93,12 @@ pub(super) fn start(
     let repaint = ctx.clone();
     std::thread::Builder::new()
         .name("sparksmith-interface".into())
-        .spawn(move || {
+        .spawn(sparksmith_core::library::standards::carried(move || {
             let mut session = Session::lending();
             let done = session.lend(&mut fork, project.as_deref(), |s| run(s, job));
             let _ = sender.send(done);
             repaint.request_repaint();
-        })
+        }))
         .ok()?;
     Some(Running { receiver })
 }

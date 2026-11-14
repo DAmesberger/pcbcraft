@@ -23,11 +23,11 @@ use std::path::PathBuf;
 /// What a person reads for an assistant's request: its catalog title
 /// ("Add a via"), never its wire name (`layout.add_via`).
 fn spoken(subject: &'static str) -> &'static str {
-    sparksmith_core::Operation::titles()
-        .chain(sparksmith_core::Query::TITLES)
-        .chain(sparksmith_automation::Request::TITLES)
-        .find(|(name, _)| *name == subject)
-        .map_or("a change", |(_, title)| *title)
+    sparksmith_core::Operation::entries()
+        .chain(sparksmith_core::Query::ENTRIES)
+        .chain(sparksmith_automation::Request::ENTRIES)
+        .find(|entry| entry.name == subject)
+        .map_or("a change", |entry| entry.title)
 }
 
 /// Requests answered per frame, so a flood cannot starve drawing.

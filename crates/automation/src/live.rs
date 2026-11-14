@@ -110,9 +110,7 @@ impl Protocol for LiveProtocol {
             serde_json::from_value::<Request>(request).ok()
         });
         let class = typed.as_ref().map(Request::effective_class);
-        let names_path = typed
-            .as_ref()
-            .is_some_and(|typed| !typed.paths().is_empty());
+        let names_path = typed.as_ref().is_some_and(|typed| !typed.names_no_path());
         let effect = match (method, class) {
             (REVISION, _) | (_, Some(Class::Read)) => Effect::ReadsOnly,
             (_, Some(Class::Ask)) if names_path => Effect::WritesFile,

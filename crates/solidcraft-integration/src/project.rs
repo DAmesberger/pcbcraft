@@ -826,9 +826,11 @@ fn on_threads<T: Sync>(items: &[T], work: impl Fn(&T) + Sync) {
     {
         let threads = std::thread::available_parallelism().map_or(1, usize::from);
         let next = std::sync::atomic::AtomicUsize::new(0);
+        let context = sparksmith_core::library::standards::Context::current().ok();
         std::thread::scope(|scope| {
             for _ in 0..threads.min(items.len()) {
                 scope.spawn(|| {
+                    let _context = context.as_ref().map(|c| c.enter());
                     while let Some(item) =
                         items.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
                     {
@@ -1687,7 +1689,7 @@ fn build_meshed(
     };
     #[cfg(not(target_arch = "wasm32"))]
     let (layers, flat) = std::thread::scope(|scope| {
-        let layers = scope.spawn(|| drawn.layers(&mut memo));
+        let layers = scope.spawn(crate::looks::carried(|| drawn.layers(&mut memo)));
         let flat = meshed(&mut meshes);
         let layers = layers.join().unwrap_or_else(|_| {
             Err(Error::Verification(
@@ -2002,7 +2004,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
     };
     #[cfg(not(target_arch = "wasm32"))]
     let (model, layers) = std::thread::scope(|scope| {
-        let layers = scope.spawn(|| drawn.layers(&mut memo));
+        let layers = scope.spawn(crate::looks::carried(|| drawn.layers(&mut memo)));
         let model = native(b);
         let layers = layers.join().unwrap_or_else(|_| {
             Err(Error::Verification(
@@ -2172,9 +2174,9 @@ impl Drawn<'_> {
         // nothing of each other: each is drawn on a core of its own.
         #[cfg(not(target_arch = "wasm32"))]
         let (layers, films, open, legend) = std::thread::scope(|scope| {
-            let films = scope.spawn(films);
-            let open = scope.spawn(open);
-            let legend = scope.spawn(legend);
+            let films = scope.spawn(crate::looks::carried(films));
+            let open = scope.spawn(crate::looks::carried(open));
+            let legend = scope.spawn(crate::looks::carried(legend));
             let layers = appearance::board_with(
                 display, self.lands, self.paths, self.marks, self.parts, memo,
             );

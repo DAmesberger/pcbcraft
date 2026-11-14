@@ -138,11 +138,14 @@ fn write(path: &str, name: &str, rows: &[StarterRow]) -> Result<Value> {
         return Err("output exists; choose a new folder".into());
     }
     let (project, roots) = project(rows)?;
-    let mut session = Session::new(sparksmith_io::new_project::open(EditorFile {
-        version: FILE_VERSION,
-        project,
-        drafts: Default::default(),
-    })?);
+    let mut session = Session::new(sparksmith_io::new_project::open(
+        EditorFile {
+            version: FILE_VERSION,
+            project,
+            drafts: Default::default(),
+        },
+        &super::context()?,
+    )?);
     let created = execute(
         &mut session,
         json!({"command": "library.source.create", "params": {"path": path, "name": name}}),
@@ -256,6 +259,7 @@ mod tests {
     /// requests and refuses an existing path.
     #[test]
     fn the_writer_publishes_the_rows_to_a_new_folder() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let rows = starter_rows()?;
         assert!(write(&std::env::temp_dir().to_string_lossy(), DEFAULT_NAME, &rows).is_err());
         let temp = TempPath::new("write")?;

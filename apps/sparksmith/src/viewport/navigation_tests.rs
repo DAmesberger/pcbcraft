@@ -158,6 +158,7 @@ fn moved(a: &Camera, b: &Camera) -> bool {
 /// A pinch zooms toward the point under the pointer, which stays there.
 #[test]
 fn a_pinch_zooms_toward_the_point_under_the_pointer() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let rect = nav.rect()?;
     let at = rect.min + vec2(520.0, 240.0);
@@ -187,6 +188,7 @@ fn a_pinch_zooms_toward_the_point_under_the_pointer() -> Result<()> {
 /// with two fingers orbits it.
 #[test]
 fn two_fingers_pan_and_shift_two_fingers_orbit() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let at = nav.rect()?.center();
     nav.frame(vec![Event::PointerMoved(at)], Modifiers::NONE);
@@ -224,6 +226,7 @@ fn two_fingers_pan_and_shift_two_fingers_orbit() -> Result<()> {
 /// A mouse wheel notch zooms toward the pointer, without panning or turning.
 #[test]
 fn a_mouse_wheel_zooms_the_3d_view() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let at = nav.rect()?.min + vec2(300.0, 350.0);
     let anchor = nav
@@ -253,6 +256,7 @@ fn a_mouse_wheel_zooms_the_3d_view() -> Result<()> {
 /// leaves the view alone.
 #[test]
 fn right_drag_orbits_and_a_right_click_does_not() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let at = nav.rect()?.center();
     let before = nav.viewport.camera;
@@ -282,6 +286,7 @@ fn right_drag_orbits_and_a_right_click_does_not() -> Result<()> {
 /// Middle-drag pans; Shift+middle-drag orbits.
 #[test]
 fn middle_drag_pans_and_shift_middle_orbits() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let at = nav.rect()?.center();
     let before = nav.viewport.camera;
@@ -310,6 +315,7 @@ fn middle_drag_pans_and_shift_middle_orbits() -> Result<()> {
 /// gestures after a two-finger swipe or a pinch.
 #[test]
 fn the_hint_follows_the_device_in_hand() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use crate::navigation::{Device, hint_3d};
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let at = nav.rect()?.center();
@@ -342,6 +348,7 @@ fn the_hint_follows_the_device_in_hand() -> Result<()> {
 /// part it does not.
 #[test]
 fn command_drag_on_empty_space_orbits_and_clicks_still_select() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let (item, on_part) = nav.package()?;
     assert_eq!(
@@ -390,6 +397,7 @@ fn command_drag_on_empty_space_orbits_and_clicks_still_select() -> Result<()> {
 /// Space+drag pans, from a part too, and selects nothing.
 #[test]
 fn space_drag_pans() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let (_, on_part) = nav.package()?;
     let space = |pressed| Event::Key {
@@ -423,6 +431,7 @@ fn space_drag_pans() -> Result<()> {
 /// moves the camera: the pan starts only once the press is a drag.
 #[test]
 fn a_click_with_space_held_selects_and_does_not_pan() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let (item, on_part) = nav.package()?;
     let space = Event::Key {
@@ -459,6 +468,7 @@ fn a_click_with_space_held_selects_and_does_not_pan() -> Result<()> {
 /// drags do not navigate there, while the trackpad and right-drag do.
 #[test]
 fn the_placement_view_leaves_the_left_button_to_the_triad() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::PLACEMENT)?;
     let empty = nav.empty()?;
     let before = nav.viewport.camera;
@@ -490,6 +500,7 @@ fn the_placement_view_leaves_the_left_button_to_the_triad() -> Result<()> {
 /// The arrows turn the view 15° (Shift: 90°); Cmd/Ctrl+arrows pan it.
 #[test]
 fn arrow_keys_turn_and_command_arrows_pan() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let at = nav.rect()?.center();
     nav.frame(vec![Event::PointerMoved(at)], Modifiers::NONE);
@@ -529,6 +540,7 @@ fn arrow_keys_turn_and_command_arrows_pan() -> Result<()> {
 /// A middle double-click fits the view after it was panned away.
 #[test]
 fn a_middle_double_click_fits() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let fitted = nav.viewport.camera;
     let at = nav.rect()?.center();
@@ -555,6 +567,7 @@ fn a_middle_double_click_fits() -> Result<()> {
 /// The fixtures above find a part, the board and empty space.
 #[test]
 fn the_fixture_has_a_part_and_empty_space() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let nav = Nav::new(NavCaps::BOARD)?;
     let model = nav.viewport.model.as_ref().ok_or("no model")?;
     assert!(model.geometry.iter().any(|g| g.kind == BodyKind::Substrate));
@@ -568,6 +581,7 @@ fn the_fixture_has_a_part_and_empty_space() -> Result<()> {
 /// selects what lies under the cube.
 #[test]
 fn the_cube_turns_the_view_to_a_face_and_drags_orbit() -> Result<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_solidcraft::viewport::StandardView;
     let mut nav = Nav::new(NavCaps::BOARD)?;
     let rect = nav.rect()?;

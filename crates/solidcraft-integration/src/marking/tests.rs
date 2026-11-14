@@ -278,6 +278,7 @@ fn a_changed_value_refills_only_its_own_decal() -> TestResult {
 
 #[test]
 fn finishes_draw_with_their_cited_materials() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let laser = finish_surface(Finish::LaserEtch)?;
     let ink = finish_surface(Finish::InkWhite)?;
     let mould = look::surface(&look::definition(MaterialId::EpoxyMould)?)?;
@@ -457,6 +458,7 @@ fn demo() -> std::result::Result<
 
 #[test]
 fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, model) = demo()?;
     let mut layouts = BTreeMap::new();
     for placement in &project.placements {
@@ -543,6 +545,7 @@ fn board_decals_sit_on_each_marked_instance_s_top_face() -> TestResult {
 
 #[test]
 fn unmarked_projects_read_no_layouts() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, _) = demo()?;
     assert!(!board::any_marked(&project));
     assert!(board::instance_layouts(&project).layouts.is_empty());
@@ -551,6 +554,7 @@ fn unmarked_projects_read_no_layouts() -> TestResult {
 
 #[test]
 fn a_package_preview_gets_its_decal_on_top() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (project, model) = demo()?;
     let placement = project.placements.first().ok_or("no placement")?;
     let instance = project.instance(placement.instance).ok_or("no instance")?;
@@ -583,6 +587,7 @@ fn a_package_preview_gets_its_decal_on_top() -> TestResult {
 
 #[test]
 fn bottom_faces_are_marked_from_below() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use crate::geom::Mesh;
     // A unit cube body from z = −1.6 down to −2.6 (a part under the board).
     let p = |x: f64, y: f64, z: f64| Vec3::new(x, y, z);
@@ -628,6 +633,7 @@ fn bottom_faces_are_marked_from_below() -> TestResult {
 /// silently dropped.
 #[test]
 fn instance_layouts_read_the_project_in_place() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::library::bundle::{AssetBytes, PackedAsset, asset_hash};
     use sparksmith_core::library::marking::{Align, MarkingItem, MarkingSpec, Template};
     let (mut project, _) = demo()?;
@@ -689,6 +695,7 @@ fn instance_layouts_read_the_project_in_place() -> TestResult {
 /// packed asset; the same layout without the asset draws nothing.
 #[test]
 fn board_artwork_is_drawn_from_the_project_s_packed_svg() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::library::bundle::{AssetBytes, asset_hash};
     use sparksmith_core::library::marking::{
         ARTWORK_MEDIA_TYPE, Anchor, AreaChoice, InstanceMarking, MarkingItem, MarkingSpec,

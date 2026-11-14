@@ -17,7 +17,7 @@ const MAX_PATH: usize = 4095;
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ModelFileParams {
-    pub path: String,
+    pub path: sparksmith_core::permission::FilePath,
     pub format: ModelFormat,
     /// The frame to report bounds in; the format's default frame (glTF:
     /// metres, Y up; STEP and `.solidcraft`: as stated, Z up) when absent.

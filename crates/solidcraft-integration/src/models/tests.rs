@@ -230,6 +230,7 @@ pub(super) fn disjoint_within(
 /// clear lens, full height, on its lead points.
 #[test]
 fn a_chip_led_is_a_substrate_and_terminations_under_a_clear_lens() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let form = PackageForm::Chip(Box::new(ChipForm {
         kind: ChipKind::Led,
         length_nm: nm(1.6),
@@ -268,6 +269,7 @@ fn a_chip_led_is_a_substrate_and_terminations_under_a_clear_lens() -> Result<()>
 /// lands and four stakes the shell; bodies are disjoint.
 #[test]
 fn a_usb_c_receptacle_matches_the_drawing_outline() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let form = PackageForm::UsbC(Box::new(sparksmith_core::library::UsbCForm::typical()));
     let (mut native, definition) = built(form, 13)?;
     let (lo, hi) = bounds(&native, "pkgt shell")?;
@@ -318,6 +320,7 @@ fn a_usb_c_receptacle_matches_the_drawing_outline() -> Result<()> {
 
 #[test]
 fn a_chip_resistor_is_alumina_with_an_overcoat_between_tin_terminations() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut native, definition) = built(chip(), 2)?;
     let role = |r: BodyRole| definition.bodies.iter().filter(move |b| b.role == r);
     assert_eq!(role(BodyRole::Body).count(), 1);
@@ -354,6 +357,7 @@ fn a_chip_resistor_is_alumina_with_an_overcoat_between_tin_terminations() -> Res
 
 #[test]
 fn soic_leads_are_numbered_counter_clockwise_and_stand_on_the_seating_plane() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut native, definition) = built(soic8(), 8)?;
     assert_eq!(definition.bodies.len(), 9);
     let leads = leads(&definition);
@@ -398,6 +402,7 @@ fn soic_leads_are_numbered_counter_clockwise_and_stand_on_the_seating_plane() ->
 
 #[test]
 fn qfp_leads_run_round_all_four_sides() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (native, definition) = built(tqfp32(), 32)?;
     let leads = leads(&definition);
     assert_eq!(leads.len(), 32);
@@ -426,6 +431,7 @@ fn qfp_leads_run_round_all_four_sides() -> Result<()> {
 
 #[test]
 fn qfn_terminals_and_exposed_pad_are_flush_with_the_underside() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut native, definition) = built(qfn16(), 17)?;
     let leads = leads(&definition);
     assert_eq!(leads.len(), 17);
@@ -462,6 +468,7 @@ fn leads_count(definition: &ModelDefinition) -> usize {
 /// `k`'s body stands over `PackageForm::lead_points()[k]` in every family.
 #[test]
 fn every_lead_body_stands_over_the_core_s_lead_point() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for (form, terminals) in [
         (chip(), 2),
         (soic8(), 8),
@@ -491,6 +498,7 @@ fn every_lead_body_stands_over_the_core_s_lead_point() -> Result<()> {
 
 #[test]
 fn header_pins_are_gold_through_a_pbt_base_numbered_across_rows() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut native, definition) = built(header2x5(), 10)?;
     let leads = leads(&definition);
     assert_eq!(leads.len(), 10);
@@ -520,6 +528,7 @@ fn header_pins_are_gold_through_a_pbt_base_numbered_across_rows() -> Result<()> 
 
 #[test]
 fn role_materials_override_the_family_defaults() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut p = package(header2x5(), 10);
     p.model = PackageModel::Generated {
         family_rev: 1,
@@ -543,6 +552,7 @@ fn role_materials_override_the_family_defaults() -> Result<()> {
 
 #[test]
 fn named_parameters_drive_the_pitch_and_body() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut native, definition) = built(soic8(), 8)?;
     native.change_parameters(
         serde_json::json!({"pkgt_pitch": "1.0 mm", "pkgt_body_height": "1.2 mm"}),
@@ -559,6 +569,7 @@ fn named_parameters_drive_the_pitch_and_body() -> Result<()> {
 
 #[test]
 fn the_terminal_binding_is_never_guessed() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     // Seven terminals for eight leads: no lead claims a terminal.
     let (_, definition) = built(soic8(), 7)?;
     assert!(definition.bodies.iter().all(|b| b.terminal.is_none()));
@@ -619,6 +630,7 @@ fn unbuildable_requests_are_refused() -> Result<()> {
 
 #[test]
 fn metadata_chunks_round_trip_and_bound_their_size() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (mut native, definition) = built(tqfp32(), 32)?;
     record(&mut native, std::slice::from_ref(&definition))?;
     let back = recorded(&native)?;
@@ -651,6 +663,7 @@ fn metadata_chunks_round_trip_and_bound_their_size() -> Result<()> {
 
 #[test]
 fn the_saved_model_reopens_parametric_with_materials_in_plain_solidcraft() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let model = project::preview(&package(soic8(), 8))?;
     let temporary = tempfile::tempdir()?;
     let path = temporary
@@ -682,6 +695,7 @@ fn the_saved_model_reopens_parametric_with_materials_in_plain_solidcraft() -> Re
 
 #[test]
 fn the_preview_draws_each_body_with_its_material_s_product_look() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for (form, terminals) in [
         (chip(), 2),
         (soic8(), 8),
@@ -706,6 +720,7 @@ fn the_preview_draws_each_body_with_its_material_s_product_look() -> Result<()> 
 
 #[test]
 fn the_preview_applies_the_placement() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut p = package(chip(), 2);
     p.placement = crate::test_units::placement([1.0, 2.0, 0.5], [0.0, 0.0, 90.0]);
     let model = project::preview(&p)?;
@@ -758,6 +773,7 @@ fn generated_demo() -> Result<sparksmith_core::Project> {
 
 #[test]
 fn every_instance_shares_one_definition_and_keeps_its_own_identity() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = generated_demo()?;
     let model = project::build(&project)?;
     assert_eq!(model.models.len(), 1, "one definition per package revision");
@@ -811,6 +827,7 @@ fn every_instance_shares_one_definition_and_keeps_its_own_identity() -> Result<(
 
 #[test]
 fn generated_parts_land_where_their_footprints_are() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = generated_demo()?;
     let model = project::build(&project)?;
     for source in model.sources.iter().filter(|s| s.occurrence.is_some()) {
@@ -853,6 +870,7 @@ fn generated_parts_land_where_their_footprints_are() -> Result<()> {
 
 #[test]
 fn every_form_the_core_accepts_is_built() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     // Gull-wing variants near the builders' limits: lead thickness against
     // the body height and the bend room outside the body. The core's form
     // rules are the builders' rules, so a form without range problems
@@ -913,6 +931,7 @@ fn every_form_the_core_accepts_is_built() -> Result<()> {
 /// it names, and the bodies stay disjoint.
 #[test]
 fn generated_bodies_have_rounded_edges_driven_by_named_radii() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     // (form, terminals, body, radius parameter, its radius as built,
     // rounded edge length).
     let soic_top = 2.0 * (4.9 + 3.9);

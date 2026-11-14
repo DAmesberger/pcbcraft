@@ -64,8 +64,6 @@ const USAGE: &str = concat!(
 );
 
 fn main() -> ExitCode {
-    // The shipped material library, once: every 3D build and export reads it.
-    sparksmith_automation::load_materials();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
@@ -96,6 +94,12 @@ fn usage() -> String {
 }
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+
+/// The context `run` entered for this thread: the shipped standards and
+/// materials every engine of this run is handed.
+fn context() -> Result<std::sync::Arc<sparksmith_core::library::standards::Context>> {
+    Ok(sparksmith_core::library::standards::Context::current()?)
+}
 
 fn print(value: &Value) -> Result<()> {
     let mut stdout = io::stdout().lock();
@@ -140,7 +144,7 @@ fn user_session(mut engine: Engine) -> Session {
 
 /// A session, optionally starting from a project file.
 fn open(path: Option<&String>) -> Result<Session> {
-    let mut session = user_session(sparksmith_io::new_project::engine()?);
+    let mut session = user_session(sparksmith_io::new_project::engine(&context()?)?);
     if let Some(path) = path {
         let revision = session.engine().revision();
         execute(
@@ -223,8 +227,11 @@ impl McpOptions {
 fn run() -> Result<()> {
     // Before anything reads or creates the per-user folders.
     sparksmith_io::settings::adopt_former_folders();
-    // The standards every engine draws on, from the shipped library.
-    sparksmith_io::standards::install_shipped()?;
+    // The standards and materials every engine of this run draws on, from
+    // the shipped library: current on this thread for the whole run, and
+    // handed to every engine it makes.
+    let shipped = sparksmith_io::standards::shipped_context()?;
+    let _context = shipped.enter();
     // What a new project starts with (fab profile, stackup, board size),
     // from the shipped library, once.
     sparksmith_io::new_project::shipped()?;
@@ -272,18 +279,22 @@ fn run() -> Result<()> {
             let engine = if command == "showcase" {
                 let choice = rest.get(1).map(String::as_str);
                 session::showcase(
+                    context()?,
                     &sparksmith_io::new_project::shipped()?.presets,
                     sparksmith_io::rule_profiles::for_new_board_from_env(choice)?,
                 )?
             } else {
-                sparksmith_io::new_project::open(sparksmith_core::format::EditorFile {
-                    version: sparksmith_core::format::FILE_VERSION,
-                    project: sparksmith_core::catalog::synthetic::project(
-                        24,
-                        &sparksmith_io::new_project::shipped()?.board,
-                    )?,
-                    drafts: Default::default(),
-                })?
+                sparksmith_io::new_project::open(
+                    sparksmith_core::format::EditorFile {
+                        version: sparksmith_core::format::FILE_VERSION,
+                        project: sparksmith_core::catalog::synthetic::project(
+                            24,
+                            &sparksmith_io::new_project::shipped()?.board,
+                        )?,
+                        drafts: Default::default(),
+                    },
+                    &context()?,
+                )?
             };
             let mut session = Session::new(engine);
             let saved = execute(
@@ -370,14 +381,17 @@ fn sample_library(path: &str, name: &str) -> Result<()> {
     if std::path::Path::new(path).try_exists()? {
         return Err("output exists; choose a new folder".into());
     }
-    let engine = sparksmith_io::new_project::open(sparksmith_core::format::EditorFile {
-        version: sparksmith_core::format::FILE_VERSION,
-        project: sparksmith_core::catalog::synthetic::project_with_parts(
-            24,
-            &sparksmith_io::new_project::shipped()?.board,
-        )?,
-        drafts: Default::default(),
-    })?;
+    let engine = sparksmith_io::new_project::open(
+        sparksmith_core::format::EditorFile {
+            version: sparksmith_core::format::FILE_VERSION,
+            project: sparksmith_core::catalog::synthetic::project_with_parts(
+                24,
+                &sparksmith_io::new_project::shipped()?.board,
+            )?,
+            drafts: Default::default(),
+        },
+        &context()?,
+    )?;
     let mut session = Session::new(engine);
     print(&session::publish_library(&mut session, path, name)?)
 }

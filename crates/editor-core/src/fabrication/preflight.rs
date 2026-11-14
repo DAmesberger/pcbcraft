@@ -44,7 +44,7 @@ pub enum FabricationCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(FabricationCommand {
+declare_entries!(FabricationCommand in checks {
     Waive "fabrication.waive" Ask "Waive a production finding",
     Unwaive "fabrication.unwaive" Edit "Withdraw a waiver",
 });

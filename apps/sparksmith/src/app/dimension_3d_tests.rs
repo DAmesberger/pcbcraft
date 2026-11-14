@@ -224,6 +224,7 @@ fn esp32() -> Fallible<Engine> {
 
 #[test]
 fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let mut engine = esp32()?;
     let project = engine.project();
@@ -437,6 +438,7 @@ fn a_3d_pick_dimensions_j1_to_the_bottom_edge_in_one_undo_step() -> Fallible {
 /// a designer's words. Hover never builds, traces or picks.
 #[test]
 fn overview_picks_land_on_edges_and_read_as_words() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let engine = esp32()?;
     let project = engine.project();
@@ -541,6 +543,7 @@ fn overview_picks_land_on_edges_and_read_as_words() -> Fallible {
 /// is still picked just below J1, off the part. Hover is the pick.
 #[test]
 fn board_edges_are_reached_like_part_edges_and_j1_wins_over_its_flush_edge() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let engine = esp32()?;
     let project = engine.project();
@@ -647,6 +650,7 @@ fn board_edges_are_reached_like_part_edges_and_j1_wins_over_its_flush_edge() -> 
 /// chip clears) and the click is not dropped.
 #[test]
 fn a_3d_click_with_select_selects_the_part() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let mut h = Harness::new(Engine::showcase()?)?;
     h.until_shown()?;
@@ -777,6 +781,7 @@ fn a_3d_click_with_select_selects_the_part() -> Fallible {
 /// right after a jump of the pointer, and moved 2 pt before the release.
 #[test]
 fn a_3d_click_selects_after_a_space_was_typed_into_a_field() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use egui::accesskit::Role;
     let _serial = serial();
     let button = |pos, pressed| egui::Event::PointerButton {
@@ -944,6 +949,7 @@ impl Harness {
 /// Delete removes it, one undo step.
 #[test]
 fn j1s_dimensions_are_drawn_and_edited_in_place_in_3d() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let engine = esp32()?;
     let project = engine.project();

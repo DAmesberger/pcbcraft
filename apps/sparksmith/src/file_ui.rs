@@ -248,7 +248,7 @@ enum Event {
 /// files still open and save, and startup reports that recovery is off.
 fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>) -> Sender<Job> {
     let (sender, jobs) = mpsc::channel();
-    std::thread::spawn(move || {
+    std::thread::spawn(sparksmith_core::library::standards::carried(move || {
         let store = directory.as_ref().map_err(Clone::clone).and_then(|d| {
             RecoveryStore::new(d)
                 .map_err(|e| format!("Recovery unavailable: cannot use {}: {e}", d.display()))
@@ -338,7 +338,7 @@ fn worker(ctx: egui::Context, directory: Outcome<PathBuf>, events: Sender<Event>
             }
             ctx.request_repaint();
         }
-    });
+    }));
     sender
 }
 
@@ -698,10 +698,10 @@ impl FileUi {
             Box::pin(dialog.save_file())
         };
         let events = self.event_sender.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let picked = pollster::block_on(future).map(|handle| handle.path().to_path_buf());
             let _ = events.send(Event::Picked(ticket, kind, picked));
-        });
+        }));
     }
     /// Pick an SVG drawing to import, with the same parented native picker.
     /// The answer (None when cancelled) arrives on the returned channel;
@@ -715,10 +715,10 @@ impl FileUi {
             .add_filter("SVG drawing", &["svg", "SVG"]);
         let future = dialog.pick_file();
         let (sender, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let picked = pollster::block_on(future).map(|handle| handle.path().to_path_buf());
             let _ = sender.send(picked);
-        });
+        }));
         receiver
     }
     fn clear_recovery(&mut self, close: bool) {
@@ -1297,17 +1297,23 @@ fn absolute_path(path: PathBuf) -> Outcome<PathBuf> {
 /// preselected. A missing or broken shipped library is an error naming
 /// the file.
 pub(crate) fn new_project() -> Result<Engine, String> {
+    // The app's context, current on the window's thread for the program's
+    // life, is every engine's.
+    let context =
+        sparksmith_core::library::standards::Context::current().map_err(|e| e.to_string())?;
     let defaults = sparksmith_io::new_project::shipped().map_err(|e| e.to_string())?;
     let Some(profile) = sparksmith_io::rule_profiles::default_id_from_env()
         .ok()
         .flatten()
         .and_then(|id| sparksmith_io::rule_profiles::for_new_board_from_env(Some(&id)).ok())
     else {
-        return Ok(Engine::new(&defaults.board));
+        let mut engine = Engine::new(&defaults.board);
+        engine.set_context(context);
+        return Ok(engine);
     };
     let mut project = sparksmith_core::Project::new(&defaults.board);
     project.rules.profile = Some(profile);
-    Engine::from_file_with(
+    let mut engine = Engine::from_file_with(
         sparksmith_core::format::EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
             project,
@@ -1315,7 +1321,9 @@ pub(crate) fn new_project() -> Result<Engine, String> {
         },
         &defaults.presets.glass_dk,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?;
+    engine.set_context(context);
+    Ok(engine)
 }
 
 fn home_directory() -> PathBuf {

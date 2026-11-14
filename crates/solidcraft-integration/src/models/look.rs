@@ -101,6 +101,7 @@ mod tests {
 
     #[test]
     fn every_material_has_a_valid_look_and_saved_projection() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for id in MaterialId::ALL {
             let def = definition(id)?;
             assert_eq!(def.id, id);
@@ -118,6 +119,7 @@ mod tests {
 
     #[test]
     fn gold_is_yellow_and_tin_is_neutral() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let gold = definition(MaterialId::Gold)?.base_linear;
         let tin = definition(MaterialId::TinMatte)?.base_linear;
         assert!(gold[0] > gold[2] + 0.4);

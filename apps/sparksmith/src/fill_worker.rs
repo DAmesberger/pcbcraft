@@ -57,7 +57,7 @@ impl FillWorker {
         let (outbox, results) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("sparksmith-fills".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let mut cache = FillCache::default();
                 while let Ok(first) = inbox.recv() {
                     // Only the newest stale job matters; refills all run.
@@ -88,7 +88,7 @@ impl FillWorker {
                     }
                     ctx.request_repaint();
                 }
-            });
+            }));
         let (jobs, results) = match spawned {
             Ok(_) => (Some(jobs), Some(results)),
             // Without a thread fills stay as stored; `fill.refill` still works.

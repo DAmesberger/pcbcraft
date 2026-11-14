@@ -399,10 +399,10 @@ impl DatasheetAssist {
         self.result = None;
         let spawned = std::thread::Builder::new()
             .name("datasheet-assist".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let result = work(plan, &out, &tx, &flag);
                 let _ = tx.send(Message::Done(result));
-            });
+            }));
         match spawned {
             Ok(_) => self.job = Some(Job { rx, cancel }),
             Err(e) => self.result = Some(Err(format!("could not start: {e}"))),
@@ -443,10 +443,13 @@ fn work(
         key: key_source(&plan)?,
         endpoint: plan.endpoint.clone(),
     };
+    let context =
+        sparksmith_core::library::standards::Context::current().map_err(|e| e.to_string())?;
     let mut backend =
         model::connect(&plan.config.profile, &connection).map_err(|e| e.to_string())?;
-    let mut session =
-        Session::new(sparksmith_io::new_project::profiled_engine().map_err(|e| e.to_string())?);
+    let mut session = Session::new(
+        sparksmith_io::new_project::profiled_engine(&context).map_err(|e| e.to_string())?,
+    );
     let _ = tx.send(Message::Line(format!(
         "Run profile {}",
         plan.config.run_profile.name

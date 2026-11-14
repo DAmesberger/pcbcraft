@@ -971,3 +971,47 @@ fn every_document_changing_request_requires_an_expected_revision() {
         assert_eq!(required, changes, "{}", info.id);
     }
 }
+
+/// S2b: two sessions in one process, each on an engine handed its own
+/// standards, answer the same request each by its own; one with no
+/// context refuses rather than borrowing another's.
+#[test]
+fn sessions_answer_with_their_own_context() -> TestResult {
+    use sparksmith_core::library::standards::{Context, GenericFamily};
+    let shipped = Context::fixture()?;
+    let mut fewer = (**shipped.standards()).clone();
+    fewer
+        .generic
+        .families
+        .retain(|family| family.family != GenericFamily::Resistor);
+    let session = |context: Option<std::sync::Arc<Context>>| {
+        let mut engine = Engine::default();
+        match context {
+            Some(context) => engine.set_context(context),
+            None => engine.clear_context(),
+        }
+        Ok::<_, Box<dyn std::error::Error>>(Session::new(engine))
+    };
+    let example = shipped
+        .standards()
+        .generic
+        .families
+        .iter()
+        .find(|family| family.family == GenericFamily::Resistor)
+        .and_then(|family| family.examples.first().cloned())
+        .ok_or("a resistor example")?;
+    let ask = |session: &mut Session| {
+        session.execute(serde_json::from_value(json!({
+            "command": "project.query",
+            "params": {"query": "library.generic_parts", "params": {"query": example}},
+        }))?)
+    };
+    let mut a = session(Some(shipped))?;
+    let mut b = session(Some(std::sync::Arc::new(Context::new(fewer))))?;
+    let mut none = session(None)?;
+    let found = |reply: &Value| reply["result"]["candidates"].as_array().map_or(0, Vec::len);
+    assert!(found(&ask(&mut a)?) > 0);
+    assert_eq!(found(&ask(&mut b)?), 0);
+    assert!(ask(&mut none).is_err());
+    Ok(())
+}

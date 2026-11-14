@@ -49,13 +49,17 @@ fn part_file_timings() {
     // through sparksmith-io at start-up).
     let materials =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
-    sparksmith_solidcraft::looks::ensure(|| {
-        sparksmith_core::materials::MaterialLibrary::load(|name| {
-            std::fs::read_to_string(materials.join(name))
-                .map_err(|e| sparksmith_core::Error::Invalid(e.to_string()))
-        })
+    let library = sparksmith_core::materials::MaterialLibrary::load(|name| {
+        std::fs::read_to_string(materials.join(name))
+            .map_err(|e| sparksmith_core::Error::Invalid(e.to_string()))
     })
-    .unwrap();
+    .map_err(|e| e.to_string());
+    let standards = sparksmith_core::library::standards::Context::fixture().unwrap();
+    let context = std::sync::Arc::new(
+        sparksmith_core::library::standards::Context::new((**standards.standards()).clone())
+            .with_materials(library),
+    );
+    let _context = context.enter();
     let bytes = &std::fs::read(concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../../library/parts/esp32-s31-wroom-3.solidcraft"

@@ -593,6 +593,7 @@ mod tests {
 
     #[test]
     fn every_look_is_a_valid_opaque_surface() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let all = fabrications();
         assert_eq!(all.len(), 8 * 3 * 5 * 3);
         for fabrication in &all {
@@ -613,6 +614,7 @@ mod tests {
     /// with the fabrication.
     #[test]
     fn saved_bodies_look_the_same_for_every_fabrication() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
                 if !kind.is_appearance() {
@@ -628,6 +630,7 @@ mod tests {
 
     #[test]
     fn metals_are_metallic_with_their_documented_f0() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let cu = default_look(BodyKind::CopperTrack);
         assert_eq!(cu.metallic, 1.0);
         assert_eq!(cu.base_linear, [0.955, 0.61, 0.41]);
@@ -679,6 +682,7 @@ mod tests {
 
     #[test]
     fn srgb8_round_trips_within_one_step() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
                 let m = material(kind, &fabrication, &stack());
@@ -700,6 +704,7 @@ mod tests {
 
     #[test]
     fn soldermask_is_green_and_lighter_over_copper() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let green = pigment(MaskColour::Green);
         let laminate = mask_over(green, FR4, over_laminate());
         let copper = mask_over(green, COPPER, over_copper());
@@ -729,6 +734,7 @@ mod tests {
     /// The documented colour table (`docs/materials.md`), to three decimals.
     #[test]
     fn mask_colours_match_the_documented_table() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let table = [
             (
                 MaskColour::Green,
@@ -814,6 +820,7 @@ mod tests {
     /// white least.
     #[test]
     fn mask_colours_keep_their_hue_and_show_through_order() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for colour in COLOURS {
             let p = pigment(colour);
             let laminate = mask_over(p, FR4, over_laminate());
@@ -853,6 +860,7 @@ mod tests {
     /// is diffuse whatever the finish.
     #[test]
     fn mask_finish_sets_the_coat_roughness() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for colour in COLOURS {
             let look = |mask_finish| {
                 material(
@@ -889,6 +897,7 @@ mod tests {
     /// is coated, so the saved bodies stay uncoated.
     #[test]
     fn mask_layers_are_coated_and_nothing_else_is() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         for fabrication in fabrications() {
             for kind in BodyKind::ALL {
                 let m = material(kind, &fabrication, &stack());
@@ -913,6 +922,7 @@ mod tests {
     /// pattern.
     #[test]
     fn patterns_follow_the_mask_colour() {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let detail_of = |kind, colour| {
             material(
                 kind,

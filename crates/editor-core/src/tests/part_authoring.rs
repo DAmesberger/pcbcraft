@@ -545,6 +545,7 @@ fn the_standard_fields_import_in_one_step_and_read_their_units() -> Result<()> {
 
 #[test]
 fn the_standard_fields_query_gives_a_bundle_library_import_takes() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let mut engine = Engine::profiled()?;
     let QueryResult::StandardFields(bundle) = engine.query(Query::StandardFields {})? else {
         return Err(Error::Invalid("not the bundle".into()));
@@ -564,6 +565,7 @@ fn the_standard_fields_query_gives_a_bundle_library_import_takes() -> Result<()>
 /// pins the content of the first revisions.
 #[test]
 fn the_standard_records_do_not_change() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let bundle = standard_fields::bundle()?;
     let root = bundle
         .records

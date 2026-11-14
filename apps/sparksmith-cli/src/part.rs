@@ -212,6 +212,7 @@ mod tests {
 
     #[test]
     fn the_builtin_part_checks_clean() -> Result<()> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         run(&[
             "check".into(),
             "--builtin".into(),

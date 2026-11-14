@@ -19,6 +19,7 @@ use sparksmith_core::{
         graphics::{GraphicTarget, SILK_STROKE_MM, SYMBOL_STROKE_MM},
         import::{OtherRevision, PlaceSource},
     },
+    permission::FilePath,
     updates,
 };
 use std::path::{Path, PathBuf};
@@ -77,7 +78,7 @@ pub struct OpenParams {
     /// The revision of the document being replaced; refused as stale when
     /// it has moved since.
     pub expected_revision: u64,
-    pub path: String,
+    pub path: FilePath,
 }
 
 /// What `project.inspect` returns.
@@ -106,7 +107,7 @@ pub struct SchemaParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PathParams {
-    pub path: String,
+    pub path: FilePath,
 }
 
 /// Where `project.export_native` writes and how much of the board.
@@ -114,7 +115,7 @@ pub struct PathParams {
 #[serde(deny_unknown_fields)]
 pub struct ExportNativeParams {
     /// A new `.solidcraft` file.
-    pub path: String,
+    pub path: FilePath,
     /// `mechanical` (default: laminate, pads, parts) or `full` (all copper
     /// too); the interface tier goes through `interface.publish`.
     #[serde(default)]
@@ -128,7 +129,7 @@ pub struct ExportNativeParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SchematicPdfParams {
-    pub path: String,
+    pub path: FilePath,
     /// Sheets to print, in page order; every sheet when empty.
     #[serde(default)]
     pub sheets: Vec<sparksmith_core::SheetId>,
@@ -139,7 +140,7 @@ pub struct SchematicPdfParams {
 pub struct SaveParams {
     /// Destination `.sparksmith` file; defaults to the path last opened or saved.
     #[serde(default)]
-    pub path: Option<String>,
+    pub path: Option<FilePath>,
 }
 
 /// Import an SVG file's drawing into a symbol or footprint draft.
@@ -153,7 +154,7 @@ pub struct ImportSvgParams {
     /// A symbol unit, or a footprint's silkscreen or assembly layer and side.
     pub target: GraphicTarget,
     /// The `.svg` file (at most 1 MiB).
-    pub path: String,
+    pub path: FilePath,
     /// Where the artwork's bounding-box centre goes, in millimetres.
     #[serde(default)]
     pub at: Point,
@@ -177,7 +178,7 @@ fn default_tolerance() -> f64 {
 #[serde(deny_unknown_fields)]
 pub struct SourceAddParams {
     /// A library folder holding `sparksmith-library.json`.
-    pub path: String,
+    pub path: FilePath,
     /// Whether `library.publish_to_folder` may write to it.
     #[serde(default)]
     pub writable: bool,
@@ -187,7 +188,7 @@ pub struct SourceAddParams {
 #[serde(deny_unknown_fields)]
 pub struct SourceCreateParams {
     /// A new folder, or an empty existing one.
-    pub path: String,
+    pub path: FilePath,
     /// The library's display name, stored in its manifest.
     pub name: String,
     /// The library id; drawn at random when omitted. A recorded session
@@ -199,7 +200,7 @@ pub struct SourceCreateParams {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SourceEnableParams {
-    pub path: String,
+    pub path: FilePath,
     pub enabled: bool,
 }
 
@@ -271,7 +272,7 @@ pub struct PublishParams {
 pub struct ImportFromProjectParams {
     pub expected_revision: u64,
     /// The `.sparksmith` file to read. It is not changed.
-    pub path: String,
+    pub path: FilePath,
     /// A published revision in that file.
     pub root: DefinitionRef,
 }
@@ -281,7 +282,7 @@ pub struct ImportFromProjectParams {
 #[serde(deny_unknown_fields)]
 pub struct FabricationParams {
     /// A new or empty folder, or with `zip` a new `.zip` file.
-    pub output: String,
+    pub output: FilePath,
     #[serde(default)]
     pub zip: bool,
     /// The fabrication fab profile to check against, by its id in the
@@ -466,56 +467,56 @@ pub enum Request {
 // A new request chooses its permission class here. `project.apply` and
 // `project.query` take their operation's or query's; a request that names a
 // path needs at least Ask ([`Request::effective_class`]).
-sparksmith_core::declare_classes!(Request {
+sparksmith_core::declare_entries!(Request in project {
     Apply "project.apply" Edit "Apply an operation",
     ApplyAll "project.apply_all" Edit "Apply operations as one step",
-    Inspect "project.inspect" Read "Inspect the project",
-    Schema "project.schema" Read "Look up a schema",
-    Query "project.query" Read "Run a query",
+    Inspect "project.inspect" Read "Inspect the project" [link],
+    Schema "project.schema" Read "Look up a schema" [link],
+    Query "project.query" Read "Run a query" [link],
     Undo "project.undo" Edit "Undo",
     Redo "project.redo" Edit "Redo",
-    New "project.new" Ask "New project",
-    Open "project.open" Ask "Open a project",
-    Save "project.save" Ask "Save the project",
-    PreviewUpdate "project.preview_update" Read "Preview an update",
-    ApplyUpdate "project.apply_update" Edit "Apply an update",
-    ExportNative "project.export_native" Ask "Export the 3D model",
-    ExportFabrication "project.export_fabrication" Ask "Export fabrication files",
-    Sources "library.sources" Read "List library folders",
-    SourceAdd "library.source.add" Never "Add a library folder",
-    SourceCreate "library.source.create" Never "Create a library folder",
-    SourceRemove "library.source.remove" Never "Remove a library folder",
-    SourceEnable "library.source.enable" Never "Turn a library folder on or off",
-    Rescan "library.rescan" Read "Rescan library folders",
-    Favourite "library.favourite" Never "Mark a favourite",
-    Bundle "library.bundle" Read "Read a folder bundle",
-    ImportFrom "library.import_from_folder" Edit "Import from a folder",
-    PlaceFrom "library.place_from_folder" Edit "Place from a folder",
-    Publish "library.publish_to_folder" Ask "Publish to a folder",
-    ImportFromProject "library.import_from_project" Ask "Import from another project",
-    ImportSvg "library.import_svg" Ask "Import SVG artwork",
-    OpenPreview "library.open_preview" Read "Preview a folder entry",
-    PinoutSchema "library.pinout_schema" Read "Pinout document schema",
-    ReviewCheck "library.review_check" Read "Check a datasheet review report",
-    FirmwarePreview "firmware.export_preview" Read "Preview a firmware export",
-    FirmwareExport "firmware.export" Ask "Export firmware pin configuration",
-    InspectModelFile "library.inspect_model_file" Ask "Inspect a model file",
-    SetMarking "library.set_marking" Edit "Set a component marking",
-    SchematicPdf "schematic.export_pdf" Ask "Export the schematic as PDF",
-    MarkingSurfaces "library.marking_surfaces" Read "List marking surfaces",
-    CheckPartFile "library.check_part_file" Read "Check a part file",
-    UsePartFile "library.use_part_file" Edit "Use a part file as the model",
-    SetPartValues "library.set_part_values" Edit "Set part file values",
-    PartFiles "library.part_files" Read "List part files",
-    Generators "library.generators" Read "List generator modules",
-    GeneratePart "library.generate_part" Edit "Generate a part",
-    PlacePartFile "layout.place_part_file" Edit "Place a part file on the board",
-    SetPartFileValues "layout.set_part_file_values" Edit "Change a placed part file",
-    InterfacePreview "interface.publish_preview" Read "Preview publishing the board interface",
-    InterfacePublish "interface.publish" Ask "Publish the board interface",
-    AssemblyFollow "assembly.follow" Ask "Follow assembly geometry",
-    AssemblyPreview "assembly.preview" Read "Preview a linked design update",
-    AssemblyUpdate "assembly.update" Ask "Update from the linked design",
+    New "project.new" Ask "New project" [in files],
+    Open "project.open" Ask "Open a project" [in files],
+    Save "project.save" Ask "Save the project" [in files],
+    PreviewUpdate "project.preview_update" Read "Preview an update" [in library, link],
+    ApplyUpdate "project.apply_update" Edit "Apply an update" [in library, review],
+    ExportNative "project.export_native" Ask "Export the 3D model" [in model3d, long, needs(Solidcraft)],
+    ExportFabrication "project.export_fabrication" Ask "Export fabrication files" [in fab, long, link],
+    Sources "library.sources" Read "List library folders" [in library, link, reach(Settings)],
+    SourceAdd "library.source.add" Never "Add a library folder" [in library, reach(Settings)],
+    SourceCreate "library.source.create" Never "Create a library folder" [in library, reach(Settings)],
+    SourceRemove "library.source.remove" Never "Remove a library folder" [in library, reach(Settings)],
+    SourceEnable "library.source.enable" Never "Turn a library folder on or off" [in library, reach(Settings)],
+    Rescan "library.rescan" Read "Rescan library folders" [in library, long, link, reach(Files)],
+    Favourite "library.favourite" Never "Mark a favourite" [in library, reach(Settings)],
+    Bundle "library.bundle" Read "Read a folder bundle" [in library, link, reach(Files)],
+    ImportFrom "library.import_from_folder" Edit "Import from a folder" [in library, reach(Files)],
+    PlaceFrom "library.place_from_folder" Edit "Place from a folder" [in library, reach(Files)],
+    Publish "library.publish_to_folder" Ask "Publish to a folder" [in library, reach(Files)],
+    ImportFromProject "library.import_from_project" Ask "Import from another project" [in library],
+    ImportSvg "library.import_svg" Ask "Import SVG artwork" [in library],
+    OpenPreview "library.open_preview" Read "Preview a folder entry" [in library, link, reach(Files)],
+    PinoutSchema "library.pinout_schema" Read "Pinout document schema" [in library, link],
+    ReviewCheck "library.review_check" Read "Check a datasheet review report" [in library],
+    FirmwarePreview "firmware.export_preview" Read "Preview a firmware export" [in fab, link],
+    FirmwareExport "firmware.export" Ask "Export firmware pin configuration" [in fab],
+    InspectModelFile "library.inspect_model_file" Ask "Inspect a model file" [in library, link, needs(Solidcraft)],
+    SetMarking "library.set_marking" Edit "Set a component marking" [in library],
+    SchematicPdf "schematic.export_pdf" Ask "Export the schematic as PDF" [in fab],
+    MarkingSurfaces "library.marking_surfaces" Read "List marking surfaces" [in library, link, needs(Solidcraft)],
+    CheckPartFile "library.check_part_file" Read "Check a part file" [in model3d, link, needs(Solidcraft)],
+    UsePartFile "library.use_part_file" Edit "Use a part file as the model" [in model3d, link, needs(Solidcraft)],
+    SetPartValues "library.set_part_values" Edit "Set part file values" [in model3d, link, needs(Solidcraft)],
+    PartFiles "library.part_files" Read "List part files" [in model3d, link],
+    Generators "library.generators" Read "List generator modules" [in generators],
+    GeneratePart "library.generate_part" Edit "Generate a part" [in generators],
+    PlacePartFile "layout.place_part_file" Edit "Place a part file on the board" [in layout, link, needs(Solidcraft)],
+    SetPartFileValues "layout.set_part_file_values" Edit "Change a placed part file" [in layout, link, needs(Solidcraft)],
+    InterfacePreview "interface.publish_preview" Read "Preview publishing the board interface" [in model3d],
+    InterfacePublish "interface.publish" Ask "Publish the board interface" [in model3d],
+    AssemblyFollow "assembly.follow" Ask "Follow assembly geometry" [in model3d],
+    AssemblyPreview "assembly.preview" Read "Preview a linked design update" [in model3d],
+    AssemblyUpdate "assembly.update" Ask "Update from the linked design" [in model3d],
 });
 
 impl Request {
@@ -531,7 +532,7 @@ impl Request {
             Self::Query(query) => query.class(),
             other => other.class(),
         };
-        if self.paths().is_empty() {
+        if self.names_no_path() {
             own
         } else {
             own.max(Class::Ask)
@@ -557,96 +558,18 @@ impl Request {
         }
     }
 
-    /// The requests whose [`Request::paths`] can be non-empty: what the
-    /// catalog, tool descriptions and schema rows say about asking with a
-    /// path. `gate/tests.rs` checks the two against each other.
-    pub const NAMING_PATHS: &'static [&'static str] = &[
-        "project.open",
-        "project.save",
-        "project.export_native",
-        "project.export_fabrication",
-        "library.source.add",
-        "library.source.create",
-        "library.source.remove",
-        "library.source.enable",
-        "library.import_from_project",
-        "library.import_svg",
-        "firmware.export_preview",
-        "firmware.export",
-        "library.inspect_model_file",
-        "schematic.export_pdf",
-        "library.check_part_file",
-        "library.use_part_file",
-        "layout.place_part_file",
-        "interface.publish_preview",
-        "interface.publish",
-        "assembly.follow",
-        "assembly.preview",
-        "assembly.update",
-    ];
+    /// Every file or folder path this request names: each value its
+    /// parameters type as a [`FilePath`], found by walking the request with
+    /// its schema ([`paths`]). A request that cannot be written as JSON is
+    /// refused rather than read as naming none.
+    pub fn paths(&self) -> std::result::Result<Vec<String>, serde_json::Error> {
+        Ok(paths::in_request(&serde_json::to_value(self)?))
+    }
 
-    /// Every file or folder path this request names.
-    pub fn paths(&self) -> Vec<&str> {
-        match self {
-            Self::Open(params) => vec![params.path.as_str()],
-            Self::ExportNative(params) => vec![params.path.as_str()],
-            Self::SourceRemove(params) => vec![params.path.as_str()],
-            Self::Save(params) => params.path.iter().map(String::as_str).collect(),
-            Self::ExportFabrication(params) => vec![params.output.as_str()],
-            Self::SourceAdd(params) => vec![params.path.as_str()],
-            Self::SourceCreate(params) => vec![params.path.as_str()],
-            Self::SourceEnable(params) => vec![params.path.as_str()],
-            Self::ImportFromProject(params) => vec![params.path.as_str()],
-            Self::ImportSvg(params) => vec![params.path.as_str()],
-            Self::FirmwarePreview(params) | Self::FirmwareExport(params) => params
-                .path
-                .iter()
-                .chain(&params.template_file)
-                .map(String::as_str)
-                .collect(),
-            Self::InspectModelFile(params) => vec![params.path.as_str()],
-            Self::SchematicPdf(params) => vec![params.path.as_str()],
-            Self::CheckPartFile(params) => params.path.iter().map(String::as_str).collect(),
-            Self::UsePartFile(params) => params.path.iter().map(String::as_str).collect(),
-            Self::PlacePartFile(params) => params.path.iter().map(String::as_str).collect(),
-            Self::InterfacePreview(params) => params
-                .path
-                .iter()
-                .chain(&params.assembly_path)
-                .map(String::as_str)
-                .collect(),
-            Self::InterfacePublish(params) => vec![params.path.as_str()],
-            Self::AssemblyFollow(params) => vec![params.path.as_str(), params.design.as_str()],
-            Self::AssemblyPreview(params) => vec![params.path.as_str(), params.design.as_str()],
-            Self::AssemblyUpdate(params) => vec![params.path.as_str(), params.design.as_str()],
-            Self::Apply(_)
-            | Self::ApplyAll(_)
-            | Self::Inspect(_)
-            | Self::Schema(_)
-            | Self::Query(_)
-            | Self::Undo(_)
-            | Self::Redo(_)
-            | Self::New(_)
-            | Self::PreviewUpdate(_)
-            | Self::ApplyUpdate(_)
-            | Self::Sources(_)
-            | Self::Rescan(_)
-            | Self::Favourite(_)
-            | Self::Bundle(_)
-            | Self::ImportFrom(_)
-            | Self::PlaceFrom(_)
-            | Self::Publish(_)
-            | Self::OpenPreview(_)
-            | Self::PinoutSchema(_)
-            | Self::ReviewCheck(_)
-            | Self::SetMarking(_)
-            | Self::MarkingSurfaces(_)
-            | Self::SetPartValues(_)
-            | Self::PartFiles(_)
-            | Self::Generators(_)
-            | Self::GeneratePart(_)
-            | Self::SetPartFileValues(_) => Vec::new(),
-        }
+    /// Whether this request certainly names no path. A request whose paths
+    /// cannot be read counts as naming one.
+    pub fn names_no_path(&self) -> bool {
+        self.paths().is_ok_and(|paths| paths.is_empty())
     }
 
     /// The revision a request that changes the document expects, checked
@@ -717,23 +640,22 @@ impl Request {
             summary: &'static str,
             description: &'static str,
         ) -> CommandInfo {
-            let params = serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null);
+            let mut params = serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null);
+            let takes_path = paths::marks_path(&params);
+            // Callers see the schema as before; the mark is the gate's.
+            paths::unmark(&mut params);
+            let decl = sparksmith_core::permission::find(Request::ENTRIES, id);
             CommandInfo {
                 id,
                 // Every listed request has one; the metadata tests check.
-                title: Request::TITLES
-                    .iter()
-                    .find(|(name, _)| *name == id)
-                    .map_or(id, |(_, title)| *title),
+                title: decl.map_or(id, |decl| decl.title),
                 summary,
                 description,
                 // Unlisted cannot pass the gate's tests; refused until then.
-                class: Request::CLASSES
-                    .iter()
-                    .find(|(name, _)| *name == id)
-                    .map_or(Class::Never, |(_, class)| *class),
-                takes_path: Request::NAMING_PATHS.contains(&id),
+                class: decl.map_or(Class::Never, |decl| decl.class),
+                takes_path,
                 params,
+                decl,
             }
         }
         vec![
@@ -1007,10 +929,13 @@ pub struct CommandInfo {
     pub summary: &'static str,
     pub description: &'static str,
     pub class: Class,
-    /// Whether it can name a path, which makes it at least Ask
-    /// ([`Request::NAMING_PATHS`]).
+    /// Whether it can name a path, which makes it at least Ask: its
+    /// parameters hold a [`FilePath`] ([`Request::paths`]).
     pub takes_path: bool,
     pub params: Value,
+    /// Its declaration beside [`Request`].
+    #[serde(skip)]
+    pub decl: Option<&'static sparksmith_core::permission::EntryDecl>,
 }
 
 impl CommandInfo {
@@ -1104,8 +1029,10 @@ impl Session {
     /// Execute one typed request.
     pub fn execute(&mut self, request: Request) -> Result<Value> {
         self.ensure_generators();
-        // Once per process; later calls only read it.
-        crate::load_materials();
+        // The host's standards and materials, current while it runs: what
+        // a 3D build or export reads. An engine without them refuses
+        // whatever needs them.
+        let _context = self.engine.enter_context();
         // The new-project defaults, once per process; a failure is kept and
         // returned, naming the file, by the request that needs them.
         let _ = sparksmith_io::new_project::shipped();
@@ -1704,10 +1631,12 @@ pub mod mechanical_parts;
 pub mod metadata;
 mod models;
 pub mod part_files;
+pub mod paths;
 mod pinout;
 mod preview;
 mod reply;
 pub mod shipped_parts;
+pub mod surface;
 pub(crate) use reply::take_verbose;
 pub mod sources;
 
@@ -1760,10 +1689,11 @@ mod two_way_tests;
 /// SolidCraft's sketch engine: its sketched board, cutout, slot and
 /// edge-held header included, on `profile` and `presets`' stackups.
 pub fn showcase(
+    context: std::sync::Arc<sparksmith_core::library::standards::Context>,
     presets: &sparksmith_core::StackupPresets,
     profile: sparksmith_core::rules::RuleProfile,
 ) -> sparksmith_core::Result<sparksmith_core::Engine> {
-    sparksmith_core::Engine::showcase_hosted(hosted(), presets, profile)
+    sparksmith_core::Engine::showcase_hosted(context, hosted(), presets, profile)
 }
 
 /// The host evaluators every applied operation gets: SolidCraft's sketch

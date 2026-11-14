@@ -318,6 +318,7 @@ fn lead_contacts_are_the_lowest_points_of_the_tag() -> Result<()> {
 /// reports, and the contacts it then measures pass a build's recheck.
 #[test]
 fn the_wizard_path_matches_what_a_build_rechecks() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for (format, bytes) in [
         (ModelFormat::Gltf, fixture_glb()),
         (ModelFormat::Step, fixture_step()?),
@@ -367,6 +368,7 @@ fn a_face_tag_touches_down_on_that_face() -> Result<()> {
 
 #[test]
 fn build_maps_bodies_terminals_and_looks() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let bytes = fixture_glb();
     let seen = inspect::inspect(&bytes, ModelFormat::Gltf)?;
     let mut m = model(ModelFormat::Gltf, &bytes, &seen);
@@ -429,6 +431,7 @@ fn build_maps_bodies_terminals_and_looks() -> Result<()> {
 
 #[test]
 fn a_step_model_builds_with_builtin_materials() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let bytes = fixture_step()?;
     let seen = inspect::inspect(&bytes, ModelFormat::Step)?;
     let m = model(ModelFormat::Step, &bytes, &seen);
@@ -525,6 +528,7 @@ fn rechecks_refuse_naming_the_asset() -> Result<()> {
 
 #[test]
 fn preview_draws_every_body_at_the_placement() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let bytes = fixture_glb();
     let seen = inspect::inspect(&bytes, ModelFormat::Gltf)?;
     let m = model(ModelFormat::Gltf, &bytes, &seen);

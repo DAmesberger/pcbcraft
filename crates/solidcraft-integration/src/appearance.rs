@@ -1663,6 +1663,7 @@ mod tests {
     /// in the Gerber), so no laminate shows there.
     #[test]
     fn a_mask_opening_shows_the_laminate_around_its_copper() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let stackup = sparksmith_core::Stackup {
             mask_bottom: false,
             ..sparksmith_core::Stackup::default()

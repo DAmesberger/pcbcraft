@@ -155,6 +155,7 @@ fn a_parameter_that_refers_to_itself_is_refused_in_words() -> Fallible<()> {
 
 #[test]
 fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut engine = sketched()?;
     edit(
         &mut engine,
@@ -222,6 +223,7 @@ fn rounded_corners_follow_a_corner_radius_parameter() -> Fallible<()> {
 
 #[test]
 fn cutouts_slots_and_mounting_holes_solve_and_build_in_3d() -> Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut engine = sketched()?;
     edit(
         &mut engine,
@@ -429,6 +431,7 @@ fn an_unsolvable_size_names_its_dimension() -> Fallible<()> {
 /// cutout's wall.
 #[test]
 fn the_mask_and_edge_bands_follow_the_sketched_shape() -> Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use crate::material::BodyKind;
     let mut engine = sketched()?;
     let add = SketchEdit::AddCircle {

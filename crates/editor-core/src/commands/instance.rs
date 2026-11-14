@@ -125,9 +125,9 @@ pub enum InstanceCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(InstanceCommand {
+declare_entries!(InstanceCommand in schematic {
     Place "component.place" Edit "Place a component",
-    PlaceBoardOnly "component.place_board_only" Edit "Place a board-only part",
+    PlaceBoardOnly "component.place_board_only" Edit "Place a board-only part" [in layout],
     Remove "component.remove" Edit "Remove a component",
     SetDesignator "instance.set_designator" Edit "Set a designator",
     SetProperties "instance.set_properties" Edit "Set instance properties",

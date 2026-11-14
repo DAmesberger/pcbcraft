@@ -219,6 +219,7 @@ mod tests {
 
     #[test]
     fn a_four_layer_edge_shows_every_foil_dielectric_and_mask_lip_without_overlap() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let stackup = Stackup::preset(4).map_err(|e| crate::Error::Invalid(e.to_string()))?;
         let board = board(&stackup)?;
         let bands = bands(&stackup, &board)?;
@@ -273,6 +274,7 @@ mod tests {
     /// its band, and the bands tile the section without gaps.
     #[test]
     fn a_many_layer_edge_shows_every_foil_and_tiles_the_section() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let stackup = Stackup::preset(24).map_err(|e| crate::Error::Invalid(e.to_string()))?;
         let bands = bands(&stackup, &board(&stackup)?)?;
         let copper: Vec<Option<CopperLayer>> = bands
@@ -303,6 +305,7 @@ mod tests {
 
     #[test]
     fn a_board_without_mask_shows_no_lips() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let stackup = Stackup {
             mask_top: false,
             mask_bottom: false,

@@ -42,7 +42,9 @@ pub fn build(pick: FolderPick, bundle: Bundle) -> Result<Preview, String> {
     let report = sparksmith_core::catalog::preview::inspect_bundle(&bundle, None, None)
         .ok()
         .map(Arc::new);
-    let mut engine = sparksmith_io::new_project::engine().map_err(|e| e.to_string())?;
+    let context =
+        sparksmith_core::library::standards::Context::current().map_err(|e| e.to_string())?;
+    let mut engine = sparksmith_io::new_project::engine(&context).map_err(|e| e.to_string())?;
     let component = import(&mut engine, bundle.clone())?;
     working_set::draft_closure(&mut engine, component).map_err(|e| e.to_string())?;
     if WorkingSet::of(engine.drafts(), component.id).is_none() {
@@ -125,7 +127,7 @@ pub fn edit_copy(engine: &mut Engine, bundle: Bundle) -> Result<Copied, String> 
 /// arrives on the returned channel and repaints `ctx`.
 pub fn spawn(folder: Folder, pick: FolderPick, ctx: egui::Context) -> Receiver<Built> {
     let (sender, receiver) = mpsc::channel();
-    std::thread::spawn(move || {
+    std::thread::spawn(sparksmith_core::library::standards::carried(move || {
         let result = folder::read_bundle(
             &folder,
             sparksmith_core::library::bundle::SourceRevision {
@@ -137,7 +139,7 @@ pub fn spawn(folder: Folder, pick: FolderPick, ctx: egui::Context) -> Receiver<B
         .and_then(|bundle| build(pick.clone(), bundle).map(Box::new));
         let _ = sender.send((pick, result));
         ctx.request_repaint();
-    });
+    }));
     receiver
 }
 

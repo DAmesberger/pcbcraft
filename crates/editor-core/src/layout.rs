@@ -290,7 +290,7 @@ pub enum LayoutCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(LayoutCommand {
+declare_entries!(LayoutCommand in layout {
     Sync "layout.sync" Edit "Sync the board with the schematic",
     Place "layout.place" Edit "Place a part on the board",
     Move "layout.move" Edit "Move a placed part",

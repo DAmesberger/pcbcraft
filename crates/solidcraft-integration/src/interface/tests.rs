@@ -262,6 +262,7 @@ fn a_slot_keeps_its_names_whatever_comes_before_it() -> Fallible {
 /// the board; the metadata of both carries the sidecar.
 #[test]
 fn the_tiers_share_their_slots_and_carry_the_sidecar() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let engine = engine()?;
     let slots = build(engine.project(), sidecar(&engine, Tier::Interface)?)?;
     let board = build(engine.project(), sidecar(&engine, Tier::Mechanical)?)?;
@@ -283,6 +284,7 @@ fn the_tiers_share_their_slots_and_carry_the_sidecar() -> Fallible {
 /// interface tier builds no board and checks none.
 #[test]
 fn a_published_board_is_checked_against_its_plan() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let engine = engine()?;
     let slots = build(engine.project(), sidecar(&engine, Tier::Interface)?)?;
     assert!(slots.check.is_none());

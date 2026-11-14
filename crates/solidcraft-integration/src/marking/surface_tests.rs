@@ -431,6 +431,7 @@ fn placements_move_and_clip_the_layout_on_a_face() -> TestResult {
 /// ink; an engraving darkens its face; inks stand higher.
 #[test]
 fn finishes_map_to_their_materials() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let can = look::surface(&look::definition(MaterialId::NickelSilver)?)?;
     let etched = finish_surface(Finish::LaserEtchMetal)?;
     let lum = |s: OpaqueSurface| {
@@ -496,6 +497,7 @@ fn finishes_map_to_their_materials() -> TestResult {
 /// the recess, standing just above the floor; no geometry is cut.
 #[test]
 fn engravings_shade_their_walls_with_tilted_normals() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mark = laid(
         vec![LaidElement::Polarity {
             mark: PolarityMark::Bar,
@@ -570,6 +572,7 @@ fn a_2d_code_fills_its_dark_modules() -> TestResult {
 /// mesh (the +x side of the outermost body).
 #[test]
 fn module_anchors_place_the_can_and_board_markings() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let package = module_package()?;
     let preview = crate::project::preview(&package)?;
     let form = ModuleForm::typical();
@@ -660,6 +663,7 @@ fn module_anchors_place_the_can_and_board_markings() -> TestResult {
 /// on its can with its stripe towards that instance's lead 2.
 #[test]
 fn board_wraps_follow_each_instance_s_placement() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = radial_board()?;
     let model = crate::project::build(&project)?;
     let stripe = |w: f64, h: f64| LaidElement::Polarity {
@@ -739,6 +743,7 @@ fn board_wraps_follow_each_instance_s_placement() -> TestResult {
 /// Debug-build timings are printed as evidence, not asserted.
 #[test]
 fn two_hundred_marked_instances_build_their_decals() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = sparksmith_core::Engine::demo()?.project().clone();
     let model = crate::project::build(&project)?;
     let area = MarkingArea {
@@ -807,6 +812,7 @@ fn two_hundred_marked_instances_build_their_decals() -> TestResult {
 /// what the unmarked board saves.
 #[test]
 fn markings_are_absent_from_the_saved_model() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = sparksmith_core::Engine::demo()?.project().clone();
     let plain = crate::project::build(&project)?;
     let dir = tempfile::tempdir()?;
@@ -863,6 +869,7 @@ fn markings_are_absent_from_the_saved_model() -> TestResult {
 /// in its model frame.
 #[test]
 fn box_faces_resolve_in_the_model_frame() -> TestResult {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let package = module_package()?;
     let preview = crate::project::preview(&package)?;
     let bodies: Vec<&Geometry> = preview

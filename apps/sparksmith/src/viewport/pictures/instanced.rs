@@ -56,6 +56,7 @@ fn differing(a: &[u8], b: &[u8], tolerance: u8) -> usize {
 /// instanced path, and the vias cover a good share of the picture.
 #[test]
 fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu()? else {
         return Ok(());
     };
@@ -149,6 +150,7 @@ fn instanced_vias_draw_as_their_copied_meshes() -> Result<(), Box<dyn std::error
 /// net tint, so the picked via is told from the rest.
 #[test]
 fn a_picked_via_keeps_its_drill_open_and_stands_out() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu()? else {
         return Ok(());
     };
@@ -231,6 +233,7 @@ fn a_picked_via_keeps_its_drill_open_and_stands_out() -> Result<(), Box<dyn std:
 /// placements.
 #[test]
 fn a_layer_toggle_uploads_no_instanced_via_mesh() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu()? else {
         return Ok(());
     };

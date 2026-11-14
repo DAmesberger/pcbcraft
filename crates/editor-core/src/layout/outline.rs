@@ -374,7 +374,7 @@ pub enum BoardCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(BoardCommand {
+declare_entries!(BoardCommand in layout {
     SetRectangle "board.set_rectangle" Edit "Set a rectangular outline",
     StartSketch "board.start_sketch" Edit "Start an outline sketch",
     Edit "board.edit" Edit "Edit the board outline",

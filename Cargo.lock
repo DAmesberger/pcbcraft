@@ -5071,6 +5071,7 @@ dependencies = [
  "solidcraft-control",
  "sparksmith-core",
  "sparksmith-firmware",
+ "sparksmith-generator-abi",
  "sparksmith-generators",
  "sparksmith-io",
  "sparksmith-solidcraft",

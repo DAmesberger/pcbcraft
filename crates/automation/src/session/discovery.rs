@@ -5,6 +5,7 @@
 use super::{CommandInfo, Request, SchemaParams};
 use crate::{Error, Result};
 use serde_json::{Map, Value, json};
+use sparksmith_core::permission::EntryDecl;
 use sparksmith_core::{Class, Operation, Query};
 use std::collections::{BTreeSet, VecDeque};
 use std::sync::OnceLock;
@@ -32,37 +33,26 @@ pub(super) struct Entry {
     /// The operation's editor group, for an operation.
     editor: Option<String>,
     /// The catalog schema whose `$defs` the variant refers to.
-    root: &'static Value,
-    schema: Value,
+    pub(super) root: &'static Value,
+    pub(super) schema: Value,
     /// How to send it, with `<params>` where the schema's value goes.
-    send: Option<Value>,
+    pub(super) send: Option<Value>,
     /// Its permission class. A missing one reads as Never and fails the
     /// gate's tests.
     pub(super) class: Class,
     /// A command that can name a path, which makes it at least Ask.
     pub(super) takes_path: bool,
+    /// Its declaration beside its enum.
+    pub(super) decl: Option<&'static EntryDecl>,
 }
 
-fn listed_class(
-    table: impl IntoIterator<Item = &'static (&'static str, Class)>,
+/// The declaration of `name` in `entries`; none fails the metadata tests
+/// and reads as Never.
+fn declared(
+    entries: impl IntoIterator<Item = &'static EntryDecl>,
     name: &str,
-) -> Class {
-    table
-        .into_iter()
-        .find(|(listed, _)| *listed == name)
-        .map_or(Class::Never, |(_, class)| *class)
-}
-
-/// The title listed for `name`; empty where none is (the metadata tests
-/// refuse that).
-fn listed_title(
-    table: impl IntoIterator<Item = &'static (&'static str, &'static str)>,
-    name: &str,
-) -> &'static str {
-    table
-        .into_iter()
-        .find(|(listed, _)| *listed == name)
-        .map_or("", |(_, title)| *title)
+) -> Option<&'static EntryDecl> {
+    sparksmith_core::permission::find(entries, name)
 }
 
 pub(super) fn entries() -> &'static [Entry] {
@@ -88,6 +78,7 @@ fn build_entries() -> Vec<Entry> {
             send: None,
             class: info.class,
             takes_path: info.takes_path,
+            decl: info.decl,
         });
         match info.id {
             "project.apply" => operation_entries(&info.params, &mut entries),
@@ -108,6 +99,7 @@ fn operation_entries(root: &'static Value, entries: &mut Vec<Entry>) {
         match union_variants(content) {
             Some((_, commands)) => {
                 for (command, schema) in commands {
+                    let decl = declared(Operation::entries(), command);
                     entries.push(Entry {
                         kind: "operation",
                         send: Some(json!({
@@ -115,31 +107,36 @@ fn operation_entries(root: &'static Value, entries: &mut Vec<Entry>) {
                             "operation": {"editor": editor, "operation": {"command": command, "params": "<params>"}},
                         })),
                         name: command.to_owned(),
-                        title: listed_title(Operation::titles(), command),
+                        title: decl.map_or("", |d| d.title),
                         editor: Some(editor.to_owned()),
                         root,
                         schema: schema.clone(),
-                        class: listed_class(Operation::classes(), command),
+                        class: decl.map_or(Class::Never, |d| d.class),
                         takes_path: false,
+                        decl,
                     });
                 }
             }
             // A variant that is not itself a command family, such as
             // `Update`: addressed by its editor's name in lower case.
-            None => entries.push(Entry {
-                kind: "operation",
-                send: Some(json!({
-                    "expected_revision": "<revision>",
-                    "operation": {"editor": editor, "operation": "<params>"},
-                })),
-                name: editor.to_lowercase(),
-                title: listed_title(Operation::titles(), &editor.to_lowercase()),
-                editor: Some(editor.to_owned()),
-                root,
-                schema: content.clone(),
-                class: listed_class(Operation::classes(), &editor.to_lowercase()),
-                takes_path: false,
-            }),
+            None => {
+                let decl = declared(Operation::entries(), &editor.to_lowercase());
+                entries.push(Entry {
+                    kind: "operation",
+                    send: Some(json!({
+                        "expected_revision": "<revision>",
+                        "operation": {"editor": editor, "operation": "<params>"},
+                    })),
+                    name: editor.to_lowercase(),
+                    title: decl.map_or("", |d| d.title),
+                    editor: Some(editor.to_owned()),
+                    root,
+                    schema: content.clone(),
+                    class: decl.map_or(Class::Never, |d| d.class),
+                    takes_path: false,
+                    decl,
+                });
+            }
         }
     }
 }
@@ -149,16 +146,18 @@ fn query_entries(root: &'static Value, entries: &mut Vec<Entry>) {
         return;
     };
     for (query, schema) in queries {
+        let decl = declared(Query::ENTRIES, query);
         entries.push(Entry {
             kind: "query",
             name: query.to_owned(),
-            title: listed_title(Query::TITLES, query),
+            title: decl.map_or("", |d| d.title),
             editor: None,
             root,
             schema: schema.clone(),
             send: Some(json!({"query": query, "params": "<params>"})),
-            class: listed_class(Query::CLASSES, query),
+            class: decl.map_or(Class::Never, |d| d.class),
             takes_path: false,
+            decl,
         });
     }
 }

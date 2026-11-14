@@ -456,7 +456,7 @@ pub enum SchematicCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(SchematicCommand {
+declare_entries!(SchematicCommand in schematic {
     PlaceUnit "symbol.place_unit" Edit "Place a symbol unit",
     MoveUnit "symbol.move_unit" Edit "Move a symbol unit",
     Arrange "schematic.arrange" Edit "Arrange symbols",
@@ -498,8 +498,8 @@ declare_classes!(SchematicCommand {
     AddDrawing "drawing.add" Edit "Add a drawing",
     EditDrawing "drawing.edit" Edit "Edit a drawing",
     RemoveDrawing "drawing.remove" Edit "Remove a drawing",
-    SetProperties "project.set_properties" Edit "Set project properties",
-    RenameProject "project.rename" Edit "Rename the project",
+    SetProperties "project.set_properties" Edit "Set project properties" [in project],
+    RenameProject "project.rename" Edit "Rename the project" [in project],
     Annotate "schematic.annotate" Edit "Annotate designators",
     Paste "schematic.paste" Edit "Paste schematic objects",
 });

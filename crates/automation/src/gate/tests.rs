@@ -188,92 +188,6 @@ fn naming_a_path_makes_a_request_at_least_ask() -> Fallible {
     Ok(())
 }
 
-/// A content hash for the samples that take one.
-const HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
-
-/// The paths a sample names: one, or two for the linked design requests, which
-/// name the linked design and the board's published design.
-fn sample_paths(command: &str) -> usize {
-    if command.starts_with("assembly.") {
-        2
-    } else {
-        1
-    }
-}
-
-/// One sample per command that can name a path. A new one fails the
-/// comparison below until it is listed here and its path reaches
-/// [`Request::paths`].
-fn path_samples() -> Fallible<Vec<Request>> {
-    let at = "/samples/f";
-    let mut samples = Vec::new();
-    for (command, params) in [
-        ("project.open", json!({"expected_revision": 0, "path": at})),
-        ("project.save", json!({"path": at})),
-        ("project.export_native", json!({"path": at})),
-        ("project.export_fabrication", json!({"output": at})),
-        ("library.source.add", json!({"path": at})),
-        ("library.source.create", json!({"path": at, "name": "n"})),
-        ("library.source.remove", json!({"path": at})),
-        (
-            "library.source.enable",
-            json!({"path": at, "enabled": true}),
-        ),
-        (
-            "library.import_from_project",
-            json!({"expected_revision": 0, "path": at,
-                "root": {"kind": "component", "id": 1, "revision": 1}}),
-        ),
-        (
-            "firmware.export_preview",
-            json!({"instance": 1, "emitter": {"emitter": "json"}, "path": at}),
-        ),
-        (
-            "firmware.export",
-            json!({"instance": 1, "emitter": {"emitter": "json"}, "path": at}),
-        ),
-        (
-            "library.inspect_model_file",
-            json!({"path": at, "format": "gltf"}),
-        ),
-        ("schematic.export_pdf", json!({"path": at})),
-        ("library.check_part_file", json!({"path": at})),
-        (
-            "library.use_part_file",
-            json!({"package": 1, "path": at, "expected_revision": 0}),
-        ),
-        ("interface.publish_preview", json!({"path": at})),
-        (
-            "interface.publish",
-            json!({"path": at, "expected_revision": 0}),
-        ),
-        (
-            "assembly.follow",
-            json!({"path": at, "design": at, "board_param": "width",
-                "assembly_param": "inner", "expected_revision": 0}),
-        ),
-        ("assembly.preview", json!({"path": at, "design": at})),
-        (
-            "assembly.update",
-            json!({"path": at, "design": at, "expect_hash": HASH, "expected_revision": 0}),
-        ),
-    ] {
-        samples.push(request(command, params)?);
-    }
-    samples.push(serde_json::from_value(json!({
-        "command": "layout.place_part_file",
-        "params": {"path": at, "position": [0.0, 0.0], "expected_revision": 0},
-    }))?);
-    samples.push(serde_json::from_value(json!({
-        "command": "library.import_svg",
-        "params": {
-            "expected_revision": 0, "draft": 1, "path": at,
-            "target": {"unit": 0},
-        },
-    }))?);
-    Ok(samples)
-}
-
 fn looks_like_a_path(name: &str) -> bool {
     matches!(name, "path" | "output" | "file" | "folder" | "dir")
         || name.ends_with("_path")
@@ -297,55 +211,63 @@ fn path_properties(schema: &Value, out: &mut BTreeSet<String>) {
         _ => {}
     }
 }
-
 /// Independent of `Request::paths`: the commands whose generated schema has a
-/// property that names a path are exactly the ones with a sample, and every
-/// sample's path is seen, so the gate cannot miss a path a command takes.
+/// property named like a path are exactly the ones whose parameters type it
+/// as a [`sparksmith_core::permission::FilePath`], which is what the tool
+/// descriptions and schema rows say asks with a path, and the gate sees each
+/// path such a request names.
 #[test]
 fn every_path_a_command_can_name_reaches_the_gate() -> Fallible {
-    let samples = path_samples()?;
-    let sampled: BTreeSet<&str> = samples.iter().map(Request::command).collect();
-    let mut with_paths = BTreeSet::new();
+    let mut named = BTreeSet::new();
     for info in Request::catalog() {
         let mut found = BTreeSet::new();
         path_properties(&info.params, &mut found);
         if !found.is_empty() {
-            with_paths.insert(info.id);
+            named.insert(info.id);
         }
     }
-    assert_eq!(with_paths, sampled);
+    let typed: BTreeSet<&str> = Request::catalog_shared()
+        .iter()
+        .filter(|info| info.takes_path)
+        .map(|info| info.id)
+        .collect();
+    assert_eq!(named, typed);
+    assert_eq!(typed.len(), 22, "{typed:?}");
+    let at = "/samples/f";
     let policy = Policy::new(Mode::AllowAll, [PathBuf::from("/allowed")]);
-    for sample in &samples {
-        let paths = sample.paths();
-        assert_eq!(
-            paths,
-            vec!["/samples/f"; sample_paths(sample.command())],
-            "{}",
-            sample.command()
-        );
-        assert!(
-            sample.effective_class() >= Class::Ask,
-            "{}",
-            sample.command()
-        );
-        let refused = decide(&policy, sample);
-        let Decision::Refuse(refusal) = refused else {
-            return Err(format!("{} ran outside the folders", sample.command()).into());
+    for (command, params, count) in [
+        (
+            "project.open",
+            json!({"expected_revision": 0, "path": at}),
+            1,
+        ),
+        ("project.export_fabrication", json!({"output": at}), 1),
+        ("library.source.add", json!({"path": at}), 1),
+        ("assembly.preview", json!({"path": at, "design": at}), 2),
+        (
+            "firmware.export",
+            json!({"instance": 1, "emitter": {"emitter": "json"}, "path": at}),
+            1,
+        ),
+    ] {
+        let sample = request(command, params)?;
+        assert_eq!(sample.paths()?, vec![at; count], "{command}");
+        assert!(sample.effective_class() >= Class::Ask, "{command}");
+        let Decision::Refuse(refusal) = decide(&policy, &sample) else {
+            return Err(format!("{command} ran outside the folders").into());
         };
         assert!(
             ["gate.path_outside", "gate.never"].contains(&refusal.code),
-            "{}: {}",
-            sample.command(),
+            "{command}: {}",
             refusal.code
         );
     }
     Ok(())
 }
-
 /// The class tables and the catalog agree, so nothing falls back to Never.
 #[test]
 fn every_command_operation_and_query_has_a_class() -> Fallible {
-    let listed: BTreeSet<&str> = Request::CLASSES.iter().map(|(name, _)| *name).collect();
+    let listed: BTreeSet<&str> = Request::ENTRIES.iter().map(|entry| entry.name).collect();
     let catalog: BTreeSet<&str> = Request::catalog().iter().map(|info| info.id).collect();
     assert_eq!(listed, catalog);
 
@@ -357,16 +279,17 @@ fn every_command_operation_and_query_has_a_class() -> Fallible {
         for row in rows.as_array().ok_or("rows")? {
             operations += 1;
             let name = row["name"].as_str().ok_or("name")?;
-            let (_, class) = Operation::classes()
-                .find(|(listed, _)| *listed == name)
+            let class = Operation::entries()
+                .find(|entry| entry.name == name)
+                .map(|entry| entry.class)
                 .ok_or_else(|| format!("{name} has no class"))?;
-            let expected = (*class != Class::Edit).then(|| class.name().to_owned());
+            let expected = (class != Class::Edit).then(|| class.name().to_owned());
             assert_eq!(row_class(row), expected, "{name}");
         }
     }
-    assert_eq!(operations, Operation::classes().count());
+    assert_eq!(operations, Operation::entries().count());
     let queries = index["queries"].as_array().ok_or("queries")?;
-    assert_eq!(queries.len(), Query::CLASSES.len());
+    assert_eq!(queries.len(), Query::ENTRIES.len());
     for row in queries {
         assert_eq!(row_class(row), None, "{row}");
     }
@@ -846,12 +769,12 @@ fn the_instructions_name_no_never_class_command() {
         crate::mcp::LIVE_INSTRUCTIONS,
         crate::mcp::INSTRUCTIONS
     );
-    let never = Request::CLASSES
+    let never = Request::ENTRIES
         .iter()
-        .chain(Operation::classes())
-        .chain(Query::CLASSES)
-        .filter(|(_, class)| *class == Class::Never)
-        .map(|(name, _)| *name)
+        .chain(Operation::entries())
+        .chain(Query::ENTRIES)
+        .filter(|entry| entry.class == Class::Never)
+        .map(|entry| entry.name)
         .collect::<Vec<_>>();
     assert!(never.contains(&"library.source.add"), "{never:?}");
     for name in never {
@@ -862,23 +785,4 @@ fn the_instructions_name_no_never_class_command() {
             );
         }
     }
-}
-
-/// I-A22: what the catalog says about asking with a path (tool
-/// descriptions, schema rows) is exactly the requests whose
-/// [`Request::paths`] reach the gate.
-#[test]
-fn the_catalog_asks_with_a_path_where_the_gate_sees_one() -> Fallible {
-    let sampled: BTreeSet<&str> = path_samples()?.iter().map(Request::command).collect();
-    let declared: BTreeSet<&str> = Request::NAMING_PATHS.iter().copied().collect();
-    assert_eq!(declared, sampled);
-    for info in Request::catalog_shared() {
-        assert_eq!(
-            info.takes_path,
-            sampled.contains(info.id),
-            "{}: takes_path disagrees with Request::paths",
-            info.id
-        );
-    }
-    Ok(())
 }

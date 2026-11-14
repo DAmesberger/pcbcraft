@@ -3,7 +3,7 @@
 //! This crate is pure and wasm-compatible: no files, threads, windows or
 //! transports. `sparksmith-io` reads and writes documents; transports (UI, CLI,
 //! MCP) translate requests into [`Operation`]s applied by [`Engine`].
-// First: its `declare_classes!` is in textual scope for every module below.
+// First: its `declare_entries!` is in textual scope for every module below.
 #[macro_use]
 pub mod permission;
 
@@ -116,12 +116,9 @@ impl Operation {
         }
     }
 
-    /// This operation's title for people, from [`Self::titles`].
+    /// This operation's title for people, from [`Self::entries`].
     pub fn title(&self) -> &'static str {
-        let name = self.command();
-        Self::titles()
-            .find(|(wire, _)| *wire == name)
-            .map_or("Change", |(_, title)| *title)
+        permission::find(Self::entries(), self.command()).map_or("Change", |entry| entry.title)
     }
 
     /// The area of the design this operation changes.
@@ -177,43 +174,27 @@ impl Operation {
         }
     }
 
-    /// Every operation by wire name with its class, for discovery.
-    pub fn classes() -> impl Iterator<Item = &'static (&'static str, Class)> {
-        const UPDATE: &[(&str, Class)] = &[("update", Class::Edit)];
+    /// Every operation as declared beside its command enum, for discovery.
+    pub fn entries() -> impl Iterator<Item = &'static permission::EntryDecl> {
+        // An applied update moves instances, wiring or routed copper: the
+        // person reviews its impact first.
+        const UPDATE: &[permission::EntryDecl] =
+            &[
+                permission::EntryDecl::new("update", "library", Class::Edit, "Apply an update")
+                    .review(),
+            ];
         [
-            LibraryCommand::CLASSES,
-            InstanceCommand::CLASSES,
-            schematic::SchematicCommand::CLASSES,
-            layout::LayoutCommand::CLASSES,
-            rules::RulesCommand::CLASSES,
-            layout::fill::FillCommand::CLASSES,
-            layout::outline::BoardCommand::CLASSES,
-            layout::dimensions::DimensionCommand::CLASSES,
-            fabrication::FabricationCommand::CLASSES,
-            interface::InterfaceCommand::CLASSES,
-            interface::assembly_link::AssemblyCommand::CLASSES,
-            UPDATE,
-        ]
-        .into_iter()
-        .flatten()
-    }
-
-    /// Every operation by wire name with its title, in [`Self::classes`]'s
-    /// order.
-    pub fn titles() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
-        const UPDATE: &[(&str, &str)] = &[("update", "Apply an update")];
-        [
-            LibraryCommand::TITLES,
-            InstanceCommand::TITLES,
-            schematic::SchematicCommand::TITLES,
-            layout::LayoutCommand::TITLES,
-            rules::RulesCommand::TITLES,
-            layout::fill::FillCommand::TITLES,
-            layout::outline::BoardCommand::TITLES,
-            layout::dimensions::DimensionCommand::TITLES,
-            fabrication::FabricationCommand::TITLES,
-            interface::InterfaceCommand::TITLES,
-            interface::assembly_link::AssemblyCommand::TITLES,
+            LibraryCommand::ENTRIES,
+            InstanceCommand::ENTRIES,
+            schematic::SchematicCommand::ENTRIES,
+            layout::LayoutCommand::ENTRIES,
+            rules::RulesCommand::ENTRIES,
+            layout::fill::FillCommand::ENTRIES,
+            layout::outline::BoardCommand::ENTRIES,
+            layout::dimensions::DimensionCommand::ENTRIES,
+            fabrication::FabricationCommand::ENTRIES,
+            interface::InterfaceCommand::ENTRIES,
+            interface::assembly_link::AssemblyCommand::ENTRIES,
             UPDATE,
         ]
         .into_iter()
@@ -494,51 +475,51 @@ pub enum Query {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(Query {
-    InspectInstance "component.inspect" Read "Inspect an instance",
-    CheckDefinition "component.check" Read "Check a definition",
-    CheckDrafts "component.check_drafts" Read "Check all drafts",
-    Search "library.search" Read "Search the library",
-    GenericParts "library.generic_parts" Read "Find generic parts",
-    Facets "library.facets" Read "List search filters",
-    InspectLineage "library.inspect" Read "Inspect a lineage",
-    Bom "project.bom" Read "Bill of materials",
-    ResolveGroups "library.resolve_groups" Read "Group instances for purchasing",
-    FootprintPreview "library.footprint_preview" Read "Preview a footprint",
-    UpdatesAvailable "library.updates_available" Read "List library updates",
-    PromotePreview "library.promote_preview" Read "Preview a promotion",
-    Issues "project.issues" Read "List issues",
-    Templates "library.templates" Read "List package rows",
-    StandardFields "library.standard_fields" Read "List standard fields",
-    PackagePlan "library.package_plan" Read "Plan a package from a row",
-    Models "library.models" Read "Find 3D models",
-    PinoutPreview "library.pinout_preview" Read "Preview a pinout import",
-    SuggestPins "functions.suggest" Read "Suggest pin assignments",
-    PinReport "project.pin_report" Read "Pin report",
-    PinConfig "project.pin_config" Read "Firmware pin configuration",
-    Marking "instance.marking" Read "Resolve an instance's marking",
-    RulesEffective "rules.effective" Read "Effective rules",
-    RuleProfiles "rules.fab_profiles" Read "List fab profiles",
-    PreviewProfile "rules.preview_fab_profile" Read "Preview a fab profile",
-    PreviewOptions "rules.preview_fab_options" Read "Preview fab profile options",
-    NetClasses "net_class.list" Read "List net classes",
-    PreviewNetClassPatterns "net_class.preview_patterns" Read "Preview net class patterns",
-    BoardShape "board.shape" Read "Board shape",
-    FillStatus "fill.status" Read "Fill status",
-    Sheets "schematic.sheets" Read "List sheets",
-    NetPlaces "schematic.net_places" Read "Find a net on the sheets",
-    SheetCopy "schematic.copy" Read "Copy schematic objects",
-    SheetScene "schematic.scene" Read "Sheet scene",
-    ImpedanceCalculate "impedance.calculate" Read "Calculate impedance",
-    ImpedanceTable "impedance.table" Read "Impedance table",
-    SuggestPairs "diff_pair.suggest" Read "Suggest differential pairs",
-    LengthReport "layout.length_report" Read "Length report",
-    RoutePreview "layout.route_preview" Read "Preview a route",
-    TrackDragPreview "layout.track_drag_preview" Read "Preview a track drag",
-    TunePreview "layout.tune_preview" Read "Preview length tuning",
-    Preflight "fabrication.preflight" Read "Production check",
-    InterfaceList "interface.list" Read "List the board interface",
-    AssemblyStatus "assembly.status" Read "Check the assembly link",
+declare_entries!(Query in project {
+    InspectInstance "component.inspect" Read "Inspect an instance" [in schematic, link],
+    CheckDefinition "component.check" Read "Check a definition" [in library, link],
+    CheckDrafts "component.check_drafts" Read "Check all drafts" [in library, link],
+    Search "library.search" Read "Search the library" [in library, link],
+    GenericParts "library.generic_parts" Read "Find generic parts" [in library, link],
+    Facets "library.facets" Read "List search filters" [in library, link],
+    InspectLineage "library.inspect" Read "Inspect a lineage" [in library, link],
+    Bom "project.bom" Read "Bill of materials" [link],
+    ResolveGroups "library.resolve_groups" Read "Group instances for purchasing" [in library, link],
+    FootprintPreview "library.footprint_preview" Read "Preview a footprint" [in library, long, link],
+    UpdatesAvailable "library.updates_available" Read "List library updates" [in library, link],
+    PromotePreview "library.promote_preview" Read "Preview a promotion" [in library, link],
+    Issues "project.issues" Read "List issues" [in checks, long, link],
+    Templates "library.templates" Read "List package rows" [in library, link],
+    StandardFields "library.standard_fields" Read "List standard fields" [in library, link],
+    PackagePlan "library.package_plan" Read "Plan a package from a row" [in library, long, link],
+    Models "library.models" Read "Find 3D models" [in library, link],
+    PinoutPreview "library.pinout_preview" Read "Preview a pinout import" [in library, long, link],
+    SuggestPins "functions.suggest" Read "Suggest pin assignments" [in schematic, link],
+    PinReport "project.pin_report" Read "Pin report" [in schematic, link],
+    PinConfig "project.pin_config" Read "Firmware pin configuration" [in fab, link],
+    Marking "instance.marking" Read "Resolve an instance's marking" [in schematic],
+    RulesEffective "rules.effective" Read "Effective rules" [in rules, link],
+    RuleProfiles "rules.fab_profiles" Read "List fab profiles" [in rules, link],
+    PreviewProfile "rules.preview_fab_profile" Read "Preview a fab profile" [in rules, link],
+    PreviewOptions "rules.preview_fab_options" Read "Preview fab profile options" [in rules, link],
+    NetClasses "net_class.list" Read "List net classes" [in rules, link],
+    PreviewNetClassPatterns "net_class.preview_patterns" Read "Preview net class patterns" [in rules, link],
+    BoardShape "board.shape" Read "Board shape" [in layout, link],
+    FillStatus "fill.status" Read "Fill status" [in layout, link],
+    Sheets "schematic.sheets" Read "List sheets" [in schematic, link],
+    NetPlaces "schematic.net_places" Read "Find a net on the sheets" [in schematic, link],
+    SheetCopy "schematic.copy" Read "Copy schematic objects" [in schematic, link],
+    SheetScene "schematic.scene" Read "Sheet scene" [in schematic, link],
+    ImpedanceCalculate "impedance.calculate" Read "Calculate impedance" [in rules],
+    ImpedanceTable "impedance.table" Read "Impedance table" [in rules, link],
+    SuggestPairs "diff_pair.suggest" Read "Suggest differential pairs" [in layout, link],
+    LengthReport "layout.length_report" Read "Length report" [in layout, link],
+    RoutePreview "layout.route_preview" Read "Preview a route" [in layout, link],
+    TrackDragPreview "layout.track_drag_preview" Read "Preview a track drag" [in layout, link],
+    TunePreview "layout.tune_preview" Read "Preview length tuning" [in layout, link],
+    Preflight "fabrication.preflight" Read "Production check" [in checks, long, link],
+    InterfaceList "interface.list" Read "List the board interface" [in model3d],
+    AssemblyStatus "assembly.status" Read "Check the assembly link" [in model3d],
 });
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -739,6 +720,10 @@ pub struct Engine {
     /// The host's generator runtime (`library.generate`, GP1): a host
     /// setting like the waiver rule, kept across documents.
     generators: Option<Arc<dyn library::generated::GeneratorRuntime + Send + Sync>>,
+    /// The host's standards and materials ([`Engine::set_context`]): a host
+    /// setting like the generator runtime, kept across documents. Current
+    /// on the calling thread while an operation applies or a query answers.
+    context: Option<Arc<library::standards::Context>>,
 }
 
 impl Engine {
@@ -750,6 +735,34 @@ impl Engine {
         runtime: Arc<dyn library::generated::GeneratorRuntime + Send + Sync>,
     ) {
         self.generators = Some(runtime);
+    }
+
+    /// Give this engine the host's context: the standards (and materials)
+    /// it draws on. It stays across new and opened documents. Without one,
+    /// whatever needs a standard is refused.
+    pub fn set_context(&mut self, context: Arc<library::standards::Context>) {
+        self.context = Some(context);
+    }
+
+    /// Drop the context, as a host that gave none: a test fixture, never in
+    /// the product (test engines start with the fixture context).
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn clear_context(&mut self) {
+        self.context = None;
+    }
+
+    /// The context the host gave ([`Self::set_context`]).
+    pub fn context(&self) -> Option<&Arc<library::standards::Context>> {
+        self.context.as_ref()
+    }
+
+    /// Make this engine's context current on this thread until the scope
+    /// ends: what a host does to draw or build from this engine's document
+    /// outside an operation or query.
+    pub fn enter_context(&self) -> Option<library::standards::Scope> {
+        self.context
+            .as_ref()
+            .map(library::standards::Context::enter)
     }
 
     /// Whether this engine has a generator runtime.
@@ -803,7 +816,20 @@ impl Engine {
             copper: std::sync::OnceLock::new(),
             rerouted: layout::router::reroute::Rerouted::default(),
             generators: None,
+            context: Self::fixture_context(),
         }
+    }
+
+    /// Test builds give every engine the fixture standards, as they give
+    /// it fixture stackups; the product's host sets its own.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    fn fixture_context() -> Option<Arc<library::standards::Context>> {
+        library::standards::Context::fixture().ok()
+    }
+
+    #[cfg(not(any(test, feature = "test-fixtures")))]
+    fn fixture_context() -> Option<Arc<library::standards::Context>> {
+        None
     }
 
     /// An engine without a board (no layers, no size, which every check
@@ -860,8 +886,13 @@ impl Engine {
     /// Unconnected terminals are marked no-connect. The board's rules are
     /// `profile`. The undo history is cleared.
     /// Its stackups are `presets`' (the shipped stackup data).
-    pub fn showcase_with(presets: &StackupPresets, profile: rules::RuleProfile) -> Result<Self> {
-        Self::showcase_in(None, presets, profile)
+    /// It draws on the host's `context`, which it keeps.
+    pub fn showcase_with(
+        context: Arc<library::standards::Context>,
+        presets: &StackupPresets,
+        profile: rules::RuleProfile,
+    ) -> Result<Self> {
+        Self::showcase_in(context, None, presets, profile)
     }
 
     /// A test fixture, never in the product: [`Engine::showcase_with`] the
@@ -869,6 +900,7 @@ impl Engine {
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase() -> Result<Self> {
         Self::showcase_in(
+            library::standards::Context::fixture()?,
             None,
             &StackupPresets::fixture()?,
             rules::fixtures::prototype()?,
@@ -882,11 +914,12 @@ impl Engine {
     /// parameters (`layout::showcase::board_edits`). The pours are filled
     /// last, over the final shape. The undo history is cleared.
     pub fn showcase_hosted(
+        context: Arc<library::standards::Context>,
         evaluators: Evaluators<'_>,
         presets: &StackupPresets,
         profile: rules::RuleProfile,
     ) -> Result<Self> {
-        Self::showcase_in(Some(evaluators), presets, profile)
+        Self::showcase_in(context, Some(evaluators), presets, profile)
     }
 
     /// A test fixture, never in the product: [`Engine::showcase_hosted`]
@@ -894,6 +927,7 @@ impl Engine {
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase_hosted_fixture(evaluators: Evaluators<'_>) -> Result<Self> {
         Self::showcase_in(
+            library::standards::Context::fixture()?,
             Some(evaluators),
             &StackupPresets::fixture()?,
             rules::fixtures::prototype()?,
@@ -901,15 +935,18 @@ impl Engine {
     }
 
     fn showcase_in(
+        context: Arc<library::standards::Context>,
         hosted: Option<Evaluators<'_>>,
         presets: &StackupPresets,
         profile: rules::RuleProfile,
     ) -> Result<Self> {
+        let _scope = context.enter();
         let showcase_rules = profile.rules().clone();
         let mut engine = Self::new(&NewBoard {
             size: layout::showcase::BOARD_MM,
             stackup: presets.preset(MIN_COPPER_LAYERS)?,
         });
+        engine.set_context(Arc::clone(&context));
         engine.apply(
             engine.revision,
             Operation::Rules(rules::RulesCommand::SetProfile {
@@ -1435,6 +1472,7 @@ impl Engine {
             check_settings: self.check_settings,
             copper: self.copper.clone(),
             generators: self.generators.clone(),
+            context: self.context.clone(),
             ..Engine::with_document(self.document.clone())
         };
         let mut outcomes = Vec::with_capacity(count);
@@ -1504,6 +1542,7 @@ impl Engine {
             copper: self.copper.clone(),
             rerouted: self.rerouted.clone(),
             generators: self.generators.clone(),
+            context: self.context.clone(),
         }
     }
 
@@ -1513,6 +1552,7 @@ impl Engine {
         operation: Operation,
         evaluators: Evaluators<'_>,
     ) -> Result<Outcome> {
+        let _context = self.enter_context();
         let evaluator = evaluators.footprint;
         self.check_revision(expected_revision)?;
         self.rerouted = Default::default();
@@ -1932,6 +1972,7 @@ impl Engine {
         context: &catalog::CatalogContext,
         evaluator: Option<&dyn library::FootprintEvaluator>,
     ) -> Result<QueryResult> {
+        let _context = self.enter_context();
         let index = || {
             catalog::Index::with_sources(
                 &self.document.project,

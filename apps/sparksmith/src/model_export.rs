@@ -164,7 +164,7 @@ impl ModelExport {
         let repaint = self.ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("sparksmith-model-export".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let result = thread_path
                     .to_str()
                     .ok_or_else(|| Failure::Other("The export path must be UTF-8".to_owned()))
@@ -180,7 +180,7 @@ impl ModelExport {
                     });
                 let _ = sender.send(result);
                 repaint.request_repaint();
-            });
+            }));
         match spawned {
             Ok(_) => {
                 self.running = Some(Running {

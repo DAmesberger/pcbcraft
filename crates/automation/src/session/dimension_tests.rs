@@ -241,6 +241,7 @@ fn a_second_distance_that_only_a_turn_would_satisfy_is_refused() -> TestResult {
 /// from J1, so those two dimensions are deleted first.
 #[test]
 fn an_edge_dimension_moves_the_part_to_the_value_shown() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut session = open()?;
     let r5 = session
         .engine()

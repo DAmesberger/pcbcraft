@@ -155,6 +155,7 @@ mod tests {
     /// focus, and off again restores the model as built.
     #[test]
     fn follow_net_toggles_and_draws_only_with_a_focus() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         assert!(!viewport.follow_net(), "off by default");
         let built = published(&viewport)?;
@@ -203,6 +204,7 @@ mod tests {
     /// every other body moves to the see-through triangles, faded.
     #[test]
     fn the_nets_bodies_stay_opaque_and_the_rest_fade() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         // The track and a body of the stream (a pad's copper, say).
         let mut net = track_net(&viewport)?;
@@ -268,6 +270,7 @@ mod tests {
     /// through the faded mask above.
     #[test]
     fn a_followed_via_stays_solid_among_faded_vias() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(40)?;
         let (item, x, y) = super::super::tests::above_via(&mut viewport, 17)?;
         let shared: Vec<usize> = viewport
@@ -314,6 +317,7 @@ mod tests {
     /// stream is packed again and the highlight recoloured.
     #[test]
     fn selection_changes_while_following_rebuild_no_geometry() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(8)?;
         let before = meshes(&viewport);
         let generation = viewport.generation;
@@ -365,6 +369,7 @@ mod tests {
     /// rebuild, and it is not following a net. Show all makes it solid.
     #[test]
     fn x_ray_draws_the_copper_see_through_without_a_rebuild() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(8)?;
         let before = meshes(&viewport);
         let generation = viewport.generation;
@@ -401,6 +406,7 @@ mod tests {
     /// the look off tints the whole net again.
     #[test]
     fn the_followed_net_shows_its_copper_untinted() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(8)?;
         let (net, _, _) = super::super::tests::above_via(&mut viewport, 1)?;
         let (picked, _, _) = super::super::tests::above_via(&mut viewport, 5)?;
@@ -440,6 +446,7 @@ mod tests {
     /// rebuild.
     #[test]
     fn the_standard_look_drops_the_materials_without_a_rebuild() -> TestResult {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(8)?;
         let before = meshes(&viewport);
         let generation = viewport.generation;
