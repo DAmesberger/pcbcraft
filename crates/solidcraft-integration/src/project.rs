@@ -2122,6 +2122,7 @@ impl Drawn<'_> {
             appearance::open_laminate(display, self.lands, self.paths, &fill::outlines(self.fills))
         };
         let pours = fill::regions(self.fills);
+        let legend_memo = memo.take_legend();
         let legend = || {
             crate::silkscreen::films(
                 self.project,
@@ -2133,6 +2134,7 @@ impl Drawn<'_> {
                     pours: &pours,
                     picks: &self.picks,
                 },
+                &legend_memo,
             )
         };
         // The films over the fills, the bare laminate and the legend need
@@ -2150,7 +2152,9 @@ impl Drawn<'_> {
                 layers,
                 films.join().unwrap_or_else(|_| failed()),
                 open.join().unwrap_or_else(|_| failed()),
-                legend.join().unwrap_or_else(|_| failed()),
+                legend.join().unwrap_or_else(|_| {
+                    Err(Error::Verification("drawing the legend failed".into()))
+                }),
             )
         });
         #[cfg(target_arch = "wasm32")]
@@ -2163,9 +2167,11 @@ impl Drawn<'_> {
             legend(),
         );
         let mut layers = layers?;
+        let (legend, legend_memo) = legend?;
+        memo.set_legend(legend_memo);
         layers.extend(films?);
         layers.extend(open?);
-        layers.extend(legend?);
+        layers.extend(legend);
         layers.extend(crate::stackup_edge::bands(&self.project.stackup, display)?);
         Ok(layers)
     }

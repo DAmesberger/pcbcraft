@@ -12,7 +12,8 @@ use crate::material::{self, BodyKind};
 use crate::scene::{Geometry, Place};
 use crate::stack::{PROUD_MM, Stack};
 use crate::{Error, Result};
-use sparksmith_core::geometry::{cos_sin, is_quarter_turn};
+use sparksmith_core::geometry::{Bounds, cos_sin, is_quarter_turn};
+use sparksmith_core::layout::grid::BoundsGrid;
 use sparksmith_core::library::offset_polygon;
 use sparksmith_core::library::{
     ChipKind, FootprintDefinition, PackageDefinition, PackageForm, PadKind, PadSide,
@@ -345,12 +346,25 @@ pub fn board(
 #[derive(Clone, Default)]
 pub struct Memo {
     made: std::collections::HashMap<u64, Vec<Geometry>>,
+    /// The legend's films ([`crate::silkscreen::films`]), drawn beside
+    /// [`board_with`] and kept apart from its layers.
+    legend: Option<Box<Memo>>,
 }
 
 impl Memo {
+    /// The legend's memo, taken out to draw the legend beside the layers.
+    pub fn take_legend(&mut self) -> Memo {
+        self.legend.take().map(|m| *m).unwrap_or_default()
+    }
+
+    /// Keep the legend's memo of this call.
+    pub fn set_legend(&mut self, legend: Memo) {
+        self.legend = Some(Box::new(legend));
+    }
+
     /// The layers `inputs` (debug-printed: every number exactly) make: the
     /// last call's if it made them, else `make`'s, kept in `next`.
-    fn unit(
+    pub(crate) fn unit(
         &self,
         next: &mut Self,
         out: &mut Vec<Geometry>,
@@ -470,8 +484,36 @@ pub fn board_with(
             })?,
         }
     }
+    // Each track meets only the openings and domes near it, through
+    // bounds grids: a board's tracks cost their own length, not tracks ×
+    // (lands + vias). A cap reaches its half-width past its ends and to
+    // its sides, so a box grown by that much times `NEAR_SLACK` (above √2,
+    // for a diagonal track's corners) holds all it can meet.
+    let ring = |points: &[Point]| Bounds::of(points.iter().copied());
+    let land_grid = BoundsGrid::new(
+        lands.iter().map(|land| {
+            land.openings
+                .iter()
+                .filter_map(|o| ring(o))
+                .reduce(Bounds::union)
+        }),
+        0.0,
+    );
+    let via_grid = BoundsGrid::new(
+        vias.iter()
+            .map(|v| Some(Bounds::point(v.at).inflated(NEAR_SLACK * v.diameter / 2.0))),
+        0.0,
+    );
+    let mut near = Vec::new();
     for path in paths {
-        track(&mut out, board, lands, vias, path)?;
+        let reach = Bounds::point(path.start)
+            .including(path.end)
+            .inflated(NEAR_SLACK * (path.width / 2.0 + CAP_MARGIN_MM));
+        land_grid.near(&reach, 0.0, &mut near);
+        let near_lands: Vec<&Land> = near.iter().filter_map(|k| lands.get(*k)).collect();
+        via_grid.near(&reach, 0.0, &mut near);
+        let near_vias: Vec<&ViaMark> = near.iter().filter_map(|k| vias.get(*k)).collect();
+        track(&mut out, board, &near_lands, &near_vias, path)?;
     }
     // Vias of one drill, ring and tenting show the same dome and bore: made
     // once at the origin and placed at each.
@@ -605,14 +647,19 @@ fn merged(mut intervals: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
     out
 }
 
+/// How much past a track's or via's reach its box is grown to find what
+/// it meets: above √2, the farthest a reach in a rotated frame lies past
+/// its axis-aligned box.
+const NEAR_SLACK: f64 = 1.5;
+
 /// A track's mask cap, interrupted wherever the track crosses a same-layer
 /// mask opening, and finish over its copper inside each opening: all copper
 /// a mask opening exposes is plated, as fabricated.
 fn track(
     out: &mut Vec<Geometry>,
     board: &Board,
-    lands: &[Land],
-    vias: &[ViaMark],
+    lands: &[&Land],
+    vias: &[&ViaMark],
     path: &Path,
 ) -> Result<()> {
     let delta = [path.end[0] - path.start[0], path.end[1] - path.start[1]];

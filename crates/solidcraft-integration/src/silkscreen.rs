@@ -8,11 +8,12 @@
 //! on the cap's crown instead, so copper under the mask never shows
 //! through the legend.
 use crate::Result;
-use crate::appearance::{self, Board, CAP_MARGIN_MM, Land, Path, Region, ViaMark, slab};
+use crate::appearance::{self, Board, CAP_MARGIN_MM, Land, Memo, Path, Region, ViaMark, slab};
 use crate::material::BodyKind;
 use crate::scene::Geometry;
 use crate::stack::{INK_SINK_SHARE, Slot};
-use sparksmith_core::geometry::Shape;
+use sparksmith_core::geometry::{Bounds, Shape};
+use sparksmith_core::layout::grid::BoundsGrid;
 use sparksmith_core::layout::{self, BoardDrawing, PlacedItem};
 use sparksmith_core::library::graphics::PlacedText;
 use sparksmith_core::library::offset_polygon;
@@ -46,8 +47,16 @@ pub struct Legend<'a> {
 /// `legend.lands` grown by the rules' silkscreen-to-pad clearance
 /// (`rules.silkscreen.pad_clearance`), as fabricators clip legend. Each film is a [`BodyKind::Silkscreen`] geometry whose
 /// `layer` names its side's outer copper layer: one film per placed part and
-/// side, plus its pieces standing on mask caps.
-pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
+/// side, plus its pieces standing on mask caps. A part's films whose
+/// inputs `memo` (the last call's) holds are taken from it instead of made
+/// again; the memo of this call is returned with the films, so an edit
+/// remakes only the legend it changed.
+pub fn films(
+    project: &Project,
+    legend: &Legend<'_>,
+    memo: &Memo,
+) -> Result<(Vec<Geometry>, Memo)> {
+    let mut next = Memo::default();
     let stackup = &project.stackup;
     let mut strokes: BTreeMap<(Id, Layer), Vec<Vec<Point>>> = BTreeMap::new();
     let silk = project.rules.effective().silkscreen;
@@ -73,20 +82,25 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
         }
     }
     let board = legend.board;
+    // Each side's openings (grown once) and covers, filed by bounds, so a
+    // part's legend meets only what lies under it: a board's parts cost
+    // their own ink, not parts × board.
+    let mut sides: BTreeMap<Layer, Near> = BTreeMap::new();
     let mut films = Vec::new();
     for ((instance, side), loops) in strokes {
         if loops.is_empty() {
             continue;
         }
+        let Some(reach) = Bounds::of(loops.iter().flatten().copied()) else {
+            continue;
+        };
+        let reach = reach.inflated(NEAR_MM);
+        let near = sides
+            .entry(side)
+            .or_insert_with(|| Near::of(legend, side, silk.pad_clearance));
         let item = legend.picks.get(&instance).copied();
         let layer = Some(CopperLayer::from(side));
-        let cuts: Vec<Vec<Point>> = legend
-            .lands
-            .iter()
-            .filter(|land| land.layer == side)
-            .flat_map(|land| land.openings.iter())
-            .map(|o| offset_polygon(o, silk.pad_clearance).unwrap_or_else(|| o.clone()))
-            .collect();
+        let cuts = near.cuts(&reach);
         // On the mask (or the bare laminate): the stack's legend slot; and
         // on the crown of the mask (or the finish) over copper.
         let Some([z0, z1]) = board.stack.span_of(Slot::Silk(side)) else {
@@ -100,38 +114,43 @@ pub fn films(project: &Project, legend: &Legend<'_>) -> Result<Vec<Geometry>> {
         let ink = board.stack.ink_mm();
         let sink = INK_SINK_SHARE * ink;
         let flat = Region {
-            fills: loops.clone(),
-            cuts: cuts.clone(),
+            fills: loops,
+            cuts,
         };
-        display_only(appearance::push(
-            &mut films,
-            Some(board),
-            BodyKind::Silkscreen,
-            item,
-            layer,
-            slab(&flat, z0, z1, FILM_TILE_MM),
-        ))?;
         let (c0, c1) = board.span(side, crown - sink, crown + ink);
-        for raised in raised(&loops, &covers(legend, side)) {
+        let covers = near.covers(&reach);
+        let inputs = (board, item, layer, [z0, z1, c0, c1], &flat, &covers);
+        memo.unit(&mut next, &mut films, &inputs, |films| {
             display_only(appearance::push(
-                &mut films,
+                films,
                 Some(board),
                 BodyKind::Silkscreen,
                 item,
                 layer,
-                slab(
-                    &Region {
-                        fills: raised.fills,
-                        cuts: raised.cuts.into_iter().chain(cuts.clone()).collect(),
-                    },
-                    c0,
-                    c1,
-                    FILM_TILE_MM,
-                ),
+                slab(&flat, z0, z1, FILM_TILE_MM),
             ))?;
-        }
+            for raised in raised(&flat.fills, &covers) {
+                display_only(appearance::push(
+                    films,
+                    Some(board),
+                    BodyKind::Silkscreen,
+                    item,
+                    layer,
+                    slab(
+                        &Region {
+                            fills: raised.fills,
+                            cuts: raised.cuts.into_iter().chain(flat.cuts.clone()).collect(),
+                        },
+                        c0,
+                        c1,
+                        FILM_TILE_MM,
+                    ),
+                ))?;
+            }
+            Ok(())
+        })?;
     }
-    Ok(films)
+    Ok((films, next))
 }
 
 /// A legend film that is not a closed outward volume is left out rather
@@ -142,6 +161,84 @@ fn display_only(pushed: Result<()>) -> Result<()> {
     match pushed {
         Err(crate::Error::Verification(_)) => Ok(()),
         other => other,
+    }
+}
+
+/// How far past a legend's bounds openings and covers are taken, mm: any
+/// that reach its ink lie within its bounds.
+const NEAR_MM: f64 = 0.01;
+
+/// One side's mask openings (grown by the legend clearance) and covers,
+/// each outline and each cover's hole filed by its bounds.
+struct Near {
+    cuts: Vec<Vec<Point>>,
+    cut_grid: BoundsGrid,
+    /// Each cover's outer loop.
+    outers: Vec<Vec<Point>>,
+    outer_grid: BoundsGrid,
+    /// Every cover's holes, with the cover they belong to.
+    holes: Vec<(usize, Vec<Point>)>,
+    hole_grid: BoundsGrid,
+    scratch: Vec<usize>,
+}
+
+impl Near {
+    fn of(legend: &Legend<'_>, side: Layer, clearance: f64) -> Self {
+        let cuts: Vec<Vec<Point>> = legend
+            .lands
+            .iter()
+            .filter(|land| land.layer == side)
+            .flat_map(|land| land.openings.iter())
+            .map(|o| offset_polygon(o, clearance).unwrap_or_else(|| o.clone()))
+            .collect();
+        let mut outers = Vec::new();
+        let mut holes = Vec::new();
+        for cover in covers(legend, side) {
+            let mut rings = cover.into_iter();
+            let Some(outer) = rings.next() else {
+                continue;
+            };
+            holes.extend(rings.map(|h| (outers.len(), h)));
+            outers.push(outer);
+        }
+        let bounds = |ring: &Vec<Point>| Bounds::of(ring.iter().copied());
+        Self {
+            cut_grid: BoundsGrid::new(cuts.iter().map(bounds), NEAR_MM),
+            outer_grid: BoundsGrid::new(outers.iter().map(bounds), NEAR_MM),
+            hole_grid: BoundsGrid::new(holes.iter().map(|(_, h)| bounds(h)), NEAR_MM),
+            cuts,
+            outers,
+            holes,
+            scratch: Vec::new(),
+        }
+    }
+
+    /// The openings whose bounds meet `reach`, in their order.
+    fn cuts(&mut self, reach: &Bounds) -> Vec<Vec<Point>> {
+        self.cut_grid.near(reach, 0.0, &mut self.scratch);
+        self.scratch
+            .iter()
+            .filter_map(|k| self.cuts.get(*k).cloned())
+            .collect()
+    }
+
+    /// The covers whose outer loop meets `reach`, each with only the holes
+    /// that meet it too: a hole elsewhere cannot change the ink's
+    /// intersection with its cover.
+    fn covers(&mut self, reach: &Bounds) -> Vec<Vec<Vec<Point>>> {
+        self.outer_grid.near(reach, 0.0, &mut self.scratch);
+        let mut covers: BTreeMap<usize, Vec<Vec<Point>>> = self
+            .scratch
+            .iter()
+            .filter_map(|k| Some((*k, vec![self.outers.get(*k)?.clone()])))
+            .collect();
+        self.hole_grid.near(reach, 0.0, &mut self.scratch);
+        for (cover, hole) in self.scratch.iter().filter_map(|k| self.holes.get(*k)) {
+            if let Some(rings) = covers.get_mut(cover) {
+                rings.push(hole.clone());
+            }
+        }
+        covers.into_values().collect()
     }
 }
 
