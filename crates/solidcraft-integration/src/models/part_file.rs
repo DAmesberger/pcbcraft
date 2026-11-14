@@ -43,7 +43,7 @@ use sparksmith_core::library::datum::{
 use sparksmith_core::library::marking::surface::{AnchorInfo, SurfaceGeometry};
 use sparksmith_core::library::model3d::MarkingArea;
 use sparksmith_core::library::package_model::{
-    MAX_PART_BODIES, MAX_PART_SURFACES, MAX_PART_VALUES, PartDerived, PartValue,
+    LeadBody, MAX_PART_BODIES, MAX_PART_SURFACES, MAX_PART_VALUES, PartDerived, PartValue,
     part_parameter_name_ok,
 };
 use sparksmith_core::materials::MaterialId;
@@ -218,6 +218,7 @@ pub fn derived(part: &EvaluatedPart) -> Result<PartDerived> {
         bodies: u32::try_from(part.bodies.len()).unwrap_or(u32::MAX),
         surfaces: part.surfaces.clone(),
         datums: part.datums.clone(),
+        leads: Vec::new(),
     })
 }
 
@@ -873,10 +874,80 @@ fn valid_stem(stem: &str) -> bool {
         && stem.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
+/// How far a lead contact may lie outside a lead body's footprint, mm:
+/// the generated parts' envelope tolerance.
+pub const LEAD_TOLERANCE_MM: f64 = 0.01;
+
+/// The part's lead bodies bound to terminals (part-generation slice B2):
+/// every body of a lead material (role [`BodyRole::Termination`]) under a
+/// contact, `(terminal designation, [x, y] mm in the model frame)`, is
+/// bound to that contact's terminal; a body under no contact stays
+/// unbound. When `strict` (a generated part's lead contacts), a contact
+/// under no lead body and a body under the contacts of two terminals are
+/// refused, naming them; otherwise (contacts from footprint pads, which
+/// need not have a lead body each) the first is skipped and the second
+/// body left unbound. Sorted by body name. Generic: the part file names no
+/// terminal, and nothing is added to Solidcraft.
+pub fn lead_bodies(
+    part: &EvaluatedPart,
+    contacts: &[(String, [f64; 2])],
+    strict: bool,
+) -> std::result::Result<Vec<LeadBody>, String> {
+    let mut bound: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut ambiguous: std::collections::BTreeSet<&str> = Default::default();
+    for (terminal, [x, y]) in contacts {
+        let under: Vec<&PartBody> = part
+            .bodies
+            .iter()
+            .filter(|b| {
+                role_of(b.material) == BodyRole::Termination
+                    && *x >= b.bounds_mm[0][0] - LEAD_TOLERANCE_MM
+                    && *x <= b.bounds_mm[1][0] + LEAD_TOLERANCE_MM
+                    && *y >= b.bounds_mm[0][1] - LEAD_TOLERANCE_MM
+                    && *y <= b.bounds_mm[1][1] + LEAD_TOLERANCE_MM
+            })
+            .collect();
+        if under.is_empty() && strict {
+            return Err(format!(
+                "lead {terminal} touches the board at ({x}, {y}) mm, under no lead body of its part file"
+            ));
+        }
+        for body in under {
+            match bound.insert(&body.name, terminal) {
+                Some(other) if other != terminal && strict => {
+                    return Err(format!(
+                        "the lead body {} lies over the contacts of terminals {other} and {terminal}",
+                        body.name
+                    ));
+                }
+                Some(other) if other != terminal => {
+                    ambiguous.insert(&body.name);
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(bound
+        .into_iter()
+        .filter(|(body, _)| !ambiguous.contains(body))
+        .map(|(body, terminal)| LeadBody {
+            body: body.to_owned(),
+            terminal: terminal.to_owned(),
+        })
+        .collect())
+}
+
 /// Add `part`'s history to `native` as the component definition `stem`
-/// ([`insert_design`]), the bodies' roles and materials from their looks.
-/// Refuses a blocked part. Leaves the root component active.
-pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<ModelDefinition> {
+/// ([`insert_design`]), the bodies' roles and materials from their looks
+/// and each lead body's package terminal from `terminals` (body name to
+/// terminal id, slice B2). Refuses a blocked part. Leaves the root
+/// component active.
+pub fn insert(
+    native: &mut Native,
+    stem: &str,
+    part: &EvaluatedPart,
+    terminals: &BTreeMap<String, u32>,
+) -> Result<ModelDefinition> {
     if let Some(refusal) = part.refusal() {
         return Err(refusal);
     }
@@ -887,7 +958,7 @@ pub fn insert(native: &mut Native, stem: &str, part: &EvaluatedPart) -> Result<M
             name: b.name.clone(),
             role: role_of(b.material),
             material: b.material.unwrap_or(MaterialId::EpoxyMould),
-            terminal: None,
+            terminal: terminals.get(&b.name).copied(),
         })
         .collect();
     insert_design(native, stem, &part.source, &bodies)

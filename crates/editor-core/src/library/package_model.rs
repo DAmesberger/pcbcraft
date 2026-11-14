@@ -172,6 +172,25 @@ pub struct PartDerived {
     /// the part file is used (slice B2).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub datums: Vec<super::datum::PackageDatum>,
+    /// The part file's lead bodies and the package terminal each belongs
+    /// to (part-generation slice B2): a body of a lead material is bound to
+    /// the terminal whose lead contact (a generated package's contact, or
+    /// the centre of a pad of the package's footprint) lies under it, so
+    /// it highlights and picks with that terminal's net. Found by the host
+    /// from the evaluated bodies; nothing in the part file names a
+    /// terminal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub leads: Vec<LeadBody>,
+}
+
+/// A lead body of a part file and the package terminal it belongs to, by
+/// the terminal's designation (`PackageTerminal::designation`).
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(deny_unknown_fields)]
+pub struct LeadBody {
+    /// The body's name in the part file.
+    pub body: String,
+    pub terminal: String,
 }
 
 impl PartDerived {
@@ -266,6 +285,16 @@ impl PartFileModel {
             }
         }
         out.extend(super::datum::datum_problems(&d.datums));
+        if d.leads.len() > MAX_PART_BODIES as usize
+            || d.leads
+                .iter()
+                .any(|l| l.body.is_empty() || l.body.len() > 256 || l.terminal.len() > 256)
+            || d.leads.windows(2).any(|w| w[0].body >= w[1].body)
+        {
+            out.push(
+                "the lead bodies must be named once each, sorted, and at most one per body".into(),
+            );
+        }
         out
     }
 

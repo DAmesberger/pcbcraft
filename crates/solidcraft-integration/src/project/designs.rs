@@ -170,7 +170,7 @@ fn make(
             b.library_model(&part.stem, model)?;
         }
         PartModel::PartFile(use_, bytes) => {
-            let stem = b.define_part(&part.stem, use_, bytes)?;
+            let stem = b.define_part(&part.stem, use_, bytes, Some(part.package))?;
             b.model_occurrence(&stem)?;
         }
         PartModel::Generated => {

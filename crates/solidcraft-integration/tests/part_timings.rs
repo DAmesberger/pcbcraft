@@ -85,7 +85,7 @@ fn part_file_timings() {
         // Into a board design: one definition, one evaluation.
         let mut board = Native::new("board").unwrap();
         let t = Instant::now();
-        part_file::insert(&mut board, &part.stem(), &part).unwrap();
+        part_file::insert(&mut board, &part.stem(), &part, &Default::default()).unwrap();
         let insert = t.elapsed();
         assert!(board.evaluation_error().is_none());
         eprintln!(

@@ -68,6 +68,7 @@ fn spec(bytes: &[u8]) -> PartSpec {
         },
         values: Default::default(),
         derived: PartDerived {
+            leads: Vec::new(),
             bounds_nm: crate::test_units::bounds(part.bounds_mm),
             bodies: 1,
             surfaces: vec![],

@@ -196,7 +196,7 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
     let part = evaluate(bytes(), &PartValues::new())?;
     let mut board = Native::new("board")?;
     let stem = part.stem();
-    let inserted = insert(&mut board, &stem, &part)?;
+    let inserted = insert(&mut board, &stem, &part, &Default::default())?;
     assert!(board.evaluation_error().is_none());
     assert_eq!(def.bodies.len(), inserted.bodies.len());
     let (ga, gb) = (
@@ -274,7 +274,7 @@ fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
     assert!((dz - 0.465).abs() < 1e-6, "the can 0.465 mm lower: {dz}");
     assert_ne!(part.stem(), base.stem());
     let mut board = Native::new("board")?;
-    insert(&mut board, &part.stem(), &part)?;
+    insert(&mut board, &part.stem(), &part, &Default::default())?;
     let name = format!("{}_can_height", part.stem());
     let p = board
         .session()
@@ -285,8 +285,8 @@ fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
         .unwrap();
     assert_eq!(p.expr, "2 mm");
     // A second definition beside the first, and a clash refused.
-    insert(&mut board, &base.stem(), &base)?;
-    assert!(insert(&mut board, &base.stem(), &base).is_err());
+    insert(&mut board, &base.stem(), &base, &Default::default())?;
+    assert!(insert(&mut board, &base.stem(), &base, &Default::default()).is_err());
     assert!(board.evaluation_error().is_none());
     Ok(())
 }
@@ -357,7 +357,7 @@ fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
     let part = evaluate(&unmapped, &PartValues::new())?;
     assert!(codes(&part).contains(&("part_file.material", true)));
     let mut board = Native::new("board")?;
-    assert!(insert(&mut board, &part.stem(), &part).is_err());
+    assert!(insert(&mut board, &part.stem(), &part, &Default::default()).is_err());
     assert!(
         board.find_component(&part.stem()).is_none(),
         "nothing inserted"

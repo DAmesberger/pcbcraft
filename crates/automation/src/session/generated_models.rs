@@ -14,7 +14,7 @@ use sparksmith_core::library::model3d::{
     AssetRef, ModelDefinition, ModelFormat, ModelProvenance, Redistribution,
 };
 use sparksmith_core::library::package_model::PartValue;
-use sparksmith_core::library::{Basis, BodyRole, Provenance};
+use sparksmith_core::library::{Basis, Provenance};
 use sparksmith_core::units::Nm;
 use sparksmith_generators::abi::v1;
 use sparksmith_io::generator_bundle::GeneratorBundle;
@@ -175,22 +175,14 @@ pub(super) fn generated_model(
             "its part file at the generator's values spans {lo:?} to {hi:?} mm, not the generation's {l} × {w} × {h} mm envelope"
         )));
     }
-    for lead in &geometry.leads {
-        let [x, y] = [mm(lead.contact[0]), mm(lead.contact[1])];
-        let under = part.bodies.iter().any(|b| {
-            part_file::role_of(b.material) == BodyRole::Termination
-                && x >= b.bounds_mm[0][0] - TOLERANCE_MM
-                && x <= b.bounds_mm[1][0] + TOLERANCE_MM
-                && y >= b.bounds_mm[0][1] - TOLERANCE_MM
-                && y <= b.bounds_mm[1][1] + TOLERANCE_MM
-        });
-        if !under {
-            return Err(refused(format!(
-                "lead {} touches the board at ({x}, {y}) mm, under no lead body of its part file",
-                lead.key
-            )));
-        }
-    }
+    // Every lead contact under a lead body, each lead body bound to its
+    // terminal (slice B2); package terminals are designated by their keys.
+    let contacts: Vec<(String, [f64; 2])> = geometry
+        .leads
+        .iter()
+        .map(|lead| (lead.key.clone(), [mm(lead.contact[0]), mm(lead.contact[1])]))
+        .collect();
+    let leads = part_file::lead_bodies(&part, &contacts, true).map_err(refused)?;
     let mut definition = definition;
     if definition.bounds_nm == ModelDefinition::default().bounds_nm {
         definition.bounds_nm = sparksmith_core::library::model3d::bounds_nm(as_is.bounds_mm)?;
@@ -199,7 +191,10 @@ pub(super) fn generated_model(
         definition,
         name,
         data: (!packed).then(|| AssetBytes::new(bytes)),
-        derived: part_file::derived(&part)?,
+        derived: sparksmith_core::library::package_model::PartDerived {
+            leads,
+            ..part_file::derived(&part)?
+        },
         values,
     })
 }

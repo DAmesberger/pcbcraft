@@ -63,6 +63,7 @@ fn nut(height: f64, pads: PadUse) -> PartSpec {
             PartValue::from_mm(height).unwrap_or(PartValue::Nm(0)),
         )]),
         derived: PartDerived {
+            leads: Vec::new(),
             bounds_nm: crate::tests::support::nm_bounds([[-2.5, -2.5, 0.0], [2.5, 2.5, height]]),
             bodies: 1,
             surfaces: vec![],
@@ -89,6 +90,7 @@ fn heatsink() -> PartSpec {
         source: "finned-heatsink".into(),
         values: BTreeMap::new(),
         derived: PartDerived {
+            leads: Vec::new(),
             bounds_nm: crate::tests::support::nm_bounds([[-10.0, -10.0, 0.0], [10.0, 10.0, 10.0]]),
             bodies: 7,
             surfaces: vec![],

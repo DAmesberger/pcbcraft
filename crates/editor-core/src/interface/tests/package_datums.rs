@@ -68,6 +68,7 @@ fn with_part_file_opening() -> Fallible<Project> {
         model: Default::default(),
         values: Default::default(),
         derived: PartDerived {
+            leads: Vec::new(),
             bounds_nm: [
                 [nm(-4.47), nm(-3.675), Nm::ZERO],
                 [nm(4.47), nm(3.675), nm(3.31)],
