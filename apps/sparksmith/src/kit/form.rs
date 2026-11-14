@@ -51,11 +51,56 @@ pub fn form<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     .inner
 }
 
-/// Aligned label/control row of one control height: the label sits in the
-/// shared label column, the control fills the rest.
+/// Aligned label/control row: the label sits in the shared label column
+/// ([`label_column`]), the control fills the rest. A label longer than
+/// the column wraps to a second line (the row grows); past that it is cut
+/// and the full label shows on hover.
 pub fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+    let width = ui.available_width().max(0.0);
+    row_with_label_width(ui, label, label_column(width), control)
+}
+
+/// The share of a row's width its label column takes, so a wider card
+/// gives its labels more room.
+const LABEL_SHARE: f32 = 0.36;
+/// Rows a label wraps to before it is cut.
+const LABEL_MAX_ROWS: usize = 2;
+
+/// The label column's width in a row `width` wide: a share of the row, at
+/// least the token width, at most twice it and at most 45% of the row.
+/// Every row of a card has the same column, so labels and controls line up.
+pub fn label_column(width: f32) -> f32 {
     let t = Tokens::get();
-    row_with_label_width(ui, label, t.form_label_width, control)
+    (width * LABEL_SHARE)
+        .clamp(t.form_label_width, t.form_label_width * 2.0)
+        .min(width * 0.45)
+        .max(0.0)
+}
+
+/// A row label laid out in a column `width` wide: wrapped to
+/// [`LABEL_MAX_ROWS`] rows and cut past that (`galley.elided`).
+fn label_galley(ui: &Ui, label: &str, width: f32) -> std::sync::Arc<egui::Galley> {
+    let t = Tokens::get();
+    super::text::wrapped(
+        ui,
+        label,
+        egui::FontId::proportional(t.font_label),
+        t.dialog_label,
+        width,
+        LABEL_MAX_ROWS,
+    )
+}
+
+/// The height of a row labelled `label` whose content is `content` high:
+/// one control height, or more for a wrapped label or a taller content.
+fn row_height(label: &egui::Galley, content: f32) -> f32 {
+    let t = Tokens::get();
+    let wrapped = if label.rows.len() > 1 {
+        label.size().y + 2.0 * t.space_2
+    } else {
+        0.0
+    };
+    t.control_height.max(content).max(wrapped)
 }
 
 /// A [`row`] whose label column is `label_width` wide (at most 45% of the
@@ -69,24 +114,20 @@ pub fn row_with_label_width<R>(
 ) -> R {
     let t = Tokens::get();
     let width = ui.available_width().max(0.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(width, t.control_height), egui::Sense::hover());
-    let label_width = label_width.min(width * 0.45);
+    let label_width = label_width.min(width * 0.45).max(0.0);
+    let galley = label_galley(ui, label, label_width);
+    let height = row_height(&galley, t.control_height);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
     let label_rect = egui::Rect::from_min_size(rect.min, vec2(label_width, rect.height()));
+    let cut = galley.elided;
     let label_id = ui
         .scope_builder(
             UiBuilder::new()
                 .max_rect(label_rect)
                 .layout(Layout::left_to_right(Align::Center)),
             |ui| {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new(label)
-                            .size(t.font_label)
-                            .color(t.dialog_label),
-                    )
-                    .truncate(),
-                )
-                .id
+                let response = ui.add(egui::Label::new(galley));
+                super::text::hover(response, label, "", cut).id
             },
         )
         .inner;
@@ -528,7 +569,7 @@ const VALUE_MAX_ROWS: usize = 3;
 pub fn value_row(ui: &mut Ui, label: &str, value: &str) {
     let t = Tokens::get();
     let width = ui.available_width().max(0.0);
-    let label_width = t.form_label_width.min(width * 0.45);
+    let label_width = label_column(width);
     let value_left = (label_width + t.space_8).min(width);
     let font = egui::FontId::proportional(t.font_label);
     let galley = super::text::wrapped(
@@ -539,20 +580,20 @@ pub fn value_row(ui: &mut Ui, label: &str, value: &str) {
         (width - value_left).max(1.0),
         VALUE_MAX_ROWS,
     );
+    let caption = label_galley(ui, label, label_width);
     let line = ui.fonts_mut(|f| f.row_height(&font));
     let pad = ((t.control_height - line) / 2.0).max(0.0);
-    let height = (galley.size().y + 2.0 * pad).max(t.control_height);
+    let height = (galley.size().y.max(caption.size().y) + 2.0 * pad).max(t.control_height);
     let (rect, row) = ui.allocate_exact_size(vec2(width, height), egui::Sense::hover());
-    let label_rect = egui::Rect::from_min_size(rect.min, vec2(label_width, t.control_height));
-    super::text::line(
-        ui,
-        row.id.with("label"),
-        label_rect,
-        label,
-        "",
-        font,
-        t.dialog_label,
+    // The label's first line stands level with the value's.
+    let label_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.top() + pad),
+        vec2(label_width, caption.size().y),
     );
+    let label_cut = caption.elided;
+    ui.painter().galley(label_rect.min, caption, t.dialog_label);
+    let response = ui.interact(label_rect, row.id.with("label"), egui::Sense::hover());
+    super::text::hover(response, label, "", label_cut);
     let value_rect = egui::Rect::from_min_size(
         egui::pos2(rect.left() + value_left, rect.top() + pad),
         galley.size(),
@@ -768,8 +809,7 @@ pub fn keyed<R>(ui: &mut Ui, key: Option<String>, add: impl FnOnce(&mut Ui) -> R
     let width = ui.available_width().max(0.0);
     let inner = add(ui);
     if let Some(key) = key {
-        let label_width = t.form_label_width.min(width * 0.45);
-        let column = egui::Rect::from_min_size(start, vec2(label_width, t.control_height));
+        let column = egui::Rect::from_min_size(start, vec2(label_column(width), t.control_height));
         key_chip(ui, column, &key);
     }
     inner
@@ -864,6 +904,113 @@ mod tests {
                 "invalid {invalid}: {shown:?}"
             );
         }
+    }
+
+    /// At the Properties column's width (a 264-point card) a long option
+    /// label shows whole: it wraps inside the label column, its row grows,
+    /// and every row's control still starts at the same column. A short
+    /// label keeps one control height; a wider card widens the column.
+    #[test]
+    fn long_labels_wrap_in_a_shared_column_instead_of_cutting() -> Result<(), String> {
+        const LONG: [&str; 6] = [
+            "JLCPCB values",
+            "Outer copper weight",
+            "Solder mask colour",
+            "Smallest drill size",
+            "Default fab profile",
+            "Impedance tolerance",
+        ];
+        let ctx = egui::Context::default();
+        fonts::setup_bundled_fonts(&ctx);
+        let t = Tokens::get();
+        let run = |width: f32| {
+            let mut rows: Vec<(String, egui::Rect)> = Vec::new();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        vec2(width, 600.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    form(ui, |ui| {
+                        for label in ["Name"].iter().chain(LONG.iter()) {
+                            let top = ui.cursor().top();
+                            let control = row(ui, label, |ui| {
+                                ui.allocate_exact_size(
+                                    vec2(ui.available_width(), t.control_height),
+                                    egui::Sense::hover(),
+                                )
+                                .0
+                            });
+                            let height = ui.cursor().top() - top - ui.spacing().item_spacing.y;
+                            rows.push((
+                                (*label).to_owned(),
+                                egui::Rect::from_min_size(
+                                    egui::pos2(control.left(), top),
+                                    vec2(control.width(), height),
+                                ),
+                            ));
+                        }
+                        value_row(ui, "Outer copper weight", "1 oz (35 µm)");
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (output, rows)
+        };
+        let width = 264.0 - 2.0 * t.space_10;
+        let (output, rows) = run(width);
+        let painted = crate::kit::text::tests::painted(&output);
+        let column = label_column(width);
+        assert!(column > t.form_label_width, "{column}");
+        for label in LONG {
+            let shown = painted.iter().find(|(text, ..)| text == label);
+            let (_, rect, elided, _) =
+                shown.ok_or_else(|| format!("{label} is not painted whole: {painted:?}"))?;
+            assert!(!elided, "{label} is cut");
+            assert!(rect.right() <= column + 0.5, "{label} runs to {rect:?}");
+        }
+        let left = rows.first().map_or(0.0, |(_, r)| r.left());
+        for (label, rect) in &rows {
+            assert!(
+                (rect.left() - left).abs() < 0.5,
+                "{label}'s control at {rect:?}"
+            );
+            assert!(
+                rect.left() >= column + t.space_8 - 0.5,
+                "{label} over its label"
+            );
+        }
+        let height = |name: &str| {
+            rows.iter()
+                .find(|(l, _)| l == name)
+                .map_or(0.0, |(_, r)| r.height())
+        };
+        assert!((height("Name") - t.control_height).abs() < 0.5);
+        let wrapped = painted
+            .iter()
+            .find(|(text, ..)| text == "Outer copper weight")
+            .map_or(0.0, |(_, r, ..)| r.height());
+        if wrapped > t.font_label * 1.5 {
+            assert!(
+                height("Outer copper weight") >= wrapped,
+                "the row holds both lines"
+            );
+        }
+        // A wider card (the Settings window) gives labels more room.
+        assert!(label_column(600.0) > column);
+        assert!(label_column(600.0) <= t.form_label_width * 2.0);
+        assert!((label_column(100.0) - 45.0).abs() < 0.5, "never past 45%");
+        Ok(())
+    }
+
+    #[test]
+    fn counts_name_one_thing_in_the_singular() {
+        assert_eq!(super::super::counted(1, "rule", "rules"), "1 rule");
+        assert_eq!(super::super::counted(0, "rule", "rules"), "0 rules");
+        assert_eq!(super::super::counted(3, "entry", "entries"), "3 entries");
     }
 
     #[test]

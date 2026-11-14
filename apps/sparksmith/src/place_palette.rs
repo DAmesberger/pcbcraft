@@ -2006,7 +2006,11 @@ fn component_section(ui: &mut Ui, report: &ItemReport) {
                 kit::value_row(
                     ui,
                     "Footprint",
-                    &format!("{} · {} pads", footprint.name, footprint.pads),
+                    &format!(
+                        "{} · {}",
+                        footprint.name,
+                        kit::counted(footprint.pads, "pad", "pads")
+                    ),
                 );
             }
         }

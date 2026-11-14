@@ -491,7 +491,12 @@ fn title(change: &Change, project: &Project) -> String {
             command: SchematicCommand::RemoveLabel { .. },
         } => "Remove label".into(),
         Change::Schematic { .. } => "Change schematic".into(),
-        Change::RemoveObjects { objects } => format!("Remove {} objects", objects.len()),
+        Change::RemoveObjects { objects } => {
+            format!(
+                "Remove {}",
+                crate::kit::counted(objects.len(), "object", "objects")
+            )
+        }
     }
 }
 

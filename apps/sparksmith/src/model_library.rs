@@ -165,7 +165,11 @@ pub fn hit_detail(hit: &ModelHit) -> String {
         );
     }
     if let Some(pins) = hit.hints.pins {
-        parts.push(format!("{pins} pins"));
+        parts.push(kit::counted(
+            usize::try_from(pins).unwrap_or(usize::MAX),
+            "pin",
+            "pins",
+        ));
     }
     if let Some(pitch) = hit.hints.pitch_mm() {
         parts.push(format!("{pitch} mm pitch"));
@@ -212,8 +216,9 @@ pub fn lead_map_line(map: &[LeadMapEntry], leads: usize, terminals: usize) -> St
         return "No lead tags: place it with the offset and Fit leads".into();
     }
     format!(
-        "{} of {terminals} terminals map by designation ({leads} lead tags)",
-        map.len()
+        "{} of {terminals} terminals map by designation ({})",
+        map.len(),
+        kit::counted(leads, "lead tag", "lead tags")
     )
 }
 

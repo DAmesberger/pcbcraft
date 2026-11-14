@@ -906,12 +906,17 @@ impl FileUi {
                 self.status = Some(match result {
                     Ok(pages) if current => (
                         Level::Ok,
-                        format!("Printed {pages} sheets to {}", path.display()),
+                        format!(
+                            "Printed {} to {}",
+                            crate::kit::counted(pages, "sheet", "sheets"),
+                            path.display()
+                        ),
                     ),
                     Ok(pages) => (
                         Level::Warning,
                         format!(
-                            "Printed {pages} captured sheets to {}; the document has changed",
+                            "Printed {} to {}; the document has changed",
+                            crate::kit::counted(pages, "captured sheet", "captured sheets"),
                             path.display()
                         ),
                     ),
@@ -1190,7 +1195,14 @@ fn recovery_label(entry: &RecoveryEntry, now_ms: u64) -> String {
         0 => "just now".to_owned(),
         1..=59 => format!("{minutes} min ago"),
         60..=1439 => format!("{} h ago", minutes / 60),
-        _ => format!("{} days ago", minutes / 1440),
+        _ => format!(
+            "{} ago",
+            crate::kit::counted(
+                usize::try_from(minutes / 1440).unwrap_or(usize::MAX),
+                "day",
+                "days"
+            )
+        ),
     };
     if entry.error.is_some() {
         return format!("{} · {age}", entry.project_name);

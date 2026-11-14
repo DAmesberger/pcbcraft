@@ -25,8 +25,10 @@ pub const MAX_TOASTS: usize = 1;
 /// severe toast, in seconds, so it can be read; the newer toast then goes
 /// to Messages only.
 pub const HOLD_SECONDS: f64 = 3.0;
-/// The most text rows of one toast.
-pub const MAX_TOAST_ROWS: usize = 3;
+/// The most text rows of one toast: enough for a refusal that says what
+/// to do next (about 300 characters); past that the hover and Messages
+/// hold the rest.
+pub const MAX_TOAST_ROWS: usize = 6;
 /// The widest a toast grows, as upstream's centred toasts (440 pt).
 const MAX_TOAST_WIDTH: f32 = 440.0;
 /// The most toasts an editor can post in one frame.
@@ -196,10 +198,11 @@ impl Toasts {
             .constrain_to(canvas)
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = t.space_8;
+                let inner = (width - frame.total_margin().sum().x).max(0.0);
                 for (index, toast) in self.items.iter().enumerate() {
                     let shown = frame.show(ui, |ui| {
-                        ui.set_max_width(width - frame.total_margin().sum().x);
-                        toast_row(ui, index, toast)
+                        ui.set_max_width(inner);
+                        toast_row(ui, index, toast, inner)
                     });
                     if let Some(e) = shown.inner {
                         event = Some(e);
@@ -225,7 +228,31 @@ pub fn toast_text(toast: &Toast) -> String {
     }
 }
 
-fn toast_row(ui: &mut Ui, index: usize, toast: &Toast) -> Option<ToastEvent> {
+/// The width a toast's text wraps at, in a toast whose content is `inner`
+/// wide: what is left after the severity glyph.
+fn text_width(ui: &Ui, inner: f32) -> f32 {
+    let t = Tokens::get();
+    (inner - t.font_label - ui.spacing().item_spacing.x).max(1.0)
+}
+
+/// A toast's text wrapped at `width`, at most [`MAX_TOAST_ROWS`] rows; the
+/// last row ends in "…" when more was cut (`galley.elided`).
+fn text_galley(ui: &Ui, text: &str, width: f32) -> std::sync::Arc<egui::Galley> {
+    let t = Tokens::get();
+    super::text::wrapped(
+        ui,
+        text,
+        type_face::medium(t.font_label),
+        t.text,
+        width,
+        MAX_TOAST_ROWS,
+    )
+}
+
+/// One toast in a frame whose content is `inner` wide. The text is laid
+/// out at that width here, never at the area's: a label in a horizontal
+/// layout would otherwise extend on one line past the canvas.
+fn toast_row(ui: &mut Ui, index: usize, toast: &Toast, inner: f32) -> Option<ToastEvent> {
     let t = Tokens::get();
     let mut event = None;
     ui.horizontal_top(|ui| {
@@ -233,15 +260,9 @@ fn toast_row(ui: &mut Ui, index: usize, toast: &Toast) -> Option<ToastEvent> {
             ui.allocate_exact_size(vec2(t.font_label, t.font_label), egui::Sense::hover());
         severity_glyph(ui.painter(), glyph.center(), t.font_label, toast.level);
         let text = toast_text(toast);
-        let mut job = egui::text::LayoutJob::simple(
-            text.clone(),
-            type_face::medium(t.font_label),
-            t.text,
-            ui.available_width().max(0.0),
-        );
-        job.wrap.max_rows = MAX_TOAST_ROWS;
+        let galley = text_galley(ui, &text, text_width(ui, inner));
         let body = ui
-            .add(egui::Label::new(job).sense(egui::Sense::click()))
+            .add(egui::Label::new(galley).sense(egui::Sense::click()))
             .on_hover_text(format!("{text}\nClick for Messages"));
         if body.clicked() {
             event = Some(ToastEvent::OpenMessages);
@@ -505,5 +526,84 @@ mod tests {
         assert!(canvas.contains_rect(drawn), "{drawn:?} in {canvas:?}");
         assert!((drawn.center().x - canvas.center().x).abs() < 1.0);
         assert!(drawn.bottom() > canvas.center().y, "bottom half");
+    }
+
+    /// A long refusal wraps to several lines inside the canvas, at most
+    /// [`MAX_TOAST_WIDTH`] wide, shows every word, and its Undo still
+    /// reports a click.
+    #[test]
+    fn a_long_toast_wraps_inside_the_canvas_and_keeps_its_actions() -> Result<(), String> {
+        const LONG: &str = "Open failed: this file is format version 1, from an earlier \
+            Sparksmith; this build reads version 2. Convert it with `sparksmith convert \
+            FILE` (the original is kept beside it), then open it again";
+        let ctx = egui::Context::default();
+        sparksmith_ui::fonts::setup_bundled_fonts(&ctx);
+        let mut toasts = Toasts::default();
+        // A short toast first: the area remembers its size, which must not
+        // narrow or widen the long one.
+        toasts.push(Level::Ok, "Saved", vec![], 0.0);
+        // The VM's 1380 × 892 window, less the side columns.
+        let canvas = Rect::from_min_size(egui::pos2(260.0, 40.0), vec2(840.0, 800.0));
+        let run = |toasts: &mut Toasts, events: Vec<egui::Event>| {
+            let mut event = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1380.0, 892.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| event = toasts.show(ui.ctx(), canvas, 1.0),
+            );
+            output.textures_delta.clear();
+            (output, event)
+        };
+        for _ in 0..2 {
+            run(&mut toasts, vec![]);
+        }
+        toasts.push(Level::Error, LONG, vec![ToastAction::Undo], 1.0);
+        let mut output = None;
+        for _ in 0..3 {
+            output = Some(run(&mut toasts, vec![]).0);
+        }
+        let output = output.unwrap_or_default();
+        let drawn = ctx
+            .memory(|m| m.area_rect(egui::Id::unique("toasts")))
+            .unwrap_or(Rect::NOTHING);
+        assert!(canvas.contains_rect(drawn), "{drawn:?} in {canvas:?}");
+        assert!(drawn.width() <= MAX_TOAST_WIDTH + 0.5, "{drawn:?}");
+        let body = crate::kit::text::tests::painted(&output)
+            .into_iter()
+            .find(|(text, ..)| text == LONG);
+        let (_, rect, elided, clip) = body.ok_or("the toast text is not painted whole")?;
+        assert!(!elided, "nothing cut");
+        assert!(
+            rect.height() > 2.0 * Tokens::get().font_label,
+            "wraps: {rect:?}"
+        );
+        assert!(clip.contains_rect(rect), "{rect:?} clipped by {clip:?}");
+        assert!(drawn.contains_rect(rect), "{rect:?} inside {drawn:?}");
+        // Undo sits under the text and still answers a click.
+        let undo = crate::kit::text::tests::painted(&output)
+            .into_iter()
+            .find(|(text, ..)| text == "Undo")
+            .map(|(_, rect, ..)| rect.center());
+        let undo = undo.ok_or("no Undo")?;
+        assert!(undo.y > rect.bottom(), "Undo under the text");
+        let press = |pressed| egui::Event::PointerButton {
+            pos: undo,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        run(&mut toasts, vec![egui::Event::PointerMoved(undo)]);
+        let (_, event) = run(&mut toasts, vec![press(true), press(false)]);
+        assert_eq!(
+            event,
+            Some(ToastEvent::Action {
+                toast: 0,
+                action: ToastAction::Undo
+            })
+        );
+        Ok(())
     }
 }

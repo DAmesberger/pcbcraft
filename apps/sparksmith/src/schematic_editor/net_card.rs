@@ -48,7 +48,11 @@ impl SchematicEditor {
                 output = class.operation;
             }
             let members: Vec<Endpoint> = net.terminals.clone();
-            kit::value_row(ui, "Members", &format!("{} terminals", members.len()));
+            kit::value_row(
+                ui,
+                "Members",
+                &kit::counted(members.len(), "terminal", "terminals"),
+            );
             let max = if self.all_members {
                 members.len()
             } else {

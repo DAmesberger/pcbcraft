@@ -46,6 +46,12 @@ use egui::{Color32, Painter, Pos2, Rect, vec2};
 use sparksmith_ui::icons;
 use sparksmith_ui::theme::Tokens;
 
+/// A count and its noun: "1 rule", "0 rules", "3 entries". `one` is the
+/// singular, `many` the plural, so irregular plurals read right.
+pub fn counted(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// The kit chevron: down when open, right when folded.
 pub fn disclosure(painter: &Painter, center: Pos2, open: bool, ink: Color32) {
     let size = Tokens::get().form_section_icon_size;
