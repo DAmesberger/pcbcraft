@@ -13,8 +13,6 @@ use crate::model::board::ConstraintTarget;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Part dimensions on one board.
-pub const MAX_PART_DIMENSIONS: usize = 4096;
 /// References one part dimension names (1–3).
 pub const MAX_DIMENSION_REFS: usize = 3;
 
@@ -326,8 +324,6 @@ impl FeatureGeometry {
     }
 }
 
-/// Model traces one project keeps: one per 3D model reference.
-pub const MAX_MODEL_TRACES: usize = MAX_PART_DIMENSIONS;
 /// Bytes of a trace's note.
 pub const MAX_TRACE_NOTE: usize = 512;
 

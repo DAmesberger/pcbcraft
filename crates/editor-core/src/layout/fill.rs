@@ -11,7 +11,7 @@ use crate::geometry::point_valid;
 use crate::ids::Id;
 use crate::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
 use crate::model::fill::{
-    FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec, MAX_FILLS, MAX_KEEPOUTS,
+    FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec,
 };
 use crate::model::{Fill, Keepout, Project};
 use crate::rules::MAX_RULE_MM;
@@ -31,11 +31,6 @@ pub(crate) use geom::RegionIndex;
 
 /// The chord tolerance computed fill copper is flattened at, mm.
 pub const FILL_CHORD_MM: f64 = 0.005;
-/// Vertices of all computed regions of one fill.
-pub const MAX_FILL_VERTICES: usize = 1 << 20;
-/// Vertices of the computed copper of every fill of a project together
-/// (16 bytes each: 128 MiB at most in memory).
-pub const MAX_PROJECT_FILL_VERTICES: usize = 1 << 23;
 
 /// Which fills to refill.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -180,9 +175,12 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
             Ok(None)
         }
         FillCommand::StoreAll { fills } => {
-            if fills.is_empty() || fills.len() > MAX_FILLS {
+            // Each names a distinct fill of the board, so the board bounds
+            // how many one request stores.
+            if fills.is_empty() || fills.len() > project.fills.len() {
                 return Err(Error::Limit(format!(
-                    "fill.store_all: 1–{MAX_FILLS} fills at a time"
+                    "fill.store_all: 1–{} fills at a time, the board's fills",
+                    project.fills.len()
                 )));
             }
             if let Some(gone) = fills.iter().find(|f| project.fill(f.fill).is_none()) {
@@ -465,12 +463,6 @@ fn mm_ok(v: Option<f64>) -> bool {
 /// Structural bounds of fills and keepouts. A fill whose net is gone is
 /// a check finding, not an invalid document.
 pub fn validate(project: &Project) -> Result<()> {
-    if project.fills.len() > MAX_FILLS || project.keepouts.len() > MAX_KEEPOUTS {
-        return Err(Error::Limit(format!(
-            "fill.limit: at most {MAX_FILLS} fills and {MAX_KEEPOUTS} keepouts"
-        )));
-    }
-    let mut total = 0usize;
     for f in &project.fills {
         let s = &f.settings;
         let thermal_ok = s.thermal.is_none_or(|t| {
@@ -486,12 +478,6 @@ pub fn validate(project: &Project) -> Result<()> {
                 && mm_ok(Some(h.gap))
                 && h.angle_deg.is_finite()
         });
-        let vertices = f.computed.as_ref().map_or(0, |c| {
-            c.regions
-                .iter()
-                .map(|r| r.outer.len() + r.holes.iter().map(Vec::len).sum::<usize>())
-                .sum()
-        });
         let copper_ok = f.computed.as_ref().is_none_or(|c| {
             c.key.len() <= 64
                 && c.regions.iter().all(|r| {
@@ -503,12 +489,6 @@ pub fn validate(project: &Project) -> Result<()> {
                             .all(|p| point_valid(*p))
                 })
         });
-        total = total.saturating_add(vertices);
-        if total > MAX_PROJECT_FILL_VERTICES {
-            return Err(Error::Limit(format!(
-                "fill.limit: the fills' copper holds more than {MAX_PROJECT_FILL_VERTICES} vertices"
-            )));
-        }
         if !outline_ok(&f.outline)
             || !project.stackup.has(f.layer)
             || f.name.len() > crate::rules::MAX_PROFILE_TEXT
@@ -516,7 +496,6 @@ pub fn validate(project: &Project) -> Result<()> {
             || !mm_ok(s.width_min)
             || !thermal_ok
             || !hatch_ok
-            || vertices > MAX_FILL_VERTICES
             || !copper_ok
         {
             return Err(Error::Invalid(

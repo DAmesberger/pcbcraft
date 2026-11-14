@@ -20,9 +20,6 @@ type P = [f64; 2];
 type SymbolFn = dyn Fn(&mut Page, P, usize);
 
 const MARGIN: f64 = 10.0;
-/// Most holes drawn on the fabrication drawing (the drill table counts
-/// them all).
-pub const MAX_DRAWN_HOLES: usize = 100_000;
 /// Rows of one drawn table before the rest is summarised.
 const MAX_TABLE_ROWS: usize = 40;
 
@@ -466,7 +463,7 @@ pub fn fabrication_pdf(data: &DrawingData) -> Result<Vec<u8>> {
             .unwrap_or(0)
     };
     let sym_r = (0.9f64).min(view.scale * 0.5).max(0.35);
-    for hole in data.holes.iter().take(MAX_DRAWN_HOLES) {
+    for hole in &data.holes {
         let k = index_of(hole);
         match hole.feature {
             HoleFeature::Round { at, diameter } => {

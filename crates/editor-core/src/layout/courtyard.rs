@@ -8,6 +8,8 @@
 //! edges is not overlap), so two parts may abut courtyard to courtyard
 //! under the default rules. A positive `courtyard clearance` design rule
 //! also reports courtyards closer than it (`board.courtyard_clearance`).
+use super::check_pair_budget;
+use super::grid::BoundsGrid;
 use super::limits::{mm, need};
 use super::placed::{BoardDrawing, PlacedItem, placed_graphics};
 use crate::diagnostics::{Finding, ObjectRef};
@@ -55,21 +57,18 @@ pub fn placed_courtyards(project: &Project) -> Vec<PlacedCourtyard> {
         .collect()
 }
 
-/// Courtyard shapes compared pairwise; more are left unchecked (a board
-/// this size needs a spatial index first).
-pub const MAX_CHECKED_COURTYARDS: usize = 4096;
-/// Overlap findings one check reports.
-pub const MAX_OVERLAP_FINDINGS: usize = 256;
 /// Chord tolerance for flattening arcs and circles, in mm.
 const CHORD_MM: f64 = 0.01;
 
 /// `board.courtyard_overlap` findings between different placements on the
 /// same side: one per pair of parts, however many of their shapes
-/// overlap. Bounded by [`MAX_CHECKED_COURTYARDS`] and
-/// [`MAX_OVERLAP_FINDINGS`]; reaching either adds one
+/// overlap. Only shapes whose bounds come within the clearance are
+/// compared (a bounds grid offers them), at most the copper checks' pair
+/// budget for this many shapes ([`check_pair_budget`], which only
+/// courtyards piled on courtyards reach); reaching it adds one
 /// [`COURTYARD_LIMIT`] finding, so unchecked courtyards are never silent.
 pub fn findings(project: &Project) -> Vec<Finding> {
-    bounded_findings(project, MAX_CHECKED_COURTYARDS, MAX_OVERLAP_FINDINGS)
+    bounded_findings(project, None)
 }
 
 pub(crate) fn limit_finding() -> Finding {
@@ -80,12 +79,11 @@ pub(crate) fn limit_finding() -> Finding {
     )
 }
 
-fn bounded_findings(project: &Project, max_yards: usize, max_findings: usize) -> Vec<Finding> {
-    let all = placed_courtyards(project);
-    let truncated = all.len() > max_yards;
-    let yards: Vec<(PlacedCourtyard, Vec<Point>, Bounds)> = all
+/// [`findings`], comparing at most `budget` pairs (the pair budget when
+/// `None`).
+fn bounded_findings(project: &Project, budget: Option<usize>) -> Vec<Finding> {
+    let yards: Vec<(PlacedCourtyard, Vec<Point>, Bounds)> = placed_courtyards(project)
         .into_iter()
-        .take(max_yards)
         .filter_map(|c| {
             let ring = c.shape.flatten(CHORD_MM);
             let bounds = Bounds::of(ring.iter().copied())?;
@@ -95,13 +93,27 @@ fn bounded_findings(project: &Project, max_yards: usize, max_findings: usize) ->
     let rules = &project.rules;
     let clearance = need(rules, &rules.effective(), RuleKey::CourtyardClearance);
     let reach = clearance.mm.max(0.0);
+    let budget = budget.unwrap_or_else(|| check_pair_budget(yards.len()));
+    let grid = BoundsGrid::new(yards.iter().map(|y| Some(y.2)), reach);
+    let mut near = Vec::new();
+    let mut compared = 0usize;
     let mut pairs: BTreeSet<(Id, Id, bool)> = BTreeSet::new();
     let mut out = Vec::new();
     for (i, (a, ra, ba)) in yards.iter().enumerate() {
-        for (b, rb, bb) in yards.iter().skip(i + 1) {
+        grid.near(ba, reach, &mut near);
+        for (b, rb, bb) in near
+            .iter()
+            .filter(|j| **j > i)
+            .filter_map(|j| yards.get(*j))
+        {
             if a.instance == b.instance || a.layer != b.layer || !ba.inflated(reach).intersects(bb)
             {
                 continue;
+            }
+            compared += 1;
+            if compared > budget {
+                out.push(limit_finding());
+                return out;
             }
             let key = (
                 a.instance.min(b.instance),
@@ -122,10 +134,6 @@ fn bounded_findings(project: &Project, max_yards: usize, max_findings: usize) ->
             let close = !overlap && reach > 0.0 && gap < reach - 1e-9;
             if !overlap && !close {
                 continue;
-            }
-            if out.len() >= max_findings {
-                out.push(limit_finding());
-                return out;
             }
             pairs.insert(key);
             let name = |id: Id| {
@@ -169,9 +177,6 @@ fn bounded_findings(project: &Project, max_yards: usize, max_findings: usize) ->
                 ],
             ));
         }
-    }
-    if truncated {
-        out.push(limit_finding());
     }
     out
 }

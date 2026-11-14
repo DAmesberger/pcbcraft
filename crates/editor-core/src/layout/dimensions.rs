@@ -30,7 +30,7 @@ use crate::model::Project;
 use crate::model::board::{BoardShape, BoardSketch, ConstraintTarget};
 pub use crate::model::dimension::FeatureGeometry;
 use crate::model::dimension::{
-    BoardRef, FeatureRef, MAX_DIMENSION_REFS, MAX_PART_DIMENSIONS, PartAxis, PartDimension,
+    BoardRef, FeatureRef, MAX_DIMENSION_REFS, PartAxis, PartDimension,
     PartDimensionSpec, PartRelation, ReferenceStatus,
 };
 use schemars::JsonSchema;
@@ -124,11 +124,6 @@ pub fn apply(
 ) -> Result<DimensionApplied> {
     match command {
         DimensionCommand::Add { dimension } => {
-            if project.part_dimensions.len() >= MAX_PART_DIMENSIONS {
-                return Err(Error::Limit(format!(
-                    "layout.dimension_limit: at most {MAX_PART_DIMENSIONS} part dimensions"
-                )));
-            }
             let id = project.allocate()?;
             let dimension = PartDimension::from_spec(id, dimension);
             project.part_dimensions.push(dimension.clone());
@@ -166,11 +161,6 @@ pub fn apply(
 /// `layout.dimension_order`: the listed dimensions refill their own places
 /// in the listed order.
 fn reorder(project: &mut Project, ids: &[Id]) -> Result<()> {
-    if ids.len() > MAX_PART_DIMENSIONS {
-        return Err(Error::Limit(format!(
-            "layout.dimension_limit: at most {MAX_PART_DIMENSIONS} part dimensions"
-        )));
-    }
     let listed: BTreeSet<Id> = ids.iter().copied().collect();
     if listed.len() != ids.len() {
         return Err(Error::Invalid(
@@ -184,20 +174,11 @@ fn reorder(project: &mut Project, ids: &[Id]) -> Result<()> {
         .filter(|(_, d)| listed.contains(&d.id))
         .map(|(i, _)| i)
         .collect();
-    if let Some(gone) = ids
-        .iter()
-        .find(|id| !project.part_dimensions.iter().any(|d| d.id == **id))
-    {
-        return Err(missing(*gone));
-    }
+    let by_id: BTreeMap<Id, &PartDimension> =
+        project.part_dimensions.iter().map(|d| (d.id, d)).collect();
     let mut ordered = Vec::with_capacity(ids.len());
     for id in ids {
-        let d = project
-            .part_dimensions
-            .iter()
-            .find(|d| d.id == *id)
-            .cloned()
-            .ok_or_else(|| missing(*id))?;
+        let d = by_id.get(id).map(|d| (*d).clone()).ok_or_else(|| missing(*id))?;
         ordered.push(d);
     }
     for (slot, d) in slots.into_iter().zip(ordered) {
@@ -1218,16 +1199,10 @@ fn conflict_message(
     }
 }
 
-/// Structural bounds: at most [`MAX_PART_DIMENSIONS`], 1–
-/// [`MAX_DIMENSION_REFS`] references each, finite values and picks,
+/// Structural bounds: 1–[`MAX_DIMENSION_REFS`] references each, finite values and picks,
 /// well-formed names and expressions. A reference whose source is gone is a
 /// check finding ([`REFERENCE_LOST`]), not an invalid document.
 pub fn validate(project: &Project) -> Result<()> {
-    if project.part_dimensions.len() > MAX_PART_DIMENSIONS {
-        return Err(Error::Limit(format!(
-            "layout.dimension_limit: at most {MAX_PART_DIMENSIONS} part dimensions"
-        )));
-    }
     let mut ids = BTreeSet::new();
     for d in project.part_dimensions.iter() {
         if !ids.insert(d.id) || !well_formed(d) {

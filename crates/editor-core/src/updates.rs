@@ -37,9 +37,6 @@ pub use review::{
 };
 use review::{ChangeArea as A, ChangeKind as K, ChangeObject as O, clip, layer_label};
 
-/// Instances one component-revision update may change.
-pub const MAX_UPDATE_INSTANCES: usize = 128;
-
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", content = "params", deny_unknown_fields)]
 pub enum Change {
@@ -908,9 +905,10 @@ fn revise(
     target: ComponentRef,
     resolutions: &Resolutions,
 ) -> Result<()> {
-    if ids.is_empty() || ids.len() > MAX_UPDATE_INSTANCES {
+    // Each names a distinct instance, so the project bounds the list.
+    if ids.is_empty() || ids.len() > next.instances.len() {
         return Err(invalid(
-            "Select between 1 and 128 instances for one revision update.",
+            "Select at least one of the project's instances for a revision update.",
         ));
     }
     let target_component =

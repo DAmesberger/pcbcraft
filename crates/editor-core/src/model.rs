@@ -519,6 +519,19 @@ pub struct Project {
     pub assembly_link: Option<Box<assembly_link::AssemblyLink>>,
 }
 
+/// The item of `items` with identity `id`. Collections are kept in
+/// allocation order, which is identity order unless an edit put an older
+/// identity back (an undo of a deletion, a restored track), so this is a
+/// binary search, with a scan when it misses: always the right answer,
+/// logarithmic on a document in identity order, which is what keeps
+/// lookups on a large board from being quadratic.
+pub fn by_id<T>(items: &[T], id: Id, key: impl Fn(&T) -> Id) -> Option<&T> {
+    match items.binary_search_by_key(&id, &key) {
+        Ok(k) => items.get(k),
+        Err(_) => items.iter().find(|item| key(item) == id),
+    }
+}
+
 fn interface_is_empty(table: &Shared<interface::InterfaceTable>) -> bool {
     table.is_empty()
 }
@@ -633,7 +646,7 @@ impl Project {
         Ok(id)
     }
     pub fn instance(&self, id: Id) -> Option<&ComponentInstance> {
-        self.instances.iter().find(|i| i.id == id)
+        by_id(&self.instances, id, |i| i.id)
     }
     /// The instance with this designator, compared case-insensitively.
     pub fn instance_by_designator(&self, designator: &str) -> Option<&ComponentInstance> {
@@ -642,7 +655,7 @@ impl Project {
             .find(|i| i.designator.eq_ignore_ascii_case(designator))
     }
     pub fn occurrence(&self, id: Id) -> Option<&SymbolOccurrence> {
-        self.occurrences.iter().find(|o| o.id == id)
+        by_id(&self.occurrences, id, |o| o.id)
     }
     pub fn occurrences_of(&self, instance: Id) -> impl Iterator<Item = &SymbolOccurrence> {
         self.occurrences
@@ -657,19 +670,19 @@ impl Project {
             .filter(move |w| w.from == end || w.to == end)
     }
     pub fn wire(&self, id: Id) -> Option<&Wire> {
-        self.wires.iter().find(|w| w.id == id)
+        by_id(&self.wires, id, |w| w.id)
     }
     pub fn junction(&self, id: Id) -> Option<&Junction> {
-        self.junctions.iter().find(|j| j.id == id)
+        by_id(&self.junctions, id, |j| j.id)
     }
     pub fn label(&self, id: Id) -> Option<&Label> {
-        self.labels.iter().find(|l| l.id == id)
+        by_id(&self.labels, id, |l| l.id)
     }
     pub fn sheet(&self, id: SheetId) -> Option<&Sheet> {
         self.sheets.get(id)
     }
     pub fn sheet_symbol(&self, id: Id) -> Option<&SheetSymbol> {
-        self.sheet_symbols.iter().find(|s| s.id == id)
+        by_id(&self.sheet_symbols, id, |s| s.id)
     }
     /// A sheet pin and the symbol it sits on.
     pub fn sheet_pin(&self, id: Id) -> Option<(&SheetSymbol, &SheetPin)> {
@@ -682,19 +695,19 @@ impl Project {
         self.sheet_symbols.iter().find(|s| s.child == sheet)
     }
     pub fn drawing(&self, id: Id) -> Option<&SheetDrawing> {
-        self.drawings.iter().find(|d| d.id == id)
+        by_id(&self.drawings, id, |d| d.id)
     }
     pub fn placement_of(&self, instance: Id) -> Option<&Placement> {
-        self.placements.iter().find(|p| p.instance == instance)
+        by_id(&self.placements, instance, |p| p.instance)
     }
     pub fn via(&self, id: Id) -> Option<&Via> {
-        self.vias.iter().find(|v| v.id == id)
+        by_id(&self.vias, id, |v| v.id)
     }
     pub fn fill(&self, id: Id) -> Option<&Fill> {
-        self.fills.iter().find(|f| f.id == id)
+        by_id(&self.fills, id, |f| f.id)
     }
     pub fn keepout(&self, id: Id) -> Option<&Keepout> {
-        self.keepouts.iter().find(|k| k.id == id)
+        by_id(&self.keepouts, id, |k| k.id)
     }
     /// The solved board outline: the sketch's last solve, or the
     /// `board_size` rectangle.
@@ -707,7 +720,7 @@ impl Project {
         }
     }
     pub fn net(&self, id: Id) -> Option<&Net> {
-        self.nets.iter().find(|n| n.id == id)
+        by_id(&self.nets, id, |n| n.id)
     }
     /// The net containing a terminal; every valid terminal has one.
     pub fn net_of(&self, terminal: Endpoint) -> Option<&Net> {

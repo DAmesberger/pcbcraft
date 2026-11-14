@@ -30,9 +30,6 @@ use crate::model::{CopperLayer, Project};
 use crate::rules::{EtchRules, RuleKey};
 use std::collections::BTreeSet;
 
-/// Most sliver findings one check reports; past it the check says so.
-const MAX_SLIVERS: usize = 1_000;
-
 /// The etch-hazard findings of `project`, whose copper graph is `graph`.
 pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     let rules = project.rules.effective();
@@ -341,7 +338,6 @@ fn slivers(project: &Project, graph: &CopperGraph, min: f64, out: &mut Vec<Findi
         |p: Point| polygon_contains(&outer, p) && !cutouts.iter().any(|c| polygon_contains(c, p));
     let layers: BTreeSet<CopperLayer> = areas.iter().map(|a| a.layer).collect();
     let mut reported: Vec<(ObjectRef, ObjectRef)> = Vec::new();
-    let mut count = 0usize;
     for layer in layers {
         let pieces = pieces(project, graph, layer);
         let shapes: Vec<_> = pieces.iter().map(|p| boundary(&p.ring)).collect();
@@ -376,10 +372,6 @@ fn slivers(project: &Project, graph: &CopperGraph, min: f64, out: &mut Vec<Findi
             // Copper the fill clears: of other nets than its own.
             let foreign: Vec<bool> = pieces.iter().map(|p| p.net != area.net).collect();
             for (i, a) in pieces.iter().enumerate() {
-                if count >= MAX_SLIVERS {
-                    out.push(super::copper::limit_finding());
-                    return;
-                }
                 let Some(ab) = a.ring.bounds else {
                     continue;
                 };
@@ -447,7 +439,6 @@ fn slivers(project: &Project, graph: &CopperGraph, min: f64, out: &mut Vec<Findi
                         continue;
                     }
                     reported.push((a.object, other));
-                    count += 1;
                     out.push(Finding::new(
                         "board.copper_sliver",
                         format!(

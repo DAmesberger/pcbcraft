@@ -1792,7 +1792,6 @@ impl PartEditor {
                         Selected::Pin(t) => local(ids.component, t.0),
                         Selected::Graphic(g) => local(ids.symbol, g.0),
                     })
-                    .take(sparksmith_core::issues::MAX_SCOPE_OBJECTS)
                     .collect(),
                 "on the selection",
             ),

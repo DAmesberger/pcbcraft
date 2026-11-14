@@ -85,7 +85,7 @@ About 124–157 hours to a reviewed two-way assembly link on a direct-meshed boa
 - No non-test code in `apps/` reads the native session of a board model. The only non-test callers of the board build are the scene worker (`scene.rs:221-232`), the desktop export (`file_ui.rs:346-350`) and the automation export (`crates/automation/src/session.rs:1123`). Both exports build a fresh model.
 - Display-only layers (mask, finish, silkscreen, edge bands, via domes) are already meshed straight from 2D data in `crates/solidcraft-integration/src/appearance.rs` and never saved. On the full ESP32 build today 772 of 2,186 drawn bodies are of this kind (measured; given as 776 of 2,187).
 - A dimension to a part face is resolved on the part's own design, not on the board model: `crates/solidcraft-integration/src/board/model_refs.rs:1-20`.
-- The document refuses more than 2,000 tracks (`crates/editor-core/src/layout.rs:19`) and 16,384 vias (`layout/via.rs:27`).
+- The document refused more than 2,000 tracks and 16,384 vias when this note was written. Since 14 November 2026 there is no cap on design size ([decisions](../design/decisions-2026-11-14.md#limits-and-settings)); only untrusted input is bounded.
 
 **Solidcraft at the pin (read; details in appendix A).**
 
@@ -241,7 +241,7 @@ And on the mapping itself:
 | One laminate slab, vias not shared | 16.8 M | 1.8 GB |
 | One slab, vias shared (as the app already draws them) | about 10 M (estimate) | about 1.1 GB (estimate) |
 
-Further steps, all inside the present renderer path: build inner layers only when they can be seen; fewer segments for small holes far from the camera; a compact vertex format. And `MAX_TRACKS` is 2,000, so none of this is reachable in a real document yet.
+Further steps, all inside the present renderer path: build inner layers only when they can be seen; fewer segments for small holes far from the camera; a compact vertex format. The track cap these steps waited for was removed on 14 November 2026, so large boards now reach this path.
 
 **7. STEP fidelity.** Unchanged in kind: STEP comes from the exact build. What changes is when the user pays: at export, not while editing. Consequences:
 
@@ -601,7 +601,7 @@ Stages A are option 3; stages B are the interface (2.8). Hours are estimates.
 | 9 | A5 (built) | Export tiers, progress and cancel, the per-export volume check | 8–10 | A full export reports any body that differs from the plan (`export::tests::a_full_export_reports_a_body_that_differs_from_the_plan`) |
 | 9a | G1 (built) | The volume check replaced by a geometry-fit check: each body's top and bottom faces against the plan's loops (exact difference area, maximum deviation), its holes and heights, volume only as one more sign; laminate slabs checked by outline; an unfit export refused unless written anyway | 6–8 | A dropped or moved laminate hole is caught and refused (`export::tests::a_dropped_or_moved_laminate_hole_is_caught`, `an_export_that_does_not_fit_is_refused_unless_written_anyway`); every example board fits (`cargo xtask board-parity`) |
 | 10 | B7, B9 | Live channel; VM run and measurements | 14–17 | Acceptance 9 |
-| Later | A6 | Scale: lazy inner layers, compact meshes, the laminate's tile size following hole density; then lift `MAX_TRACKS` | 10–16 | 20,000 vias and 60,000 tracks under 1 GB and 1 s (target) |
+| Later | A6 | Scale: lazy inner layers, compact meshes, the laminate's tile size following hole density (the track cap it waited for is gone) | 10–16 | 20,000 vias and 60,000 tracks under 1 GB and 1 s (target) |
 | Later | A7 | Persisted part cache (mesh, face table, datums) | 10–14 | A board opens in 3D with no kernel call |
 | Later | B8 | `.craftx` | 8–12 | Upstream |
 
@@ -620,7 +620,7 @@ Totals: stages 0 to 10 are about 124–157 hours; the later stages 28–42.
 | --- | --- |
 | The plan extraction disturbs the tuned in-place replay | A1 keeps today's command stream byte for byte where it can; the replay tests are the gate |
 | The mesher and the kernel flatten curves differently | Flattening and tiling are stated in the plan; parity tolerances derive from them |
-| Mesh memory on large boards | Not a release-1 risk while `MAX_TRACKS` is 2,000; A6 before lifting it |
+| Mesh memory on large boards | The track cap is gone (14 November 2026), so A6 is due; `large_board` in `crates/solidcraft-integration/tests` measures it |
 | Exact export fails on large boards | Mechanical tier as the default; a clear failure report; the upstream stitch fix |
 | The team keeps "fixing" the exact build for speed | After A4 its only speed requirement is "an export finishes"; say so in the skill |
 

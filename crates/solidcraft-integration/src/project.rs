@@ -860,9 +860,6 @@ fn next_pick(sources: &[Source]) -> u64 {
     u64::try_from(sources.len()).map_or(u64::MAX, |n| n.saturating_add(1))
 }
 
-/// Most drilled holes (pad holes and pad vias) on one board.
-pub const MAX_DRILLS: usize = 65_536;
-
 /// One placed pad and the frames its contours are drawn in.
 struct PlacedPad<'a> {
     placed: layout::PlacedPad,
@@ -982,37 +979,37 @@ impl PlacedPad<'_> {
 /// terminal: they are all copper (or holes) on the board.
 fn placed_pads(project: &Project) -> Result<Vec<PlacedPad<'_>>> {
     let placed = layout::placed_pads(project);
-    if placed.len() > layout::MAX_PLACED_PADS {
-        return Err(Error::Invalid(format!(
-            "the board has more than {} pads",
-            layout::MAX_PLACED_PADS
-        )));
+    // Each placed part once, by instance: a lookup per pad, not a scan.
+    let mut parts = std::collections::HashMap::new();
+    for placement in project.placements.iter() {
+        parts.insert(placement.instance, (placement, None));
     }
-    let drills: usize = placed
-        .iter()
-        .map(|p| usize::from(p.pad.hole.is_some()) + p.pad.vias.len())
-        .sum();
-    if drills > MAX_DRILLS {
-        return Err(Error::Invalid(format!(
-            "the board has more than {MAX_DRILLS} drilled holes"
-        )));
+    for instance in project.instances.iter() {
+        if let Some((_, slot)) = parts.get_mut(&instance.id) {
+            *slot = Some(instance);
+        }
     }
+    let mut defaults_of = std::collections::HashMap::new();
     placed
         .into_iter()
         .map(|placed| {
-            let placement = project
-                .placements
-                .iter()
-                .find(|p| p.instance == placed.instance)
+            let (placement, instance) = parts
+                .get(&placed.instance)
+                .copied()
                 .ok_or_else(|| Error::Invalid("missing pad placement".into()))?;
-            let instance = project
-                .instance(placed.instance)
-                .ok_or_else(|| Error::Invalid("missing pad instance".into()))?;
-            let defaults = instances::resolve(&project.library, instance)
-                .ok()
-                .and_then(|r| r.physical)
-                .map(|p| p.footprint.definition.defaults)
-                .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
+            let instance = instance.ok_or_else(|| Error::Invalid("missing pad instance".into()))?;
+            let defaults = match defaults_of.get(&instance.id) {
+                Some(defaults) => *defaults,
+                None => {
+                    let defaults = instances::resolve(&project.library, instance)
+                        .ok()
+                        .and_then(|r| r.physical)
+                        .map(|p| p.footprint.definition.defaults)
+                        .ok_or_else(|| Error::Invalid("missing pad definition".into()))?;
+                    defaults_of.insert(instance.id, defaults);
+                    defaults
+                }
+            };
             let designator = instance.designator.as_str();
             let origin = placed.transform.apply(placed.pad.position());
             Ok(PlacedPad {

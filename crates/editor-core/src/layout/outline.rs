@@ -22,8 +22,8 @@ use crate::library::footprint_source::{
     SketchOutcome, SketchPointId, SketchRef, SolveStatus, SolveSummary,
 };
 use crate::model::board::{
-    BoardFeatureId, BoardSketch, CutoutKind, CutoutRole, EdgeName, MAX_CUTOUTS, MAX_FAULT_POINTS,
-    MAX_FAULT_TEXT, MAX_MOUNTING_HOLES, MAX_NAMED_EDGES, MountingHoleRole, NamedEdge, ShapeFault,
+    BoardFeatureId, BoardSketch, CutoutKind, CutoutRole, EdgeName, MAX_FAULT_POINTS,
+    MAX_FAULT_TEXT, MAX_NAMED_EDGES, MountingHoleRole, NamedEdge, ShapeFault,
     ShapeFaultKind,
 };
 use crate::model::{BoardShape, Project, SolvedBoard};
@@ -493,11 +493,6 @@ fn set_cutout_kind(
     if kind == CutoutKind::Cutout {
         return Ok(());
     }
-    if sketch.cutouts.len() >= MAX_CUTOUTS {
-        return Err(Error::Limit(format!(
-            "board.cutout_limit: at most {MAX_CUTOUTS} slots"
-        )));
-    }
     if let Some(c) = curves
         .iter()
         .find(|c| sketch.cutouts.iter().any(|k| k.curves.contains(c)))
@@ -579,11 +574,6 @@ fn edit_one(
             plated,
             pad_diameter,
         } => {
-            if sketch.holes.len() >= MAX_MOUNTING_HOLES {
-                return Err(Error::Limit(format!(
-                    "board.hole_limit: at most {MAX_MOUNTING_HOLES} mounting holes"
-                )));
-            }
             let id = next_feature(sketch)?;
             sketch.holes.push(MountingHoleRole {
                 id,
@@ -782,11 +772,6 @@ fn identify_cutouts(sketch: &mut BoardSketch) -> Result<()> {
                 (id, CutoutKind::Cutout)
             }
         };
-        if roles.len() >= MAX_CUTOUTS {
-            return Err(Error::Limit(format!(
-                "board.cutout_limit: at most {MAX_CUTOUTS} cutouts and slots"
-            )));
-        }
         cutout.id = Some(id);
         cutout.kind = kind;
         // The loop's curves, each once: a curve behind several segments
@@ -989,9 +974,7 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
     if sketch.sketch.0.len() > crate::library::footprint_source::MAX_SKETCH_BYTES {
         return Err(Error::Limit("board.sketch: the sketch is too large".into()));
     }
-    if sketch.cutouts.len() > MAX_CUTOUTS
-        || sketch.holes.len() > MAX_MOUNTING_HOLES
-        || sketch.edges.len() > MAX_NAMED_EDGES
+    if sketch.edges.len() > MAX_NAMED_EDGES
         || sketch.parameters.len() > MAX_BOARD_PARAMETERS
         || sketch.idle.len() > MAX_BOARD_PARAMETERS
     {
@@ -1076,9 +1059,7 @@ fn validate_sketch(sketch: &BoardSketch) -> Result<()> {
             return bad("the solved outline is out of range");
         }
     }
-    if solved.cutouts.len() > MAX_CUTOUTS
-        || solved.holes.len() > MAX_MOUNTING_HOLES
-        || solved.edges.len() > MAX_NAMED_EDGES
+    if solved.edges.len() > MAX_NAMED_EDGES
         || solved.holes.iter().any(|h| {
             !(point_valid(h.at) && h.drill.is_finite() && h.drill > 0.0)
                 || h.pad_diameter

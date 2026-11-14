@@ -18,8 +18,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const MAX_NETS: usize = 262_144;
-
 /// What a reconciliation did to net identities.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct NetChanges {
@@ -441,11 +439,6 @@ pub fn names(project: &Project) -> BTreeMap<Id, String> {
 /// Rebuild `project.nets` from wires while preserving existing identities.
 pub fn reconcile(project: &mut Project) -> Result<NetChanges> {
     let terminals = terminals(project);
-    if terminals.len() > MAX_NETS {
-        return Err(Error::Limit(format!(
-            "projects support at most {MAX_NETS} terminals"
-        )));
-    }
     let groups = components(project, &terminals);
     let old_net_of: BTreeMap<Endpoint, Id> = project
         .nets
@@ -813,9 +806,6 @@ pub fn name_valid(name: &str) -> bool {
 /// Net records must match wire connectivity exactly.
 pub fn validate(project: &Project) -> Result<()> {
     let invalid = |message: &str| Err(Error::Invalid(message.into()));
-    if project.nets.len() > MAX_NETS {
-        return invalid("too many nets");
-    }
     let terminals = terminals(project);
     let mut seen_ids = BTreeSet::new();
     let mut names = BTreeSet::new();
@@ -842,9 +832,10 @@ pub fn validate(project: &Project) -> Result<()> {
     if members.len() != terminals.len() {
         return invalid("every terminal must belong to a net");
     }
+    let by_id: BTreeMap<Id, &Net> = project.nets.iter().map(|n| (n.id, n)).collect();
     for group in components(project, &terminals) {
         let id = group.first().and_then(|t| members.get(t));
-        let Some(net) = id.and_then(|id| project.net(*id)) else {
+        let Some(net) = id.and_then(|id| by_id.get(id)) else {
             return invalid("a connected terminal group has no net");
         };
         if net.terminals != group {

@@ -7,7 +7,7 @@ use crate::layout::LayoutCommand;
 use crate::library::{BindingDefinition, Definition, DraftEdit, FootprintDefinition};
 use crate::model::Layer;
 use crate::tests::support::*;
-use crate::{Engine, Operation, Query, QueryResult};
+use crate::{Engine, Error, Operation, Query, QueryResult};
 
 type Fallible<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -435,13 +435,15 @@ fn a_selection_scope_lists_the_issues_of_those_objects() -> Fallible<()> {
     }
     assert!(selected.rows.iter().any(|r| r.title == "R1: no Part"));
     assert!(!selected.rows.iter().any(|r| r.title == "R2: no Part"));
-    let too_many = IssueScope::Selection {
-        objects: vec![ObjectRef::Instance { id: r1 }; MAX_SCOPE_OBJECTS + 1],
-    };
-    assert!(matches!(
-        engine.query(Query::Issues { scope: too_many }),
-        Err(Error::Limit(_))
-    ));
+    // A selection of any size (the former cap was 4,096 objects) lists
+    // the same issues.
+    let large = issues(
+        &engine,
+        IssueScope::Selection {
+            objects: vec![ObjectRef::Instance { id: r1 }; 10_000],
+        },
+    )?;
+    assert_eq!(large.rows, selected.rows);
     Ok(())
 }
 

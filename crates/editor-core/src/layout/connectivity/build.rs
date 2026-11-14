@@ -7,7 +7,7 @@ use crate::geometry::{
     Bounds, Point, polygon_contains, segment_distance, segments_cross, segments_gap,
 };
 use crate::ids::Id;
-use crate::layout::MAX_CHECK_PAIRS;
+use crate::layout::check_pair_budget;
 use crate::layout::WorldPad;
 use crate::layout::copper::{CURVE_SLACK_MM, CopperRing};
 use crate::layout::fill::{self, RegionIndex};
@@ -525,6 +525,7 @@ impl CopperGraph {
         let mut fallbacks: Vec<(usize, Joint)> = Vec::new();
         let mut near = Vec::new();
         let mut pairs = 0usize;
+        let budget = check_pair_budget(self.shapes.len());
         for group in self.groups.values() {
             for (local, &a) in group.members.iter().enumerate() {
                 let Some(ring_a) = self.shapes.get(a) else {
@@ -540,7 +541,7 @@ impl CopperGraph {
                     .filter_map(|j| group.members.get(*j))
                 {
                     pairs += 1;
-                    if pairs > MAX_CHECK_PAIRS || joints.len() > limit {
+                    if pairs > budget || joints.len() > limit {
                         return (joints, false);
                     }
                     let Some(ring_b) = self.shapes.get(b) else {

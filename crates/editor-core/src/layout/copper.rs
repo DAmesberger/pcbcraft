@@ -15,7 +15,7 @@ use super::board_edge::{BoardEdges, EdgeVerdict};
 use super::connectivity::CopperGraph;
 use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
-use super::{CLEARANCE_MM, EPS, MAX_CHECK_PAIRS, WorldPad, courtyard, pad_labels, sync_preview};
+use super::{CLEARANCE_MM, EPS, WorldPad, check_pair_budget, courtyard, pad_labels, sync_preview};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{
     Bounds, Point, Shape, polygons_overlap, polyline_polygon_distance, segments_gap,
@@ -353,6 +353,7 @@ impl BoardCopper {
         let grid = BoundsGrid::new(shapes.iter().map(|s| s.ring.bounds), reach);
         let mut near = Vec::new();
         let mut pairs = 0usize;
+        let budget = check_pair_budget(shapes.len());
         let edges = BoardEdges::of(project);
         for (i, a) in shapes.iter().enumerate() {
             let edge = || limits.clearance(a.kind, Some(a.net), CopperObject::BoardEdge, None);
@@ -398,7 +399,7 @@ impl BoardCopper {
                 .filter_map(|j| shapes.get(*j))
             {
                 pairs += 1;
-                if pairs > MAX_CHECK_PAIRS {
+                if pairs > budget {
                     issues.push(limit_finding());
                     return issues;
                 }

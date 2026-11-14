@@ -17,8 +17,6 @@ use std::collections::BTreeMap;
 
 /// Chord tolerance of the drawn outlines, mm.
 pub const DRAWING_CHORD_MM: f64 = 0.01;
-/// Parts drawn per side (a bound on the drawing, not the board).
-pub const MAX_DRAWN_PARTS: usize = 20_000;
 /// Points of one drawn loop.
 pub const MAX_LOOP_POINTS: usize = 4096;
 
@@ -450,7 +448,7 @@ fn assembly_sides(project: &Project) -> Vec<AssemblySide> {
     for side in [Layer::Top, Layer::Bottom] {
         let mut parts = Vec::new();
         for placement in &project.placements {
-            if placement.layer != side || parts.len() >= MAX_DRAWN_PARTS {
+            if placement.layer != side {
                 continue;
             }
             let Some(instance) = project.instance(placement.instance) else {

@@ -2,7 +2,7 @@
 //! it restates none of their rules.
 use crate::diagnostics::{Error, Result};
 use crate::ids::Id;
-use crate::instances::{self, MAX_INSTANCES};
+use crate::instances;
 use crate::library::{self, Drafts};
 use crate::model::Project;
 use crate::{layout, nets, schematic};
@@ -61,9 +61,6 @@ fn project_except_library(p: &Project) -> Result<()> {
         if id == 0 || id >= p.next_id || !ids.insert(id) {
             return Err(Error::Invalid("invalid global identity allocation".into()));
         }
-    }
-    if p.instances.len() > MAX_INSTANCES {
-        return Err(Error::Invalid("too many component instances".into()));
     }
     p.rules.validate()?;
     if !p.production.within_bounds() {

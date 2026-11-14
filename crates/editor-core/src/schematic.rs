@@ -13,7 +13,7 @@
 use crate::diagnostics::{Error, Result};
 use crate::geometry::{Bounds, Point, Shape, Transform2, segment_distance};
 use crate::ids::{DefinitionId, Endpoint, GraphicId, Id, SheetId, TerminalId, UnitId};
-use crate::instances::{self, MAX_OCCURRENCES};
+use crate::instances;
 pub use crate::library::graphics::PlacedText;
 use crate::library::graphics::{
     PIN_NUMBER_ADVANCE, PIN_NUMBER_CLEARANCE_MM, TEXT_LINE_SPACING, VALUE_TEXT_HEIGHT_MM,
@@ -34,7 +34,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub const MAX_WIRES: usize = 16384;
 /// Corners one wire's path may have.
 pub const MAX_CORNERS: usize = 256;
 
@@ -51,7 +50,7 @@ pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
 pub use arrange::Arrangement;
 pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
-    JUNCTION_TOLERANCE_MM, MAX_CORNER_RADIUS_MM, MAX_JUNCTIONS, WirePoint, WireTarget,
+    JUNCTION_TOLERANCE_MM, MAX_CORNER_RADIUS_MM, WirePoint, WireTarget,
     end_position, end_sheet, junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
     wire_vertices,
 };
@@ -1025,11 +1024,6 @@ fn add_wire(
     corners: Vec<Corner>,
     to: WireEnd,
 ) -> Result<Id> {
-    if project.wires.len() >= MAX_WIRES {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 wires.".into(),
-        ));
-    }
     let id = project.allocate()?;
     let mut wire = Wire {
         id,
@@ -1154,9 +1148,6 @@ pub fn protect_routed_nets(before: &Project, after: &Project) -> Result<()> {
 /// belong to `instances::check_instance`.
 pub fn validate(project: &Project) -> Result<()> {
     sheets::validate(project)?;
-    if project.wires.len() > MAX_WIRES || project.occurrences.len() > MAX_OCCURRENCES {
-        return Err(invalid("Schematic exceeds supported item limits."));
-    }
     for occurrence in &project.occurrences {
         if project.instance(occurrence.instance).is_none() {
             return Err(invalid(

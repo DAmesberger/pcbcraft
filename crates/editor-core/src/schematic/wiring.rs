@@ -14,7 +14,7 @@
 //! more conductors meet (a pin counts as one). [`tidy`] keeps the stored
 //! topology in its normal form after every edit.
 use super::wire_edit::Bend;
-use super::{Error, MAX_CORNERS, Result, invalid, not_found, pin_position};
+use super::{MAX_CORNERS, Result, invalid, not_found, pin_position};
 use crate::geometry::{Point, point_valid};
 use crate::ids::{Endpoint, Id, SheetId};
 use crate::instances;
@@ -26,8 +26,6 @@ use crate::units::PointNm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-
-pub const MAX_JUNCTIONS: usize = super::MAX_WIRES;
 
 /// How far a point given as "on a wire" may lie from its path, and how
 /// near a path end a point counts as that end, in millimetres.
@@ -310,11 +308,6 @@ pub(super) fn on_path(
 /// A new junction point (not placed) on `sheet` at `position`.
 fn new_junction(project: &mut Project, sheet: SheetId, position: Point) -> Result<Id> {
     let position = super::sheet_point(position)?;
-    if project.junctions.len() >= MAX_JUNCTIONS {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 wires and 16384 junctions.".into(),
-        ));
-    }
     let id = project.allocate()?;
     project.junctions.push(Junction {
         id,
@@ -343,11 +336,6 @@ pub(super) fn split(
         .wire(point.wire)
         .cloned()
         .ok_or_else(|| not_found("Unknown schematic wire."))?;
-    if project.wires.len() >= super::MAX_WIRES {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 wires and 16384 junctions.".into(),
-        ));
-    }
     let end = match node {
         Some(node) => node,
         None => WireEnd::junction(new_junction(project, wire.sheet, at)?),
@@ -803,11 +791,6 @@ fn join_touching(project: &mut Project) -> Result<()> {
             });
         }
     }
-    if wires.len() > super::MAX_WIRES {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 wires and 16384 junctions.".into(),
-        ));
-    }
     project.wires = wires.into();
     Ok(())
 }
@@ -1257,13 +1240,10 @@ pub(super) fn remove_junction(project: &mut Project, id: Id) -> Result<()> {
     Ok(())
 }
 
-/// Wire and junction records: limits, references, sheets, corners, no wire
+/// Wire and junction records: references, sheets, corners, no wire
 /// from a point back to itself without corners, and every junction carrying
 /// a wire end (an unplaced one three or more).
 pub(super) fn validate(project: &Project) -> Result<()> {
-    if project.junctions.len() > MAX_JUNCTIONS {
-        return Err(invalid("Schematic exceeds supported item limits."));
-    }
     let mut ends: BTreeMap<Id, usize> = BTreeMap::new();
     for wire in &project.wires {
         if wire.from == wire.to && wire.corners.is_empty() {

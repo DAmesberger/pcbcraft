@@ -145,7 +145,6 @@ pub fn annotate(
         .collect();
     let mut next: BTreeMap<(String, usize), usize> = BTreeMap::new();
     let mut assigned: BTreeMap<Id, String> = BTreeMap::new();
-    let limit = instances::MAX_INSTANCES * 100 + 100_000;
     for ((page, ..), id, prefix) in &visited {
         let base = match numbering {
             Numbering::Sequential => 1,
@@ -156,6 +155,9 @@ pub fn annotate(
             .entry((prefix.to_ascii_uppercase(), base))
             .or_insert(base);
         let mut n = *cursor;
+        // At most one number per designator is taken, so a free one lies
+        // within `taken.len()` of the cursor.
+        let limit = n.saturating_add(taken.len());
         let designator = loop {
             if n > limit {
                 return Err(invalid("No free designator number is left."));

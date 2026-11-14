@@ -12,13 +12,6 @@ use crate::model::{
 use crate::units::{NM_PER_MM, Nm, PointNm};
 use std::collections::BTreeSet;
 
-/// Sheets a project holds.
-pub const MAX_SHEETS: usize = 256;
-/// Sheet symbols, and pins on one symbol.
-pub const MAX_SHEET_SYMBOLS: usize = 1024;
-pub const MAX_SHEET_PINS: usize = 512;
-/// Notes, lines and rectangles a project holds.
-pub const MAX_DRAWINGS: usize = 16384;
 /// Longest sheet name, in bytes.
 pub const MAX_SHEET_NAME: usize = 64;
 /// Longest note, in bytes.
@@ -51,16 +44,19 @@ fn check_sheet_name(project: &Project, name: &str, except: Option<SheetId>) -> R
 /// from one past the sheet count, so a third sheet is "Sheet 3" whatever
 /// the first two are called.
 pub fn default_sheet_name(project: &Project) -> String {
-    let next = project.sheets.list.len().saturating_add(1);
-    (next..=next.saturating_add(MAX_SHEETS))
+    let count = project.sheets.list.len();
+    let next = count.saturating_add(1);
+    let taken: BTreeSet<String> = project
+        .sheets
+        .list
+        .iter()
+        .map(|s| s.name.to_ascii_lowercase())
+        .collect();
+    // Each sheet takes at most one name, so one of the next `count + 1`
+    // numbers is free.
+    (next..=next.saturating_add(count))
         .map(|n| format!("Sheet {n}"))
-        .find(|name| {
-            !project
-                .sheets
-                .list
-                .iter()
-                .any(|s| s.name.eq_ignore_ascii_case(name))
-        })
+        .find(|name| !taken.contains(&name.to_ascii_lowercase()))
         .unwrap_or_else(|| "Sheet".into())
 }
 
@@ -71,11 +67,6 @@ pub fn add(
     paper: Option<Paper>,
     orientation: Option<PaperOrientation>,
 ) -> Result<SheetId> {
-    if project.sheets.list.len() >= MAX_SHEETS {
-        return Err(Error::Limit(
-            "This edition supports at most 256 sheets.".into(),
-        ));
-    }
     let name = name.unwrap_or_else(|| default_sheet_name(project));
     check_sheet_name(project, &name, None)?;
     let id = SheetId(project.sheets.next);
@@ -232,11 +223,6 @@ pub struct NewSheetSymbol {
 pub fn place_symbol(project: &mut Project, new: NewSheetSymbol) -> Result<(Id, SheetId)> {
     check_sheet(project, new.sheet)?;
     check_size(new.size)?;
-    if project.sheet_symbols.len() >= MAX_SHEET_SYMBOLS {
-        return Err(Error::Limit(
-            "This edition supports at most 1024 sheet symbols.".into(),
-        ));
-    }
     let child = match new.child {
         Some(child) => {
             if new.name.is_some() {
@@ -359,11 +345,6 @@ pub fn add_pin(project: &mut Project, new: NewSheetPin) -> Result<Id> {
         .sheet_symbol(new.symbol)
         .ok_or_else(|| not_found("Unknown sheet symbol."))?;
     check_pin_name(symbol, &new.name, None)?;
-    if symbol.pins.len() >= MAX_SHEET_PINS {
-        return Err(Error::Limit(
-            "This edition supports at most 512 pins on a sheet symbol.".into(),
-        ));
-    }
     let id = project.allocate()?;
     let symbol = symbol_mut(project, new.symbol)?;
     symbol.pins.push(SheetPin {
@@ -533,11 +514,6 @@ fn check_item(item: &SheetItem) -> Result<()> {
 pub fn add_drawing(project: &mut Project, sheet: SheetId, item: SheetItem) -> Result<Id> {
     check_sheet(project, sheet)?;
     check_item(&item)?;
-    if project.drawings.len() >= MAX_DRAWINGS {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 notes and drawings.".into(),
-        ));
-    }
     let id = project.allocate()?;
     project.drawings.push(SheetDrawing { id, sheet, item });
     Ok(id)
@@ -625,13 +601,13 @@ pub fn move_unit_to_sheet(
     Ok(())
 }
 
-/// Sheets, sheet symbols, pins, labels and drawings: limits, references,
+/// Sheets, sheet symbols, pins, labels and drawings: references,
 /// unique names and an acyclic hierarchy in which each sheet has at most
 /// one parent symbol.
 pub(super) fn validate(project: &Project) -> Result<()> {
     let sheets = &project.sheets;
-    if sheets.list.is_empty() || sheets.list.len() > MAX_SHEETS {
-        return Err(invalid("A schematic has 1–256 sheets."));
+    if sheets.list.is_empty() {
+        return Err(invalid("A schematic has at least one sheet."));
     }
     let mut ids = BTreeSet::new();
     let mut names = BTreeSet::new();
@@ -654,12 +630,6 @@ pub(super) fn validate(project: &Project) -> Result<()> {
     {
         return Err(invalid("An object is on a missing sheet."));
     }
-    if project.labels.len() > super::labels::MAX_LABELS
-        || project.drawings.len() > MAX_DRAWINGS
-        || project.sheet_symbols.len() > MAX_SHEET_SYMBOLS
-    {
-        return Err(invalid("Schematic exceeds supported item limits."));
-    }
     for label in &project.labels {
         if !crate::nets::name_valid(&label.name) {
             return Err(invalid("A label has an invalid name."));
@@ -675,9 +645,6 @@ pub(super) fn validate(project: &Project) -> Result<()> {
         }
         if !children.insert(symbol.child) {
             return Err(invalid("A sheet is used by more than one sheet symbol."));
-        }
-        if symbol.pins.len() > MAX_SHEET_PINS {
-            return Err(invalid("A sheet symbol is out of range."));
         }
         check_size(symbol.size)?;
         check_pins_fit(symbol)?;

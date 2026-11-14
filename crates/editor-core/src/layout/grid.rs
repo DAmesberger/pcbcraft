@@ -23,7 +23,7 @@ type Cell = (i64, i64);
 
 /// Shapes' bounds, by index, filed in square cells.
 #[derive(Debug, Default)]
-pub(crate) struct BoundsGrid {
+pub struct BoundsGrid {
     cell: f64,
     bounds: Vec<Option<Bounds>>,
     cells: HashMap<Cell, Vec<usize>>,
@@ -34,7 +34,7 @@ impl BoundsGrid {
     /// File each shape by its bounds; `None` (no copper) is never a
     /// candidate. `reach` is the farthest the callers will query, which
     /// sizes the cells together with the shapes' typical extent.
-    pub(crate) fn new(bounds: impl IntoIterator<Item = Option<Bounds>>, reach: f64) -> Self {
+    pub fn new(bounds: impl IntoIterator<Item = Option<Bounds>>, reach: f64) -> Self {
         let bounds: Vec<Option<Bounds>> = bounds.into_iter().map(|b| b.filter(finite)).collect();
         let (sum, count) = bounds.iter().flatten().fold((0.0, 0usize), |(s, n), b| {
             let extent = (b.max[0] - b.min[0]).max(b.max[1] - b.min[1]);
@@ -80,7 +80,7 @@ impl BoundsGrid {
 
     /// Every shape whose bounds lie within `reach` of `near` on both axes,
     /// in ascending index order, into `out` (cleared first).
-    pub(crate) fn near(&self, near: &Bounds, reach: f64, out: &mut Vec<usize>) {
+    pub fn near(&self, near: &Bounds, reach: f64, out: &mut Vec<usize>) {
         out.clear();
         if !finite(near) {
             return;

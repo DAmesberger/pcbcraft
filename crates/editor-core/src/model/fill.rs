@@ -9,10 +9,6 @@ use crate::rules::{PadConnection, ThermalRelief};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// Most fills and keepouts on one board.
-pub const MAX_FILLS: usize = 512;
-pub const MAX_KEEPOUTS: usize = 512;
-
 /// Hatched instead of solid copper.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]

@@ -11,16 +11,12 @@
 //! symbols and other labels. Nothing of that placement is stored.
 use super::wiring::{self, WirePoint, WireTarget};
 use super::{PlacedUnit, Result, connect, invalid, not_found, placed_unit};
-use crate::diagnostics::Error;
 use crate::geometry::{Bounds, Point};
 use crate::ids::{Endpoint, Id, SheetId, TerminalId};
 use crate::library::Rotation;
 use crate::model::{Junction, Label, LabelKind, PowerStyle, Project, WireEnd};
 use crate::nets;
 use crate::units::PointNm;
-
-/// Labels and power ports a project holds.
-pub const MAX_LABELS: usize = 16384;
 
 pub(super) fn check_name(name: &str) -> Result<()> {
     if nets::name_valid(name) {
@@ -55,11 +51,6 @@ pub fn place(project: &mut Project, new: NewLabel) -> Result<Id> {
     check_name(&new.name)?;
     check_sheet(project, new.sheet)?;
     let position = new.position;
-    if project.labels.len() >= MAX_LABELS {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 labels.".into(),
-        ));
-    }
     let id = project.allocate()?;
     let mut label = Label {
         id,
@@ -298,11 +289,6 @@ pub(super) fn detach_point(
 ) -> Result<()> {
     if !project.wires.iter().any(|w| w.from == end || w.to == end) {
         return Ok(());
-    }
-    if project.junctions.len() >= wiring::MAX_JUNCTIONS {
-        return Err(Error::Limit(
-            "This edition supports at most 16384 junctions.".into(),
-        ));
     }
     let position = super::sheet_point(position)?;
     let junction = project.allocate()?;

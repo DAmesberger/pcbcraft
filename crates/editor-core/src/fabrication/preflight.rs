@@ -14,7 +14,7 @@ use crate::layout::board_edge::{BoardEdges, EdgeLoopKind, EdgeVerdict};
 use crate::layout::{self, BoardDrawing, CopperRing, PlacedItem};
 use crate::library::{Drafts, MaskRule, PackageModel};
 use crate::model::board::CutoutKind;
-use crate::model::production::{MAX_WAIVER_TEXT, MAX_WAIVERS, Production, Waiver};
+use crate::model::production::{MAX_WAIVE_KEYS, MAX_WAIVER_TEXT, Production, Waiver};
 use crate::model::{CopperLayer, Layer, Project, Track};
 use crate::rules::{self, RuleProfile, RulesCommand};
 use schemars::JsonSchema;
@@ -79,7 +79,7 @@ pub fn apply(
                         .into(),
                 ));
             }
-            if keys.len() > MAX_WAIVERS
+            if keys.len() > MAX_WAIVE_KEYS
                 || reason.len() > MAX_WAIVER_TEXT
                 || reason.chars().any(char::is_control)
                 || keys
@@ -87,16 +87,7 @@ pub fn apply(
                     .any(|k| k.len() > MAX_WAIVER_TEXT || k.chars().any(char::is_control))
             {
                 return Err(Error::Invalid(format!(
-                    "fabrication.waiver_bounds: keys and reasons are printable, at most {MAX_WAIVER_TEXT} bytes"
-                )));
-            }
-            let added = keys
-                .iter()
-                .filter(|k| waivers.binary_search_by(|w| w.key.as_str().cmp(k)).is_err())
-                .count();
-            if waivers.len().saturating_add(added) > MAX_WAIVERS {
-                return Err(Error::Limit(format!(
-                    "fabrication.waiver_limit: at most {MAX_WAIVERS} waivers"
+                    "fabrication.waiver_bounds: keys and reasons are printable, at most {MAX_WAIVER_TEXT} bytes; at most {MAX_WAIVE_KEYS} keys a request"
                 )));
             }
             for key in keys {
@@ -197,9 +188,6 @@ impl PreflightReport {
     }
 }
 
-/// Silkscreen-over-pad comparisons per report (a target bound; beyond it
-/// the check stops and says so).
-pub const MAX_SILK_PAIRS: usize = 4_000_000;
 
 /// Characters of a legend text a finding quotes, so its title stays one line.
 const MAX_LEGEND_NAME: usize = 16;
@@ -638,9 +626,16 @@ fn silk_over_pads(project: &Project, items: &mut Vec<PreflightItem>) {
             openings.push((pad.layer, ring, bounds));
         }
     }
+    let graphics = layout::placed_graphics(project);
+    // Openings near each stroke from a bounds grid, not every opening;
+    // at most the copper checks' pair budget for this many shapes
+    // (`layout::check_pair_budget`), which only ink piled on pads reaches.
+    let grid = layout::grid::BoundsGrid::new(openings.iter().map(|o| Some(o.2)), 0.0);
+    let budget = layout::check_pair_budget(openings.len().saturating_add(graphics.len()));
+    let mut near = Vec::new();
     let mut flagged: BTreeSet<(Id, Layer)> = BTreeSet::new();
     let mut pairs = 0usize;
-    for graphic in layout::placed_graphics(project) {
+    for graphic in graphics {
         let BoardDrawing::Silkscreen(side) = graphic.layer else {
             continue;
         };
@@ -659,12 +654,13 @@ fn silk_over_pads(project: &Project, items: &mut Vec<PreflightItem>) {
                 continue;
             };
             let bounds = bounds.inflated(width / 2.0);
-            for (s, ring, b) in &openings {
+            grid.near(&bounds, 0.0, &mut near);
+            for (s, ring, b) in near.iter().filter_map(|k| openings.get(*k)) {
                 if *s != side || !b.intersects(&bounds) {
                     continue;
                 }
                 pairs += 1;
-                if pairs > MAX_SILK_PAIRS {
+                if pairs > budget {
                     items.push(item(
                         "fabrication.silk_check_limit",
                         Severity::Warning,
