@@ -149,7 +149,7 @@ fn same_findings(
 /// The pair's findings on `graph`, as the board checks report them.
 fn length_findings(p: &Project, graph: &CopperGraph, pair: &DiffPair) -> Vec<(String, String)> {
     let net = crate::ObjectRef::Net { id: pair.positive };
-    crate::layout::length::checks(p, graph)
+    crate::layout::length::checks(p, graph, &Default::default())
         .into_iter()
         .filter(|f| {
             ["pair.skew", "pair.uncoupled", "pair.gap"].contains(&f.code.as_str())

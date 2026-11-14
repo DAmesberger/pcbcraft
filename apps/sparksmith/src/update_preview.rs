@@ -1237,12 +1237,14 @@ mod tests {
             })),
         )?;
         assert!(
-            layout::checks(applied.project()).iter().any(|f| {
-                f.code == "board.outside_outline"
-                    && f.objects
-                        .iter()
-                        .all(|o| matches!(o, ObjectRef::Pad { instance, .. } if *instance == r3))
-            }),
+            layout::checks(applied.project(), &Default::default())
+                .iter()
+                .any(|f| {
+                    f.code == "board.outside_outline"
+                        && f.objects.iter().all(
+                            |o| matches!(o, ObjectRef::Pad { instance, .. } if *instance == r3),
+                        )
+                }),
             "the board checks flag the staged part"
         );
         // Pads of a new placement fold into its line.

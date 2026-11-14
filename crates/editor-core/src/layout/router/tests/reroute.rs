@@ -78,7 +78,7 @@ fn a_dragged_track_with_no_way_through_is_left_unrouted() -> Fallible {
     }
     let before = engine.project().clone();
     let errors = |p: &Project| {
-        checks(p)
+        checks(p, &Default::default())
             .into_iter()
             .filter(|f| f.blocks.is_some() || f.code == "keepout.track")
             .map(|f| f.code)

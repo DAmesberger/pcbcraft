@@ -543,7 +543,8 @@ pub struct ClassImpedance {
     pub impedance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_impedance: Option<f64>,
-    /// The stated tolerance; without one routed impedance is not checked.
+    /// The class's own tolerance; without one the host's Settings value
+    /// applies ([`crate::layout::CheckSettings`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tolerance_pct: Option<f64>,
     pub layers: Vec<Derived>,
@@ -749,7 +750,7 @@ pub fn table(project: &Project) -> ImpedanceTable {
             name: c.name.clone(),
             impedance: c.signal.impedance,
             diff_impedance: c.signal.diff_impedance,
-            tolerance_pct: c.signal.tolerance_pct(),
+            tolerance_pct: c.signal.impedance_tolerance,
             layers: layers
                 .iter()
                 .map(|l| derive(project, Some(c.id), *l))

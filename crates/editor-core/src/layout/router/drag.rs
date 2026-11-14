@@ -652,9 +652,11 @@ fn coupled_partner(project: &Project, pair: &DiffPair, track: Id) -> Option<Id> 
         })
 }
 
-/// The pair's skew, uncoupled-length and gap findings, by code.
+/// The pair's skew, uncoupled-length and gap findings, by code. These
+/// geometry checks take nothing from the host's check settings, so none
+/// are passed.
 fn pair_findings(project: &Project, graph: &CopperGraph, pair: &DiffPair) -> Vec<(String, String)> {
-    length::pair_checks(project, graph, pair)
+    length::pair_checks(project, graph, pair, &length::CheckSettings::default())
         .into_iter()
         .filter(|f| ["pair.skew", "pair.uncoupled", "pair.gap"].contains(&f.code.as_str()))
         .map(|f| (f.code, f.message))

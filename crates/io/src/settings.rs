@@ -103,6 +103,11 @@ pub struct UserSettings {
     /// chosen (Settings); `None`: every new board asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_rule_profile: Option<String>,
+    /// How far routed impedance may stray from a net class's target, in
+    /// percent, when the class states no tolerance (Settings › Rules);
+    /// `None`: the shipped value ([`SettingsDefaults`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub impedance_tolerance: Option<f64>,
     /// Which kinds the Layout and 3D selection may take (the selection
     /// filter), as last set; every kind by default.
     #[serde(default, skip_serializing_if = "SelectionFilter::is_default")]
@@ -271,6 +276,7 @@ impl Default for UserSettings {
             production_folders: Vec::new(),
             projects: Vec::new(),
             default_rule_profile: None,
+            impedance_tolerance: None,
             selection_filter: SelectionFilter::default(),
             lists: ListSettings::default(),
             former_mesh_board_directly: serde::de::IgnoredAny,
@@ -768,6 +774,10 @@ impl UserSettings {
                 "the default fab profile must be a profile library id".into(),
             ));
         }
+        sparksmith_core::layout::CheckSettings {
+            impedance_tolerance: self.impedance_tolerance,
+        }
+        .check()?;
         if self.production_folders.len() > MAX_PRODUCTION_FOLDERS {
             return Err(Error::TooLarge(format!(
                 "at most {MAX_PRODUCTION_FOLDERS} production folders"
@@ -854,6 +864,105 @@ pub fn write_settings(path: &Path, settings: &UserSettings) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     atomic_write(path, &pretty(settings)?)
+}
+
+/// The shipped Settings defaults file in the `defaults/` shelf.
+pub const DEFAULTS_FILE: &str = "settings.json";
+/// Bytes of the shipped Settings defaults file.
+const MAX_DEFAULTS_BYTES: u64 = 64 * 1024;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DefaultsFile {
+    format: u32,
+    /// A note for people reading the file.
+    #[serde(default, rename = "about")]
+    _about: String,
+    impedance_tolerance_pct: f64,
+    /// Where each value comes from, for people reading the file.
+    #[serde(default, rename = "sources")]
+    _sources: serde_json::Map<String, serde_json::Value>,
+}
+
+/// The values Settings start with until the user sets their own, read
+/// from the shipped library (`defaults/settings.json`): the code assumes
+/// none of them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SettingsDefaults {
+    /// Impedance tolerance, percent, for a class that states none.
+    pub impedance_tolerance: f64,
+}
+
+impl SettingsDefaults {
+    /// Load the defaults from `shipped`; a missing, broken or
+    /// out-of-bounds file is an error naming it.
+    pub fn load(shipped: &crate::shipped::ShippedLibrary) -> Result<Self> {
+        use crate::shipped::Shelf;
+        let path = shipped.shelf(Shelf::Defaults).join(DEFAULTS_FILE);
+        let invalid =
+            |e: &dyn std::fmt::Display| Error::Invalid(format!("{}: {e}", path.display()));
+        let bytes = shipped
+            .read(Shelf::Defaults, DEFAULTS_FILE, MAX_DEFAULTS_BYTES)
+            .map_err(|e| invalid(&e))?;
+        let file: DefaultsFile = serde_json::from_slice(&bytes).map_err(|e| invalid(&e))?;
+        if file.format != SETTINGS_FORMAT {
+            return Err(Error::Document(sparksmith_core::Error::Unsupported(
+                format!("{}: unsupported format {}", path.display(), file.format),
+            )));
+        }
+        let defaults = Self {
+            impedance_tolerance: file.impedance_tolerance_pct,
+        };
+        sparksmith_core::layout::CheckSettings {
+            impedance_tolerance: Some(defaults.impedance_tolerance),
+        }
+        .check()
+        .map_err(|e| invalid(&e))?;
+        Ok(defaults)
+    }
+
+    /// [`Self::load`] from the located shipped library, once per process.
+    pub fn shipped() -> Result<Self> {
+        static LOADED: std::sync::OnceLock<std::result::Result<SettingsDefaults, String>> =
+            std::sync::OnceLock::new();
+        LOADED
+            .get_or_init(|| {
+                crate::shipped::ShippedLibrary::locate()
+                    .and_then(|library| Self::load(&library))
+                    .map_err(|e| e.to_string())
+            })
+            .clone()
+            .map_err(Error::Invalid)
+    }
+}
+
+impl UserSettings {
+    /// The impedance tolerance the checks use: the user's own, else the
+    /// shipped default.
+    pub fn impedance_tolerance_or(&self, defaults: &SettingsDefaults) -> f64 {
+        self.impedance_tolerance
+            .unwrap_or(defaults.impedance_tolerance)
+    }
+
+    /// What the engine's checks take from these settings
+    /// ([`sparksmith_core::Engine::set_check_settings`]), the unset values
+    /// from the shipped defaults.
+    pub fn check_settings(
+        &self,
+        defaults: &SettingsDefaults,
+    ) -> sparksmith_core::layout::CheckSettings {
+        sparksmith_core::layout::CheckSettings {
+            impedance_tolerance: Some(self.impedance_tolerance_or(defaults)),
+        }
+    }
+}
+
+/// The check settings of the user's settings file and the located shipped
+/// library, as every headless host (CLI, MCP) sets them. An unreadable
+/// settings file or a missing defaults file is an error naming it.
+pub fn check_settings_from_env() -> Result<sparksmith_core::layout::CheckSettings> {
+    let settings = read_settings(&UserDirs::from_env()?.settings_path())?;
+    Ok(settings.check_settings(&SettingsDefaults::shipped()?))
 }
 
 #[cfg(test)]
@@ -1368,6 +1477,53 @@ mod tests {
                 "a relative XDG_STATE_HOME is ignored"
             );
         }
+        Ok(())
+    }
+
+    /// The impedance tolerance is the user's own, else the shipped
+    /// default; a value out of bounds is refused, and a missing defaults
+    /// file is an error naming it.
+    #[test]
+    fn the_impedance_tolerance_is_the_users_else_the_shipped_default() -> Result<()> {
+        let shipped = SettingsDefaults::load(&crate::shipped::ShippedLibrary::locate()?)?;
+        let mut settings = UserSettings::default();
+        assert_eq!(
+            settings.check_settings(&shipped).impedance_tolerance,
+            Some(shipped.impedance_tolerance)
+        );
+        settings.impedance_tolerance = Some(7.5);
+        settings.check()?;
+        assert_eq!(
+            settings.check_settings(&shipped).impedance_tolerance,
+            Some(7.5)
+        );
+        let json = serde_json::to_string(&settings)?;
+        let read: UserSettings = serde_json::from_str(&json)?;
+        assert_eq!(read.impedance_tolerance, Some(7.5));
+        settings.impedance_tolerance = Some(0.0);
+        assert!(settings.check().is_err());
+
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("library");
+        std::fs::create_dir_all(root.join("defaults"))?;
+        std::fs::write(root.join(crate::shipped::MARKER), "{\"format\":1}")?;
+        let library = crate::shipped::ShippedLibrary::at(&root)?;
+        let missing = SettingsDefaults::load(&library).map_err(|e| e.to_string());
+        assert!(
+            missing.as_ref().is_err_and(|e| e.contains(DEFAULTS_FILE)),
+            "{missing:?}"
+        );
+        std::fs::write(
+            root.join("defaults").join(DEFAULTS_FILE),
+            r#"{"format":1,"impedance_tolerance_pct":90}"#,
+        )?;
+        let out_of_bounds = SettingsDefaults::load(&library).map_err(|e| e.to_string());
+        assert!(
+            out_of_bounds
+                .as_ref()
+                .is_err_and(|e| e.contains(DEFAULTS_FILE)),
+            "{out_of_bounds:?}"
+        );
         Ok(())
     }
 }

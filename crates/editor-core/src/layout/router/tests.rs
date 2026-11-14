@@ -79,7 +79,7 @@ fn run(p: &Project, r: &RouteStepRequest) -> RoutePlan {
 
 /// Copper findings the router must never cause.
 fn violations(p: &Project) -> Vec<String> {
-    layout::checks(p)
+    layout::checks(p, &Default::default())
         .into_iter()
         .filter(|f| {
             matches!(

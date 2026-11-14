@@ -48,14 +48,14 @@ fn physical_connectivity_changes_when_a_pad_moves() -> Result<()> {
     let mut project = fixture()?;
     assert_eq!(airwires(&project).len(), 1);
     assert_eq!(
-        checks(&project)
+        checks(&project, &Default::default())
             .iter()
             .filter(|s| s.code == "board.unrouted")
             .count(),
         2
     );
     apply(&mut project, LayoutCommand::Route { request: request() })?;
-    assert!(checks(&project).is_empty());
+    assert!(checks(&project, &Default::default()).is_empty());
     assert!(airwires(&project).is_empty());
     let track = project.tracks[0].clone();
     apply(
@@ -70,7 +70,7 @@ fn physical_connectivity_changes_when_a_pad_moves() -> Result<()> {
     assert_eq!(project.tracks[0], track);
     assert_eq!(airwires(&project).len(), 1);
     assert_eq!(
-        checks(&project)
+        checks(&project, &Default::default())
             .iter()
             .filter(|s| s.code == "board.unrouted")
             .count(),
@@ -242,7 +242,7 @@ fn locked_placements_and_tracks_reject_edits() -> Result<()> {
 
 /// The pads of `designator` that DRC reports past the board outline.
 fn off_board_pads(project: &Project, designator: &str) -> Vec<String> {
-    checks(project)
+    checks(project, &Default::default())
         .into_iter()
         .filter(|f| f.code == "board.outside_outline" && f.message.starts_with(designator))
         .map(|f| f.message)
@@ -393,7 +393,7 @@ fn minimum_clearance_uses_copper_edges_and_accepts_exact_boundary() -> Result<()
         },
     )?;
     // No clearance finding; the track's start, held off the land, is open.
-    let found = checks(&project);
+    let found = checks(&project, &Default::default());
     assert!(
         found.iter().all(|f| f.code == "board.track_dangling"),
         "{found:?}"
@@ -416,7 +416,7 @@ fn matching_xy_on_opposite_layers_does_not_connect_copper() -> Result<()> {
     apply(&mut project, LayoutCommand::Route { request: request() })?;
     assert_eq!(airwires(&project).len(), 1);
     assert_eq!(
-        checks(&project)
+        checks(&project, &Default::default())
             .iter()
             .filter(|s| s.code == "board.unrouted")
             .count(),
@@ -603,9 +603,11 @@ fn a_plated_through_pad_connects_a_bottom_track() -> Result<()> {
     )?;
     assert!(airwires(&project).is_empty());
     assert!(
-        !checks(&project).iter().any(|f| f.code == "board.unrouted"),
+        !checks(&project, &Default::default())
+            .iter()
+            .any(|f| f.code == "board.unrouted"),
         "{:?}",
-        checks(&project)
+        checks(&project, &Default::default())
     );
     Ok(())
 }
@@ -644,7 +646,7 @@ fn board_checks_label_pads_by_number() -> Result<()> {
     for pad in &mut project.library.footprints[0].definition.pads {
         pad.number = format!("N{}", pad.id);
     }
-    let unrouted: Vec<_> = checks(&project)
+    let unrouted: Vec<_> = checks(&project, &Default::default())
         .into_iter()
         .filter(|f| f.code == "board.unrouted")
         .collect();
@@ -698,11 +700,11 @@ fn clearance_measures_a_round_pad_not_its_extent() -> Result<()> {
     let mut round_board = with_pad_shape(fixture()?, circle());
     apply(&mut round_board, pass)?;
     assert!(
-        !checks(&round_board)
+        !checks(&round_board, &Default::default())
             .iter()
             .any(|f| f.code == "board.clearance"),
         "{:?}",
-        checks(&round_board)
+        checks(&round_board, &Default::default())
     );
     Ok(())
 }
@@ -765,7 +767,7 @@ fn connectivity_follows_the_pad_outline_into_corners() -> Result<()> {
     apply(&mut round_board, route)?;
     assert_eq!(airwires(&round_board).len(), 1);
     assert_eq!(
-        checks(&round_board)
+        checks(&round_board, &Default::default())
             .iter()
             .filter(|f| f.code == "board.unrouted")
             .count(),
@@ -781,7 +783,11 @@ fn a_track_tangent_to_round_pads_connects_them_and_a_small_gap_does_not() -> Res
     // circles; flattening must not open that contact.
     let mut tangent = with_pad_shape(fixture()?, circle());
     apply(&mut tangent, shared_track([10.8, 10.65], [24.2, 10.65]))?;
-    assert!(airwires(&tangent).is_empty(), "{:?}", checks(&tangent));
+    assert!(
+        airwires(&tangent).is_empty(),
+        "{:?}",
+        checks(&tangent, &Default::default())
+    );
     let mut apart = with_pad_shape(fixture()?, circle());
     apply(&mut apart, shared_track([10.8, 10.66], [24.2, 10.66]))?;
     assert_eq!(airwires(&apart).len(), 1);
@@ -1353,7 +1359,7 @@ fn a_moved_part_carries_its_tracks_in_one_undo_step() -> Result<()> {
     let before = engine.project().clone();
     let track = before.tracks[0].clone();
     let unrouted = |p: &Project| {
-        checks(p)
+        checks(p, &Default::default())
             .iter()
             .filter(|f| f.code == "board.unrouted")
             .count()

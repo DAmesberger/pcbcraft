@@ -30,18 +30,18 @@ pub(super) struct Baseline {
 }
 
 impl Baseline {
-    fn of(project: &Arc<Project>) -> Result<Self> {
+    fn of(project: &Arc<Project>, settings: &layout::CheckSettings) -> Result<Self> {
         Ok(Self {
             project: project.clone(),
             value: serde_json::to_value(project.as_ref())?,
-            findings: design_findings(project),
+            findings: design_findings(project, settings),
         })
     }
 }
 
-fn design_findings(project: &Project) -> Vec<Finding> {
+fn design_findings(project: &Project, settings: &layout::CheckSettings) -> Vec<Finding> {
     let mut findings = erc::checks(project);
-    findings.extend(layout::checks(project));
+    findings.extend(layout::checks(project, settings));
     findings
 }
 
@@ -178,7 +178,7 @@ impl Session {
         let value = serde_json::to_value(project)?;
         let mut counts = Map::new();
         count_collections(&value, "", &mut counts);
-        let findings = design_findings(project);
+        let findings = design_findings(project, self.engine.check_settings());
         let mut by_code: BTreeMap<&str, u64> = BTreeMap::new();
         for finding in &findings {
             *by_code.entry(&finding.code).or_default() += 1;
@@ -196,14 +196,15 @@ impl Session {
     /// Add `changes`, `findings` and `drafts` for what differs from `before`.
     fn add_changes(&mut self, before: &Document, reply: &mut Value) -> Result<()> {
         let after = self.engine.document().clone();
+        let settings = *self.engine.check_settings();
         let mut changes = Changes::default();
         let mut design = None;
         if !Arc::ptr_eq(&before.project, &after.project) {
             let old = match self.baseline.take() {
                 Some(baseline) if Arc::ptr_eq(&baseline.project, &before.project) => baseline,
-                _ => Baseline::of(&before.project)?,
+                _ => Baseline::of(&before.project, &settings)?,
             };
-            let new = Baseline::of(&after.project)?;
+            let new = Baseline::of(&after.project, &settings)?;
             changes.diff("", &old.value, &new.value);
             design = Some(findings_delta(&old.findings, &new.findings));
             self.baseline = Some(new);

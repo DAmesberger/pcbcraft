@@ -69,7 +69,7 @@ fn overlapping_courtyards_on_one_side_are_reported_once_per_pair() -> Result<()>
     );
     // The board checks report it too.
     assert!(
-        crate::layout::checks(&project)
+        crate::layout::checks(&project, &Default::default())
             .iter()
             .any(|f| f.code == COURTYARD_OVERLAP)
     );

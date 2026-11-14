@@ -388,6 +388,7 @@ fn a_revision_that_loses_the_face_is_previewed_first_and_blocks_fab() -> Fallibl
         engine.project(),
         &engine.document().drafts,
         None,
+        &Default::default(),
     )?;
     assert!(
         report

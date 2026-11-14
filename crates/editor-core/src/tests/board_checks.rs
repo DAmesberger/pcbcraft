@@ -69,7 +69,7 @@ fn override_mm(project: &mut Project, key: RuleKey, mm: f64) -> Result<()> {
 }
 
 fn found(project: &Project, code: &str) -> Vec<Finding> {
-    crate::layout::checks(project)
+    crate::layout::checks(project, &Default::default())
         .into_iter()
         .filter(|f| f.code == code)
         .collect()
@@ -275,7 +275,7 @@ fn via_checks_take_their_limits_from_the_rules() -> Result<()> {
         .push(track(base + 2, b, [24.0, 20.9], [26.0, 20.9], 0.3));
     project.vias.push(via(base + 3, a, [25.0, 20.0], 0.3, 0.6));
     let codes = |p: &Project| -> Vec<String> {
-        crate::layout::checks(p)
+        crate::layout::checks(p, &Default::default())
             .into_iter()
             .map(|f| f.code)
             .filter(|c| c.starts_with("board.via_") && c != "board.via_dangling")
@@ -312,7 +312,7 @@ fn via_checks_take_their_limits_from_the_rules() -> Result<()> {
             value: RuleValue::Ratio(Some(4.0)),
         },
     )?;
-    let findings = crate::layout::checks(&strict);
+    let findings = crate::layout::checks(&strict, &Default::default());
     let message = |code: &str| {
         findings
             .iter()
@@ -448,7 +448,7 @@ fn a_legend_over_a_cutout_is_reported_as_one() -> Result<()> {
             placement.position[1] += 22.0 - at[1];
         }
     }
-    let report = preflight::report(&project, &Default::default(), None)?;
+    let report = preflight::report(&project, &Default::default(), None, &Default::default())?;
     let titles: Vec<&str> = report
         .items
         .iter()
@@ -490,7 +490,7 @@ fn a_legend_line_past_the_board_edge_is_not_reported() -> Result<()> {
             PlacedItem::Text(_) => false,
         });
     assert!(crosses, "the line should run past the edge");
-    let report = preflight::report(&project, &Default::default(), None)?;
+    let report = preflight::report(&project, &Default::default(), None, &Default::default())?;
     let lines: Vec<&str> = report
         .items
         .iter()
@@ -714,10 +714,10 @@ fn a_body_past_the_outline_is_not_a_finding_while_its_copper_is_clear() -> Resul
     project.vias.clear();
     // The body is x ±5 about the placement: at x = 6 it starts at 1.
     with_large_body(&mut project, 6.0, 0.0)?;
-    let inside = crate::layout::checks(&project).len();
+    let inside = crate::layout::checks(&project, &Default::default()).len();
     // At x = 4 it starts at −1, while the 0805's copper stays on the board.
     with_large_body(&mut project, 4.0, 0.0)?;
-    let past = crate::layout::checks(&project);
+    let past = crate::layout::checks(&project, &Default::default());
     assert_eq!(past.len(), inside, "{past:#?}");
     Ok(())
 }
@@ -837,8 +837,12 @@ fn a_mounting_hole_measures_its_gap_to_copper_edge_to_edge() -> Result<()> {
         findings[0].message
     );
     // The Issues row: a short title that names the copper, in its group.
-    let report =
-        crate::issues::report(&close, &Default::default(), &crate::issues::IssueScope::All)?;
+    let report = crate::issues::report(
+        &close,
+        &Default::default(),
+        &crate::issues::IssueScope::All,
+        &Default::default(),
+    )?;
     let row = report
         .rows
         .iter()
@@ -978,8 +982,8 @@ fn the_default_rules_keep_every_former_verdict() -> Result<()> {
         },
     )?;
     assert_eq!(
-        crate::layout::checks(&project),
-        crate::layout::checks(&explicit)
+        crate::layout::checks(&project, &Default::default()),
+        crate::layout::checks(&explicit, &Default::default())
     );
     Ok(())
 }
@@ -1035,7 +1039,7 @@ fn a_waived_finding_leaves_issues_and_stays_waived_in_production() -> Result<()>
         second.position = at;
     }
     let drafts = Default::default();
-    let before = issues::report(&project, &drafts, &IssueScope::All)?;
+    let before = issues::report(&project, &drafts, &IssueScope::All, &Default::default())?;
     let row = before
         .rows
         .iter()
@@ -1050,13 +1054,13 @@ fn a_waived_finding_leaves_issues_and_stays_waived_in_production() -> Result<()>
         key: key.clone(),
         reason: "Accepted".into(),
     });
-    let after = issues::report(&project, &drafts, &IssueScope::All)?;
+    let after = issues::report(&project, &drafts, &IssueScope::All, &Default::default())?;
     let keyed = |r: &issues::IssueRow| preflight::key(&r.finding.code, &r.finding.objects);
     assert!(!after.rows.iter().any(|r| keyed(r) == key));
     assert_eq!(after.rows.len() + 1, before.rows.len());
     let total = |c: issues::IssueCounts| c.error + c.warning + c.to_do + c.info;
     assert_eq!(total(after.counts) + 1, total(before.counts));
-    let production = preflight::report(&project, &drafts, None)?;
+    let production = preflight::report(&project, &drafts, None, &Default::default())?;
     assert!(
         production
             .items
@@ -1100,7 +1104,7 @@ fn a_dangling_track_end_warns_and_a_connected_one_does_not() -> Result<()> {
             .map(|_| ())
     };
     let dangling = |engine: &Engine| -> Vec<Finding> {
-        crate::layout::checks(engine.project())
+        crate::layout::checks(engine.project(), engine.check_settings())
             .into_iter()
             .filter(|f| f.code == "board.track_dangling")
             .collect()
@@ -1159,12 +1163,17 @@ fn a_dangling_track_end_warns_and_a_connected_one_does_not() -> Result<()> {
     };
     assert!(stub.objects.contains(&crate::ObjectRef::Via { id: via }));
     assert!(
-        !crate::layout::checks(engine.project())
+        !crate::layout::checks(engine.project(), engine.check_settings())
             .iter()
             .any(|f| f.code == "board.via_dangling")
     );
     // The production check lists it as a warning: export isn't blocked by it.
-    let report = crate::fabrication::preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = crate::fabrication::preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     let item = report
         .items
         .iter()

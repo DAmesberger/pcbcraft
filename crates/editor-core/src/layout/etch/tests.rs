@@ -750,7 +750,7 @@ fn the_check_is_cheap_on_ten_thousand_vias() -> Fallible {
         fill::fresh(&project);
     });
     let start = std::time::Instant::now();
-    let all = crate::layout::checks_with(&project, &graph);
+    let all = crate::layout::checks_with(&project, &graph, &Default::default());
     let board = start.elapsed();
     println!(
         "etch checks {best:?} (angles {angles:?}, slivers {slivers:?}, of which fresh fills {fresh:?} each; {} findings); all board checks {board:?}; fill {fill_time:?}",

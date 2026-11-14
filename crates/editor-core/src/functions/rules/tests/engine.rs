@@ -198,7 +198,12 @@ fn require_verdicts_block_electrical_resolution_and_warn_verdicts_are_erc_notes(
         ]
     );
     assert!(!report.electrically_resolved);
-    let issues = crate::issues::report(engine.project(), engine.drafts(), &IssueScope::All)?;
+    let issues = crate::issues::report(
+        engine.project(),
+        engine.drafts(),
+        &IssueScope::All,
+        engine.check_settings(),
+    )?;
     let row = issues
         .rows
         .iter()
@@ -220,7 +225,12 @@ fn require_verdicts_block_electrical_resolution_and_warn_verdicts_are_erc_notes(
         "U1: Pin rule ‘debug_clock’: SPI1 disables the debug clock."
     );
     assert_eq!(notes[0].blocks, None);
-    let issues = crate::issues::report(engine.project(), engine.drafts(), &IssueScope::All)?;
+    let issues = crate::issues::report(
+        engine.project(),
+        engine.drafts(),
+        &IssueScope::All,
+        engine.check_settings(),
+    )?;
     let row = issues
         .rows
         .iter()

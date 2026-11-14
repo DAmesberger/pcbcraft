@@ -66,11 +66,13 @@ const STEPS: usize = 4;
 /// Check, generate and write one fabrication set. Refused (nothing
 /// written) while the pre-flight report has unwaived errors, when the
 /// output exists and is not an empty folder, or on any generation error.
+/// `checks` are the host's check settings ([`sparksmith_core::Engine::check_settings`]).
 /// `progress` is called before each step; it may be a no-op.
 pub fn export(
     project: &Project,
     drafts: &Drafts,
     request: &ExportRequest,
+    checks: &sparksmith_core::layout::CheckSettings,
     progress: &mut dyn FnMut(Progress),
 ) -> Result<ExportReport> {
     let mut timings = Vec::new();
@@ -87,7 +89,7 @@ pub fn export(
         label: "Checking the design",
     });
     let start = Instant::now();
-    let report = preflight::report(project, drafts, request.profile.as_ref())?;
+    let report = preflight::report(project, drafts, request.profile.as_ref(), checks)?;
     timed("preflight", start);
     if !report.ready() {
         return Err(Error::Document(sparksmith_core::Error::Conflict(format!(
@@ -113,7 +115,7 @@ pub fn export(
         });
         let start = Instant::now();
         let stem = fabrication::base_name(project, &request.options)?;
-        let data = drawing::data(project, &request.options)?;
+        let data = drawing::data(project, &request.options, checks)?;
         for (suffix, description, bytes) in [
             (
                 "fabrication.pdf",

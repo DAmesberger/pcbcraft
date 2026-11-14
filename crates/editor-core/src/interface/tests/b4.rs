@@ -132,6 +132,7 @@ fn b4_deleting_the_part_breaks_the_linked_design_reference() -> Fallible {
         engine.project(),
         engine.drafts(),
         &crate::issues::IssueScope::All,
+        engine.check_settings(),
     )?;
     let row = issues
         .rows
@@ -140,7 +141,12 @@ fn b4_deleting_the_part_breaks_the_linked_design_reference() -> Fallible {
         .ok_or("Issues lists it")?;
     assert_eq!(row.severity, Severity::Warning);
     assert_eq!(row.blocks(), None);
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     assert!(
         report
             .items
@@ -229,7 +235,7 @@ fn b4_lost_and_inexact_references_are_reported() -> Fallible {
     );
     // Warnings: neither blocks fabrication output; only the lost one
     // blocks publishing to the linked design.
-    let report = preflight::report(&project, engine.drafts(), None)?;
+    let report = preflight::report(&project, engine.drafts(), None, &Default::default())?;
     for code in [ASSEMBLY_REFERENCE_LOST, ASSEMBLY_REFERENCE_INEXACT] {
         let item = report.items.iter().find(|i| i.code == code).ok_or(code)?;
         assert_eq!(item.severity, Severity::Warning, "{code}");

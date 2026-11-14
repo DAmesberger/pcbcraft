@@ -132,7 +132,7 @@ fn findings_report_what_appeared_and_what_went() -> TestResult {
     let mut session = demo()?;
     let open = |session: &Session| {
         let project = session.engine().project();
-        layout::checks(project).len() + erc::checks(project).len()
+        layout::checks(project, &Default::default()).len() + erc::checks(project).len()
     };
     let resolved = |findings: &Value| -> usize {
         findings["resolved"]
@@ -233,7 +233,7 @@ fn inspect_summarizes_and_reads_one_part() -> TestResult {
     );
     assert_eq!(
         reply["summary"]["findings"]["open"],
-        layout::checks(project).len() + erc::checks(project).len()
+        layout::checks(project, &Default::default()).len() + erc::checks(project).len()
     );
     assert!(reply.get("project").is_none());
 

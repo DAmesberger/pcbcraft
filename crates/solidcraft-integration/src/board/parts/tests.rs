@@ -513,7 +513,7 @@ fn a_part_held_by_expressions_follows_the_board() -> Fallible<()> {
             edit: SketchEdit::Delete { ids: vec![line] },
         }],
     )?;
-    let findings = sparksmith_core::layout::checks(engine.project());
+    let findings = sparksmith_core::layout::checks(engine.project(), engine.check_settings());
     assert_eq!(
         findings
             .iter()
@@ -715,7 +715,7 @@ fn fills_translate_to_their_dimensions_and_report_when_gone() -> Fallible<()> {
         &mut engine,
         Operation::Fill(FillCommand::Delete { id: fill }),
     )?;
-    let lost = sparksmith_core::layout::checks(engine.project())
+    let lost = sparksmith_core::layout::checks(engine.project(), engine.check_settings())
         .into_iter()
         .filter(|f| f.code == sparksmith_core::layout::dimensions::REFERENCE_LOST)
         .count();

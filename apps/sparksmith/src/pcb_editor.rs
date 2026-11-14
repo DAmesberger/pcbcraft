@@ -4516,7 +4516,10 @@ mod tests {
         let mut editor = PcbEditor::default();
         editor.sync(&engine);
         assert_eq!(editor.airwires, layout::airwires(engine.project()));
-        assert_eq!(editor.issues, layout::checks(engine.project()));
+        assert_eq!(
+            editor.issues,
+            layout::checks(engine.project(), engine.check_settings())
+        );
         assert_eq!(editor.copper.pads(), layout::pads(engine.project()));
         Ok(())
     }

@@ -655,7 +655,7 @@ fn the_shipped_showcase_has_its_shape_classes_and_edge_held_header() -> Fallible
             .iter()
             .all(|f| !sparksmith_core::layout::fill::is_stale(project, f))
     );
-    let findings = sparksmith_core::layout::checks(project);
+    let findings = sparksmith_core::layout::checks(project, &Default::default());
     assert!(findings.is_empty(), "{findings:#?}");
     let j1 = project
         .instance_by_designator("J1")

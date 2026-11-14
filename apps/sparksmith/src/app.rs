@@ -234,6 +234,18 @@ impl App {
         };
         let browser_width = sources.browser_width().unwrap_or(chrome::BROWSER_WIDTH);
         engine.require_waiver_reason(sources.require_waiver_reason());
+        // Without them the checks report each impedance target they
+        // cannot check, and the message says why.
+        if let Err(error) = sources
+            .check_settings()
+            .and_then(|s| engine.set_check_settings(s).map_err(Into::into))
+        {
+            messages.push(
+                Level::Warning,
+                &format!("Check settings unavailable: {error}"),
+                0.0,
+            );
+        }
         let mut app = Self::with_parts(
             &cc.egui_ctx,
             viewport::Viewport::new(render_state, &cc.egui_ctx),

@@ -882,6 +882,34 @@ impl LibrarySources {
         }
     }
 
+    /// The impedance tolerance, percent, the checks use for a net class
+    /// that states none (Settings): the user's own, else the shipped
+    /// default; an error names the shipped file when it cannot be read.
+    pub fn impedance_tolerance(&self) -> sparksmith_io::Result<f64> {
+        Ok(self
+            .settings
+            .impedance_tolerance_or(&settings::SettingsDefaults::shipped()?))
+    }
+
+    /// Keep the impedance tolerance per user; a value out of bounds is
+    /// not kept.
+    pub fn set_impedance_tolerance(&mut self, pct: f64) {
+        let mut next = self.settings.clone();
+        next.impedance_tolerance = Some(pct);
+        if next != self.settings && next.check().is_ok() {
+            self.settings = next;
+            self.persist();
+        }
+    }
+
+    /// What the engine's checks take from Settings
+    /// ([`sparksmith_core::Engine::set_check_settings`]).
+    pub fn check_settings(&self) -> sparksmith_io::Result<sparksmith_core::layout::CheckSettings> {
+        Ok(self
+            .settings
+            .check_settings(&settings::SettingsDefaults::shipped()?))
+    }
+
     /// Whether the app's waivers need a reason (Settings).
     pub fn require_waiver_reason(&self) -> bool {
         self.settings.require_waiver_reason

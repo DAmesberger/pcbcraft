@@ -23,7 +23,7 @@ fn apply(engine: &mut Engine, op: Operation) -> sparksmith_core::Result<Outcome>
 
 /// Board findings by code, and the airwires: what is left unconnected.
 fn unconnected(project: &Project) -> (usize, usize) {
-    let unrouted = layout::checks(project)
+    let unrouted = layout::checks(project, &Default::default())
         .iter()
         .filter(|f| f.code == "board.unrouted")
         .count();
@@ -33,7 +33,7 @@ fn unconnected(project: &Project) -> (usize, usize) {
 /// Clearance findings. Printed, not asserted: J1's fan-out stretched
 /// 5 mm along its own pad row is the board's to re-route.
 fn errors(project: &Project) -> usize {
-    layout::checks(project)
+    layout::checks(project, &Default::default())
         .iter()
         .filter(|f| f.code == "board.clearance")
         .count()

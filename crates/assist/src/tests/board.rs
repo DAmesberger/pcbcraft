@@ -141,7 +141,7 @@ fn the_module_keeps_copper_out_of_its_antenna_area_on_the_board() -> Fallible {
         json!({"via": {"net": net, "position": [30.0, 22.5], "drill": 0.3, "diameter": 0.6,
             "span": "through", "tented": true}}),
     )?;
-    let checks = sparksmith_core::layout::checks(s.engine().project());
+    let checks = sparksmith_core::layout::checks(s.engine().project(), &Default::default());
     let via = checks
         .iter()
         .find(|f| f.code == "keepout.via")

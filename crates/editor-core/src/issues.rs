@@ -192,8 +192,20 @@ pub struct IssueReport {
 /// purchasing and electrical findings of every instance (Schematic) and the
 /// board checks (Board). Rows are uncapped and sorted most severe first,
 /// grouped by [`IssueGroup`].
-pub fn report(project: &Project, drafts: &Drafts, scope: &IssueScope) -> Result<IssueReport> {
-    report_on(project, drafts, scope, &layout::CopperGraph::of(project))
+/// `settings` are the host's values for limits the project leaves open.
+pub fn report(
+    project: &Project,
+    drafts: &Drafts,
+    scope: &IssueScope,
+    settings: &layout::CheckSettings,
+) -> Result<IssueReport> {
+    report_on(
+        project,
+        drafts,
+        scope,
+        &layout::CopperGraph::of(project),
+        settings,
+    )
 }
 
 /// [`report`] with `graph`, the copper graph of `project` (the engine's
@@ -203,8 +215,9 @@ pub fn report_on(
     drafts: &Drafts,
     scope: &IssueScope,
     graph: &layout::CopperGraph,
+    settings: &layout::CheckSettings,
 ) -> Result<IssueReport> {
-    report_in(project, drafts, scope, false, graph)
+    report_in(project, drafts, scope, false, graph, settings)
 }
 
 /// [`report`], keeping the findings waived for production when
@@ -216,6 +229,7 @@ pub(crate) fn report_with(
     drafts: &Drafts,
     scope: &IssueScope,
     waived: bool,
+    settings: &layout::CheckSettings,
 ) -> Result<IssueReport> {
     report_in(
         project,
@@ -223,6 +237,7 @@ pub(crate) fn report_with(
         scope,
         waived,
         &layout::CopperGraph::of(project),
+        settings,
     )
 }
 
@@ -232,6 +247,7 @@ fn report_in(
     scope: &IssueScope,
     waived: bool,
     graph: &layout::CopperGraph,
+    settings: &layout::CheckSettings,
 ) -> Result<IssueReport> {
     if let IssueScope::Selection { objects } = scope
         && objects.len() > MAX_SCOPE_OBJECTS
@@ -242,7 +258,7 @@ fn report_in(
     }
     let names = names::Names::new(project, drafts);
     let mut all = Vec::new();
-    for (area, merged) in collect(project, drafts, graph)? {
+    for (area, merged) in collect(project, drafts, graph, settings)? {
         all.push(row(&names, area, merged));
     }
     if !waived && !project.production.waivers.is_empty() {
@@ -431,6 +447,7 @@ fn collect(
     project: &Project,
     drafts: &Drafts,
     graph: &layout::CopperGraph,
+    settings: &layout::CheckSettings,
 ) -> Result<Vec<(IssueArea, Vec<Finding>)>> {
     let mut out = Vec::new();
     let mut component = Vec::new();
@@ -474,7 +491,7 @@ fn collect(
             .into_iter()
             .map(|m| (IssueArea::Schematic, m)),
     );
-    let mut board = layout::checks_with(project, graph);
+    let mut board = layout::checks_with(project, graph, settings);
     board.extend(crate::interface::list::checks(project));
     board.extend(crate::interface::assembly_link::checks(project));
     out.extend(
