@@ -1341,21 +1341,18 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join(SETTINGS_FILE);
         let mut settings = UserSettings::default();
+        let project = |i: usize| PathBuf::from(abs(&format!("/work/p{i}.sparksmith")));
         for i in 0..12 {
-            settings.remember_project(format!("/work/p{i}.sparksmith").into());
+            settings.remember_project(project(i));
         }
         settings.remember_project("relative.sparksmith".into());
-        settings.remember_project("/work/p5.sparksmith".into());
+        settings.remember_project(project(5));
         assert_eq!(settings.projects.len(), MAX_RECENT_PROJECTS);
-        assert_eq!(settings.projects[0], PathBuf::from("/work/p5.sparksmith"));
-        assert_eq!(settings.projects[1], PathBuf::from("/work/p11.sparksmith"));
-        let p5 = PathBuf::from("/work/p5.sparksmith");
+        assert_eq!(settings.projects[0], project(5));
+        assert_eq!(settings.projects[1], project(11));
+        let p5 = project(5);
         assert_eq!(settings.projects.iter().filter(|p| **p == p5).count(), 1);
-        assert!(
-            !settings
-                .projects
-                .contains(&PathBuf::from("/work/p0.sparksmith"))
-        );
+        assert!(!settings.projects.contains(&project(0)));
         write_settings(&path, &settings)?;
         assert_eq!(read_settings(&path)?, settings);
         let mut twice = settings.clone();
