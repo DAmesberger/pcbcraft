@@ -283,7 +283,7 @@ fn class_clearance_spares_pads_of_one_footprint() -> Result<()> {
         _ => false,
     };
     let clearance = |engine: &Engine| -> Vec<crate::diagnostics::Finding> {
-        layout::checks(engine.project())
+        layout::checks(engine.project(), engine.check_settings())
             .into_iter()
             .filter(|f| f.code == "board.clearance")
             .collect()

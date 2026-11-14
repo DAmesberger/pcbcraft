@@ -53,6 +53,7 @@ pub mod several;
 pub mod showcase;
 pub mod staging;
 pub mod via;
+pub use crate::rules::signal::CheckSettings;
 pub use arrange::part_envelope;
 pub use connectivity::CopperGraph;
 #[cfg(test)]
@@ -1597,18 +1598,23 @@ pub fn pad_clearance_conflicts(
 /// ([`BoardCopper::checks`]), connectivity from the copper graph, fills,
 /// outline, lengths and etch hazards ([`etch`]). Builds the copper graph; callers holding the
 /// revision's graph ([`crate::Engine::copper_graph`]) call
-/// [`checks_with`].
-pub fn checks(project: &Project) -> Vec<Finding> {
-    checks_with(project, &CopperGraph::of(project))
+/// [`checks_with`]. `settings` are the host's values for limits the
+/// project leaves open ([`crate::Engine::check_settings`]).
+pub fn checks(project: &Project, settings: &CheckSettings) -> Vec<Finding> {
+    checks_with(project, &CopperGraph::of(project), settings)
 }
 
 /// [`checks`] with `graph`, the copper graph of `project`.
-pub fn checks_with(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
+pub fn checks_with(
+    project: &Project,
+    graph: &CopperGraph,
+    settings: &CheckSettings,
+) -> Vec<Finding> {
     let mut findings = BoardCopper::of(project).checks(project, graph);
     findings.extend(fill::findings(project));
     findings.extend(outline::checks(project));
     findings.extend(dimensions::checks(project));
-    findings.extend(length::checks(project, graph));
+    findings.extend(length::checks(project, graph, settings));
     findings.extend(etch::checks(project, graph));
     findings
 }

@@ -1,0 +1,8 @@
+{
+  "format": 1,
+  "about": "The values Settings start with until the user sets their own (settings.json in the user config folder). Nothing here is assumed by the code: a missing or broken file is an error naming it.",
+  "impedance_tolerance_pct": 10.0,
+  "sources": {
+    "impedance_tolerance_pct": "How far routed impedance may stray from a net class's target, in percent, when the class states no tolerance of its own. ±10 % is the controlled-impedance tolerance fabricators commonly offer as standard, tighter values usually being a special order; it is also the value the impedance check used before it became a setting. Set your fabricator's stated tolerance in Settings."
+  }
+}

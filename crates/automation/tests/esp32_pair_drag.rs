@@ -121,7 +121,7 @@ fn issues(engine: &mut Engine) -> Fallible<Vec<String>> {
     // Findings the board waives for production (the J1 locating pegs)
     // are accepted, not issues.
     let production = &engine.project().production;
-    Ok(layout::checks(engine.project())
+    Ok(layout::checks(engine.project(), engine.check_settings())
         .into_iter()
         .filter(|f| {
             production
@@ -392,13 +392,14 @@ fn the_usb_pair_measures_the_same_on_its_own_nets() -> Fallible {
             let plan = drag_plan(p, &index, &request);
             layout::apply(&mut next, LayoutCommand::ApplyRoute { edits: plan.edits })?;
         }
-        let whole: Vec<String> = length::checks(&next, &CopperGraph::of(&next))
-            .into_iter()
-            .filter(|f| codes.contains(&f.code.as_str()) && f.objects.contains(&positive))
-            .map(|f| f.message)
-            .collect();
+        let whole: Vec<String> =
+            length::checks(&next, &CopperGraph::of(&next), &Default::default())
+                .into_iter()
+                .filter(|f| codes.contains(&f.code.as_str()) && f.objects.contains(&positive))
+                .map(|f| f.message)
+                .collect();
         let own_graph = CopperGraph::of_nets(&next, &[pair.positive, pair.negative]);
-        let own: Vec<String> = length::pair_checks(&next, &own_graph, &pair)
+        let own: Vec<String> = length::pair_checks(&next, &own_graph, &pair, &Default::default())
             .into_iter()
             .filter(|f| codes.contains(&f.code.as_str()))
             .map(|f| f.message)

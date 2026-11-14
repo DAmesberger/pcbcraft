@@ -2421,13 +2421,17 @@ fn count_of(n: usize, one: &str, many: &str) -> String {
 }
 
 /// Board and electrical findings of one project state.
-fn findings(project: &Project) -> Vec<Finding> {
-    findings_with(project, &layout::CopperGraph::of(project))
+fn findings(project: &Project, settings: &layout::CheckSettings) -> Vec<Finding> {
+    findings_with(project, &layout::CopperGraph::of(project), settings)
 }
 
 /// [`findings`] with `graph`, the copper graph of `project`.
-fn findings_with(project: &Project, graph: &layout::CopperGraph) -> Vec<Finding> {
-    let mut out = layout::checks_with(project, graph);
+fn findings_with(
+    project: &Project,
+    graph: &layout::CopperGraph,
+    settings: &layout::CheckSettings,
+) -> Vec<Finding> {
+    let mut out = layout::checks_with(project, graph, settings);
     out.extend(erc::checks(project));
     out
 }
@@ -2438,7 +2442,11 @@ fn findings_with(project: &Project, graph: &layout::CopperGraph) -> Vec<Finding>
 /// other pads of a net they join, which report unrouted only because a
 /// staged pad is not connected yet (a routed GND listed every pad for one
 /// new capacitor). The board checks still report them until they are placed.
-fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
+fn findings_after(
+    project: &Project,
+    next: &Project,
+    settings: &layout::CheckSettings,
+) -> Vec<Finding> {
     let staged: BTreeSet<Id> = next
         .placements
         .iter()
@@ -2455,7 +2463,7 @@ fn findings_after(project: &Project, next: &Project) -> Vec<Finding> {
                 _ => false,
             })
     };
-    let all = findings(next);
+    let all = findings(next, settings);
     let staged_pad = |f: &Finding| {
         f.objects
             .iter()
@@ -2525,10 +2533,11 @@ fn removed_sheet_objects(plan: &mut UpdatePlan, project: &Project, next: &Projec
 }
 
 /// `graph` is the copper graph of `project`
-/// ([`crate::Engine::copper_graph`]).
+/// ([`crate::Engine::copper_graph`]); `settings` the host's check settings.
 pub(crate) fn preview(
     project: &Project,
     graph: &layout::CopperGraph,
+    settings: &layout::CheckSettings,
     revision: u64,
     change: Change,
     evaluator: Option<&dyn layout::outline::BoardShapeEvaluator>,
@@ -3183,8 +3192,8 @@ pub(crate) fn preview(
         );
     }
     plan.findings = review::findings_diff(
-        findings_with(project, graph),
-        findings_after(project, &next),
+        findings_with(project, graph, settings),
+        findings_after(project, &next, settings),
     );
     plan.findings.new_rows = crate::issues::finding_rows(&next, &plan.findings.new);
     plan.findings.resolved_rows = crate::issues::finding_rows(project, &plan.findings.resolved);
@@ -3341,6 +3350,7 @@ fn reference_rows(plan: &mut UpdatePlan, project: &Project, next: &Project) {
 pub(crate) fn candidate(
     project: &Project,
     graph: &layout::CopperGraph,
+    settings: &layout::CheckSettings,
     revision: u64,
     update: ApplyUpdate,
     evaluator: Option<&dyn layout::outline::BoardShapeEvaluator>,
@@ -3351,7 +3361,7 @@ pub(crate) fn candidate(
             actual: revision,
         });
     }
-    let (plan, candidate) = preview(project, graph, revision, update.change, evaluator);
+    let (plan, candidate) = preview(project, graph, settings, revision, update.change, evaluator);
     if !plan.blockers.is_empty() {
         return Err(Error::Conflict(plan.blockers.join("\n")));
     }

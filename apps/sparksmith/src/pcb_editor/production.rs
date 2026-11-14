@@ -175,6 +175,7 @@ impl ProductionDialog {
             return;
         }
         let document = engine.document().clone();
+        let checks = *engine.check_settings();
         let profile = self.profile();
         let (sender, receiver) = std::sync::mpsc::channel();
         let (revision, pick) = wanted.clone();
@@ -182,7 +183,7 @@ impl ProductionDialog {
         let spawned = std::thread::Builder::new()
             .name("sparksmith-preflight".into())
             .spawn(move || {
-                let report = preflight(&document, profile.as_ref());
+                let report = preflight(&document, profile.as_ref(), &checks);
                 let _ = sender.send((revision, pick, report));
                 repaint.request_repaint();
             });
@@ -316,6 +317,7 @@ impl ProductionDialog {
         &mut self,
         ctx: &egui::Context,
         document: Document,
+        checks: sparksmith_core::layout::CheckSettings,
         output: PathBuf,
     ) {
         if self.exporting.is_some() {
@@ -340,6 +342,7 @@ impl ProductionDialog {
                     &document.project,
                     &document.drafts,
                     &request,
+                    &checks,
                     &mut progress,
                 )
                 .map_err(|e| export_error(&e));
@@ -388,8 +391,9 @@ impl ProductionDialog {
 fn preflight(
     document: &Document,
     profile: Option<&RuleProfile>,
+    checks: &sparksmith_core::layout::CheckSettings,
 ) -> Result<PreflightReport, String> {
-    fabrication::preflight::report(&document.project, &document.drafts, profile)
+    fabrication::preflight::report(&document.project, &document.drafts, profile, checks)
         .map_err(|e| refusal::shown_error(&e))
 }
 
@@ -578,7 +582,12 @@ impl PcbEditor {
             Some(DialogAction::Cancel) => close = true,
             Some(DialogAction::Primary) => {
                 if let Some(output) = output {
-                    dialog.start_export(&ctx, engine.document().clone(), output);
+                    dialog.start_export(
+                        &ctx,
+                        engine.document().clone(),
+                        *engine.check_settings(),
+                        output,
+                    );
                 }
             }
             None => {}

@@ -29,7 +29,7 @@ fn the_example_has_no_etch_findings_under_its_own_rules() -> Fallible {
     let engine = engine()?;
     let etch = engine.project().rules.effective().etch;
     assert_eq!((etch.copper_angle_min, etch.sliver_width_min), (0.0, 0.0));
-    let checks = layout::checks(engine.project());
+    let checks = layout::checks(engine.project(), engine.check_settings());
     assert!(!checks.iter().any(|f| CODES.contains(&f.code.as_str())));
     let codes = preflight_codes(&engine)?;
     assert!(
@@ -57,7 +57,7 @@ fn the_example_under_set_etch_rules() -> Fallible {
         )?;
     }
     let start = std::time::Instant::now();
-    let checks = layout::checks(engine.project());
+    let checks = layout::checks(engine.project(), engine.check_settings());
     let elapsed = start.elapsed();
     let found: Vec<_> = checks
         .iter()

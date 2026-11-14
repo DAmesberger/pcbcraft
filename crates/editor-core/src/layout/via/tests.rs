@@ -182,7 +182,7 @@ fn a_layer_change_routes_through_a_via_and_joins_the_copper() -> Result<()> {
         return Err(Error::Invalid("no via outcome".into()));
     };
     assert!(crate::layout::airwires(engine.project()).is_empty());
-    let findings = crate::layout::checks(engine.project());
+    let findings = crate::layout::checks(engine.project(), engine.check_settings());
     assert!(findings.is_empty(), "{findings:#?}");
     // Without the second via the bottom run is cut off from R2 again.
     let mut cut = engine.project().clone();
@@ -304,7 +304,7 @@ fn via_checks_report_ring_drill_and_hole_spacing() -> Result<()> {
     // from the other net's via pad.
     add(net, [50.0, 30.0], 0.56, 0.6)?;
     add(other, [50.82, 30.0], 0.3, 0.6)?;
-    let codes: Vec<String> = crate::layout::checks(engine.project())
+    let codes: Vec<String> = crate::layout::checks(engine.project(), engine.check_settings())
         .into_iter()
         .map(|f| f.code)
         .collect();

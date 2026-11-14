@@ -146,7 +146,12 @@ fn b5_a_linked_design_holding_an_older_board_is_reported() -> Fallible {
         assembly_link::status(engine.project(), FileCheck::NotChecked).state,
         LinkState::OlderBoard
     );
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     let item = report
         .items
         .iter()
@@ -449,7 +454,12 @@ fn b5_a_feature_on_an_unexported_face_is_named() -> Fallible {
         "{}",
         clip.message
     );
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     assert!(
         report
             .items

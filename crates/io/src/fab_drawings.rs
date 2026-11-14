@@ -791,6 +791,7 @@ mod tests {
         Ok(drawing::data(
             engine.project(),
             &FabricationOptions::default(),
+            engine.check_settings(),
         )?)
     }
 
@@ -855,7 +856,11 @@ mod tests {
     #[test]
     fn an_empty_board_still_draws() -> Result<()> {
         let engine = Engine::default();
-        let data = drawing::data(engine.project(), &FabricationOptions::default())?;
+        let data = drawing::data(
+            engine.project(),
+            &FabricationOptions::default(),
+            engine.check_settings(),
+        )?;
         assert!(fabrication_pdf(&data)?.starts_with(b"%PDF-"));
         let asm = assembly_pdf(&data)?;
         assert_eq!(String::from_utf8_lossy(&asm).matches("/Parent").count(), 1);

@@ -637,6 +637,7 @@ fn b1_a_deleted_owner_makes_the_datum_lost() -> Fallible {
         engine.project(),
         engine.drafts(),
         &crate::issues::IssueScope::All,
+        engine.check_settings(),
     )?;
     let finding = issues
         .rows

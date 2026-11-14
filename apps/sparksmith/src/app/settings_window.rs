@@ -7,7 +7,10 @@
 //! engine's `require_waiver_reason` (kept in `UserSettings`). The Rules
 //! section's "Default fab profile" is the profile library entry a new
 //! board starts with (`UserSettings::default_rule_profile`); with none, a
-//! new project asks for one, JLCPCB 2-layer 1 oz preselected.
+//! new project asks for one, JLCPCB 2-layer 1 oz preselected. Its
+//! "Impedance tolerance" checks impedance targets whose net class states
+//! none (`UserSettings::impedance_tolerance`, else the shipped
+//! `defaults/settings.json`) and is set on the engine at once.
 //!
 //! A key is recorded by clicking its cap and pressing the new chord (Esc
 //! cancels). A chord another command already takes where both apply (the
@@ -41,7 +44,6 @@ pub(crate) enum KeyAction {
     ResetAll,
 }
 
-#[derive(Default)]
 pub(crate) struct SettingsWindow {
     open: bool,
     filter: String,
@@ -59,6 +61,29 @@ pub(crate) struct SettingsWindow {
     /// [`Self::show`] and keeps them when `lists_changed`.
     pub lists: sparksmith_io::settings::ListSettings,
     pub lists_changed: bool,
+    /// The Rules section's impedance tolerance, percent, or why it cannot
+    /// be read: the app sets it before [`Self::show`] and keeps it when
+    /// `impedance_changed`.
+    pub impedance_tolerance: Result<f64, String>,
+    pub impedance_changed: bool,
+}
+
+impl Default for SettingsWindow {
+    fn default() -> Self {
+        Self {
+            open: false,
+            filter: String::new(),
+            recording: None,
+            pending: None,
+            show_all: Default::default(),
+            refusal: None,
+            profiles: None,
+            lists: Default::default(),
+            lists_changed: false,
+            impedance_tolerance: Err(String::new()),
+            impedance_changed: false,
+        }
+    }
 }
 
 impl SettingsWindow {
@@ -221,6 +246,30 @@ impl SettingsWindow {
                         "Profiles are files with a stated source; import one in a board's \
                          Design rules (Your profiles › Import…).",
                     );
+                    match &mut self.impedance_tolerance {
+                        Ok(pct) => {
+                            self.impedance_changed = kit::number_row(
+                                ui,
+                                "Impedance tolerance",
+                                pct,
+                                "%",
+                                sparksmith_core::rules::signal::TOLERANCE_RANGE,
+                            );
+                            kit::hint(
+                                ui,
+                                "Checks impedance targets whose net class states no tolerance",
+                                "A net class's own tolerance wins. Use your fabricator's \
+                                 stated controlled-impedance tolerance.",
+                            );
+                        }
+                        Err(reason) => {
+                            kit::status(
+                                ui,
+                                &format!("Impedance tolerance unavailable: {reason}"),
+                                kit::Tone::Error,
+                            );
+                        }
+                    }
                 });
                 kit::section(ui, "settings-production", "Production", true, None, |ui| {
                     waiver_changed = kit::check_row(
@@ -515,6 +564,11 @@ impl super::App {
         let mut default_profile = self.sources.default_rule_profile();
         self.settings_window.lists = self.sources.list_settings().clone();
         self.settings_window.lists_changed = false;
+        self.settings_window.impedance_tolerance = self
+            .sources
+            .impedance_tolerance()
+            .map_err(|e| e.to_string());
+        self.settings_window.impedance_changed = false;
         let (action, reveal_changed, waiver_changed, profile_changed) = self.settings_window.show(
             ctx,
             &self.registry,
@@ -530,6 +584,21 @@ impl super::App {
             let lists = std::mem::take(&mut self.settings_window.lists);
             self.sources.set_list_settings(lists);
             self.list_prefs(ctx);
+        }
+        if self.settings_window.impedance_changed
+            && let Ok(pct) = self.settings_window.impedance_tolerance
+        {
+            // The checks of every path (Issues, production, the assistant)
+            // run against the new value at once.
+            self.sources.set_impedance_tolerance(pct);
+            let applied = self
+                .sources
+                .check_settings()
+                .map_err(|e| e.to_string())
+                .and_then(|s| self.engine.set_check_settings(s).map_err(|e| e.to_string()));
+            if let Err(reason) = applied {
+                self.say(crate::kit::severity::Level::Warning, reason);
+            }
         }
         if reveal_changed && let Err(reason) = self.sources.set_keyboard(keyboard) {
             self.say(crate::kit::severity::Level::Warning, reason);

@@ -30,6 +30,28 @@ pub const TOLERANCE_RANGE: std::ops::RangeInclusive<f64> = 0.5..=50.0;
 /// Longest target length and largest length tolerance, mm.
 pub const MAX_LENGTH_MM: f64 = 10_000.0;
 
+/// What the checks take from the host rather than the document: values
+/// the user sets in Settings (`sparksmith_io::settings`) for limits a
+/// project leaves open. The core holds no default; an unset value means
+/// the host has none, and the check says so.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CheckSettings {
+    /// Impedance tolerance, percent, for a net class that states none.
+    pub impedance_tolerance: Option<f64>,
+}
+
+impl CheckSettings {
+    /// Refuse a value outside the accepted bounds.
+    pub fn check(&self) -> Result<()> {
+        match self.impedance_tolerance {
+            Some(v) if !(v.is_finite() && TOLERANCE_RANGE.contains(&v)) => Err(Error::Invalid(
+                "The impedance tolerance setting must be 0.5–50 %.".into(),
+            )),
+            _ => Ok(()),
+        }
+    }
+}
+
 /// A net class's high-speed rules. Every value is optional; an empty set
 /// is not saved.
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -44,8 +66,9 @@ pub struct SignalRules {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_impedance: Option<f64>,
     /// How far a routed track's impedance may stray from the target,
-    /// percent. Unset, the target still sets routed widths but routed
-    /// impedance is not checked: a check needs a stated limit.
+    /// percent. Unset, the host's Settings value applies
+    /// ([`CheckSettings::impedance_tolerance`]); with neither, routed
+    /// impedance is reported unchecked, never checked against a guess.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub impedance_tolerance: Option<f64>,
     /// Longest stretch, in mm, of either half of a pair that does not run
@@ -67,9 +90,10 @@ impl SignalRules {
         *self == Self::default()
     }
 
-    /// The impedance tolerance in percent, if the class states one.
-    pub fn tolerance_pct(&self) -> Option<f64> {
-        self.impedance_tolerance
+    /// The impedance tolerance in percent the checks use: the class's
+    /// own, else the host's Settings value, else none.
+    pub fn tolerance_pct(&self, settings: &CheckSettings) -> Option<f64> {
+        self.impedance_tolerance.or(settings.impedance_tolerance)
     }
 
     /// Why these values are invalid for class `name`, or `None`.

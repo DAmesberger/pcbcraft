@@ -337,10 +337,11 @@ fn findings_diff_counts_new_and_resolved_by_code_and_objects() {
 #[test]
 fn a_removal_diff_resolves_every_finding_it_no_longer_has() -> Result<()> {
     let Routed { engine, r1, .. } = routed()?;
-    let before = findings(engine.project());
+    let before = findings(engine.project(), &Default::default());
     let (plan, next) = preview(
         engine.project(),
         &engine.copper_graph(),
+        engine.check_settings(),
         engine.revision(),
         Change::Instance {
             edit: InstanceChange::Remove { instance: r1 },
@@ -350,7 +351,7 @@ fn a_removal_diff_resolves_every_finding_it_no_longer_has() -> Result<()> {
     let mut next = next.ok_or_else(|| invalid("staged"))?;
     next.tracks
         .retain(|t| !plan.conflicting_tracks.contains(&t.id));
-    let after = findings(&next);
+    let after = findings(&next, &Default::default());
     let FindingsDiff { new, resolved, .. } = &plan.findings;
     assert_eq!(
         before.len() - resolved.len(),

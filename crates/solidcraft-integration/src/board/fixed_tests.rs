@@ -426,7 +426,12 @@ fn b5_a_loop_between_board_and_linked_design_blocks_fabrication() -> Fallible<()
         assembly_link::status(engine.project(), FileCheck::NotChecked).state,
         LinkState::Cycle
     );
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     let item = report
         .items
         .iter()
@@ -508,6 +513,7 @@ fn an_extent_only_loop_is_a_warning() -> Fallible<()> {
         engine.project(),
         engine.drafts(),
         &sparksmith_core::issues::IssueScope::All,
+        engine.check_settings(),
     )?;
     let row = issues
         .rows
@@ -515,7 +521,12 @@ fn an_extent_only_loop_is_a_warning() -> Fallible<()> {
         .find(|r| r.finding.code == findings::ASSEMBLY_EXTENT_CYCLE)
         .ok_or("Issues lists it")?;
     assert_eq!(row.severity, Severity::Warning);
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     assert!(
         report
             .items

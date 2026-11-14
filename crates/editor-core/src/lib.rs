@@ -697,6 +697,9 @@ pub struct Engine {
     /// `fabrication.waive` refuses a waiver without a reason (a host
     /// setting; off by default).
     waiver_reason_required: bool,
+    /// The host's values for limits the project leaves open (Settings);
+    /// none by default, and the checks say what is unset.
+    check_settings: layout::CheckSettings,
     /// The copper graph of this revision, built on first use and dropped
     /// with every new revision ([`Engine::copper_graph`]).
     copper: std::sync::OnceLock<Arc<layout::CopperGraph>>,
@@ -742,6 +745,22 @@ impl Engine {
         self.waiver_reason_required
     }
 
+    /// Set the values the checks take from the host's Settings, such as
+    /// the impedance tolerance of a net class that states none. Every
+    /// host (app, CLI, MCP) sets them from the same settings file; a host
+    /// that has none leaves them unset and the checks report what is
+    /// missing. A value out of bounds is refused.
+    pub fn set_check_settings(&mut self, settings: layout::CheckSettings) -> Result<()> {
+        settings.check()?;
+        self.check_settings = settings;
+        Ok(())
+    }
+
+    /// The check settings the host set ([`Self::set_check_settings`]).
+    pub fn check_settings(&self) -> &layout::CheckSettings {
+        &self.check_settings
+    }
+
     fn with_document(document: Document) -> Self {
         Self {
             document,
@@ -750,6 +769,7 @@ impl Engine {
             redo: Vec::new(),
             last_step: None,
             waiver_reason_required: false,
+            check_settings: layout::CheckSettings::default(),
             copper: std::sync::OnceLock::new(),
             rerouted: layout::router::reroute::Rerouted::default(),
             generators: None,
@@ -1382,6 +1402,7 @@ impl Engine {
             document: self.document.clone(),
             revision: self.revision,
             waiver_reason_required: self.waiver_reason_required,
+            check_settings: self.check_settings,
             copper: self.copper.clone(),
             generators: self.generators.clone(),
             ..Engine::with_document(self.document.clone())
@@ -1449,6 +1470,7 @@ impl Engine {
             redo: self.redo.clone(),
             last_step: self.last_step,
             waiver_reason_required: self.waiver_reason_required,
+            check_settings: self.check_settings,
             copper: self.copper.clone(),
             rerouted: self.rerouted.clone(),
             generators: self.generators.clone(),
@@ -1707,6 +1729,7 @@ impl Engine {
                 candidate.project = Arc::new(updates::candidate(
                     &self.document.project,
                     &self.copper_graph(),
+                    &self.check_settings,
                     self.revision,
                     *update,
                     evaluators.board,
@@ -1934,7 +1957,7 @@ impl Engine {
                 candidate.rules = next;
                 let scope = issues::IssueScope::All;
                 let rows = |p: &Project| -> Result<Vec<(String, String)>> {
-                    issues::report(p, &self.document.drafts, &scope)?
+                    issues::report(p, &self.document.drafts, &scope, &self.check_settings)?
                         .rows
                         .into_iter()
                         .map(|r| {
@@ -1975,6 +1998,7 @@ impl Engine {
                         &self.document.project,
                         &self.document.drafts,
                         profile.as_ref(),
+                        &self.check_settings,
                     )?,
                 )))
             }
@@ -2056,6 +2080,7 @@ impl Engine {
                 &self.document.drafts,
                 &scope,
                 &self.copper_graph(),
+                &self.check_settings,
             )?)),
             Query::Templates { query, limit } => {
                 Ok(QueryResult::Templates(catalog::templates::search(
@@ -2120,6 +2145,7 @@ impl Engine {
         updates::preview(
             &self.document.project,
             &self.copper_graph(),
+            &self.check_settings,
             self.revision,
             change,
             evaluators.board,

@@ -66,7 +66,7 @@ fn issues(engine: &mut Engine) -> Fallible<Vec<String>> {
     // Findings the board waives for production (the J1 locating pegs)
     // are accepted, not issues.
     let production = &engine.project().production;
-    Ok(layout::checks(engine.project())
+    Ok(layout::checks(engine.project(), engine.check_settings())
         .into_iter()
         .filter(|f| {
             production

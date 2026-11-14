@@ -381,7 +381,7 @@ fn pads_vias_and_tracks_of_the_net_join_the_fill_with_their_connection_style() -
     );
     // Every island of the fill joins copper of its net.
     assert!(
-        !layout::checks(p)
+        !layout::checks(p, &Default::default())
             .iter()
             .any(|f| f.code == "fill.island_unconnected")
     );
@@ -471,7 +471,7 @@ fn a_plane_connects_what_its_track_used_to() -> Fallible<()> {
     let after = layout::airwires(&filled).len();
     assert!(after < split, "{after} of {split}");
     let unrouted = |p: &Project| {
-        layout::checks(p)
+        layout::checks(p, &Default::default())
             .into_iter()
             .filter(|f| {
                 f.code == "board.unrouted" && f.objects.contains(&ObjectRef::Net { id: gnd })
@@ -481,7 +481,7 @@ fn a_plane_connects_what_its_track_used_to() -> Fallible<()> {
     assert!(unrouted(&filled) < unrouted(&project));
     // Vias joined only by the plane are not dangling.
     assert!(
-        layout::checks(&filled)
+        layout::checks(&filled, &Default::default())
             .iter()
             .filter(|f| f.code == "board.via_dangling")
             .all(|f| !f.objects.contains(&ObjectRef::Net { id: gnd }))
@@ -554,7 +554,11 @@ fn islands_without_a_connection_are_removed_unless_kept() -> Fallible<()> {
     let p = engine.project();
     let c = fill(p, id)?.computed.clone().ok_or("not filled")?;
     assert!(c.regions.is_empty() && c.removed_islands == 1, "{c:?}");
-    assert!(layout::checks(p).iter().any(|f| f.code == "fill.empty"));
+    assert!(
+        layout::checks(p, &Default::default())
+            .iter()
+            .any(|f| f.code == "fill.empty")
+    );
     // Kept on request, and then reported.
     s.settings.islands = IslandRemoval::Never;
     let kept = add(&mut engine, s)?;
@@ -565,7 +569,7 @@ fn islands_without_a_connection_are_removed_unless_kept() -> Fallible<()> {
         Some(1)
     );
     assert!(
-        layout::checks(p)
+        layout::checks(p, &Default::default())
             .iter()
             .any(|f| f.code == "fill.island_unconnected"
                 && f.objects.contains(&ObjectRef::Fill { id: kept }))
@@ -663,7 +667,7 @@ fn keepouts_clear_fill_copper_and_flag_tracks() -> Fallible<()> {
         layer: CopperLayer::Bottom,
         locked: false,
     });
-    let findings = layout::checks(&q);
+    let findings = layout::checks(&q, &Default::default());
     assert!(
         findings.iter().any(|f| f.code == "keepout.track"
             && f.objects.contains(&ObjectRef::Keepout { id: keepout }))
@@ -694,7 +698,7 @@ fn stale_copper_is_checked_for_clearance() -> Fallible<()> {
         locked: false,
     });
     assert!(super::is_stale(&p, fill(&p, id)?));
-    let findings = layout::checks(&p);
+    let findings = layout::checks(&p, &Default::default());
     assert!(
         findings
             .iter()
@@ -721,7 +725,7 @@ fn a_hole_through_stale_copper_is_reported() -> Fallible<()> {
         pad: header.pad.id,
     };
     let hits = |p: &Project| {
-        layout::checks(p)
+        layout::checks(p, &Default::default())
             .iter()
             .filter(|f| f.code == "fill.clearance" && f.objects.contains(&object))
             .count()

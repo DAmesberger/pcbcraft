@@ -29,6 +29,7 @@ use crate::geometry::Point;
 use crate::ids::Id;
 use crate::model::{CopperLayer, Project, Track};
 use crate::rules::RulesCommand;
+pub use crate::rules::signal::CheckSettings;
 use crate::rules::signal::{DiffPair, DiffPairId, LengthGroupId};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -562,8 +563,8 @@ fn mm(v: f64) -> String {
 }
 
 /// The pair, group and impedance findings of `project`, whose copper
-/// graph is `graph`.
-pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
+/// graph is `graph`, under the host's `settings`.
+pub fn checks(project: &Project, graph: &CopperGraph, settings: &CheckSettings) -> Vec<Finding> {
     let rules = &project.rules;
     let mut findings = Vec::new();
     let has_targets = rules.net_classes.iter().any(|c| !c.signal.is_empty());
@@ -572,7 +573,7 @@ pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
     }
     let lengths = Measured::of(project, graph);
     for pair in &rules.diff_pairs {
-        check_pair(project, pair, &lengths, &mut findings);
+        check_pair(project, pair, &lengths, settings, &mut findings);
     }
     let len = |n: Id| lengths.length(n);
     let net = |id: Id| ObjectRef::Net { id };
@@ -611,7 +612,7 @@ pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
             ));
         }
     }
-    single_ended_impedance(project, &mut findings);
+    single_ended_impedance(project, settings, &mut findings);
     findings
 }
 
@@ -619,15 +620,26 @@ pub fn checks(project: &Project, graph: &CopperGraph) -> Vec<Finding> {
 /// as [`checks`] reports them, on `graph`: the copper graph of `project`,
 /// or the graph of the pair's own nets ([`CopperGraph::of_nets`]), which
 /// measures the pair the same.
-pub fn pair_checks(project: &Project, graph: &CopperGraph, pair: &DiffPair) -> Vec<Finding> {
+pub fn pair_checks(
+    project: &Project,
+    graph: &CopperGraph,
+    pair: &DiffPair,
+    settings: &CheckSettings,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
     let lengths = Measured::of_pairs(project, graph, std::slice::from_ref(pair));
-    check_pair(project, pair, &lengths, &mut findings);
+    check_pair(project, pair, &lengths, settings, &mut findings);
     findings
 }
 
 /// [`pair_checks`] with the lengths `lengths`, into `findings`.
-fn check_pair(project: &Project, pair: &DiffPair, lengths: &Measured, findings: &mut Vec<Finding>) {
+fn check_pair(
+    project: &Project,
+    pair: &DiffPair,
+    lengths: &Measured,
+    settings: &CheckSettings,
+    findings: &mut Vec<Finding>,
+) {
     let rules = &project.rules;
     let len = |n: Id| lengths.length(n);
     let net = |id: Id| ObjectRef::Net { id };
@@ -698,14 +710,22 @@ fn check_pair(project: &Project, pair: &DiffPair, lengths: &Measured, findings: 
             ],
         ));
     }
-    if let (Some(target), Some(tolerance)) = (signal.diff_impedance, signal.tolerance_pct()) {
-        impedance_of_runs(project, pair, target, tolerance, &c, findings);
+    if let Some(target) = signal.diff_impedance {
+        match signal.tolerance_pct(settings) {
+            Some(tolerance) => impedance_of_runs(project, pair, target, tolerance, &c, findings),
+            None if !c.coupled_runs.is_empty() => findings.push(no_tolerance(&pair.name, objects)),
+            None => {}
+        }
     }
 }
 
 /// Each routed net whose class has a single-ended target: its worst
 /// track per layer against the target.
-fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
+fn single_ended_impedance(
+    project: &Project,
+    settings: &CheckSettings,
+    findings: &mut Vec<Finding>,
+) {
     let rules = &project.rules;
     if !rules
         .net_classes
@@ -717,6 +737,7 @@ fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
     let mut lines = BTreeMap::new();
     let mut worst: BTreeMap<(Id, CopperLayer), (f64, f64, Id, f64)> = BTreeMap::new();
     let mut unreferenced: BTreeSet<(Id, CopperLayer)> = BTreeSet::new();
+    let mut unchecked: BTreeSet<Id> = BTreeSet::new();
     for track in &project.tracks {
         let class = super::net_class(project, track.net);
         let signal = rules.signal(class);
@@ -730,7 +751,8 @@ fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
             unreferenced.insert((track.net, track.layer));
             continue;
         };
-        let Some(tolerance) = signal.tolerance_pct() else {
+        let Some(tolerance) = signal.tolerance_pct(settings) else {
+            unchecked.insert(track.net);
             continue;
         };
         let z = line.structure.z0(track.width, line.t);
@@ -755,7 +777,7 @@ fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
                 target,
                 mm(rules
                     .signal(super::net_class(project, net))
-                    .tolerance_pct()
+                    .tolerance_pct(settings)
                     .unwrap_or_default())
             ),
             vec![ObjectRef::Net { id: net }, ObjectRef::Track { id: track }],
@@ -772,6 +794,22 @@ fn single_ended_impedance(project: &Project, findings: &mut Vec<Finding>) {
             vec![ObjectRef::Net { id: net }],
         ));
     }
+    for net in unchecked {
+        findings.push(no_tolerance(
+            project.net_name(net),
+            vec![ObjectRef::Net { id: net }],
+        ));
+    }
+}
+
+/// Routed copper of `name` (a net or pair) has an impedance target, but
+/// neither its net class nor the host's Settings state a tolerance.
+fn no_tolerance(name: &str, objects: Vec<ObjectRef>) -> Finding {
+    Finding::new(
+        "impedance.no_tolerance",
+        format!("{name} impedance is not checked: set a tolerance in Settings"),
+        objects,
+    )
 }
 
 /// A pair's coupled runs against its differential target.

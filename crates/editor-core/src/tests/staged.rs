@@ -224,6 +224,7 @@ fn a_wire_on_a_no_connect_terminal_is_a_completeness_error() -> Result<()> {
         engine.project(),
         &Default::default(),
         &crate::issues::IssueScope::All,
+        engine.check_settings(),
     )?;
     let row = issues
         .rows

@@ -499,8 +499,12 @@ fn an_empty_value_field_warns_and_an_leds_value_is_its_colour() -> Result<()> {
     let d1 = place(&mut engine, "led 0603", "D1")?;
     place(&mut engine, "header 1x4", "J1")?;
     let no_value = |engine: &Engine| -> Result<Vec<String>> {
-        let report =
-            crate::fabrication::preflight::report(engine.project(), &Default::default(), None)?;
+        let report = crate::fabrication::preflight::report(
+            engine.project(),
+            &Default::default(),
+            None,
+            engine.check_settings(),
+        )?;
         Ok(report
             .items
             .into_iter()

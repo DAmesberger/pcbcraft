@@ -343,7 +343,12 @@ fn the_legend_gerber_prints_the_moved_text_where_the_command_put_it() -> Fallibl
 }
 
 fn findings(engine: &Engine) -> Fallible<Vec<PreflightItem>> {
-    let report = preflight::report(engine.project(), engine.drafts(), None)?;
+    let report = preflight::report(
+        engine.project(),
+        engine.drafts(),
+        None,
+        engine.check_settings(),
+    )?;
     Ok(report
         .items
         .into_iter()
@@ -464,7 +469,7 @@ fn a_side_that_is_not_printed_has_no_legend_finding() -> Fallible {
     assert!(!findings(&engine)?.is_empty());
     let mut project = engine.project().clone();
     project.stackup.silkscreen_top = false;
-    let report = preflight::report(&project, engine.drafts(), None)?;
+    let report = preflight::report(&project, engine.drafts(), None, &Default::default())?;
     assert!(
         report
             .items

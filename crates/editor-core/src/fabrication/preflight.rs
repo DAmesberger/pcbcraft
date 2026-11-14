@@ -258,11 +258,13 @@ fn severity(row: &IssueRow) -> Option<Severity> {
 /// The pre-flight report of `project` checked under `profile` (the
 /// project's own rules when `None`; overrides and net classes are kept).
 /// Fill copper computed under other rules is reported stale: refill under
-/// the fabrication profile before export.
+/// the fabrication profile before export. `settings` are the host's check
+/// settings ([`crate::Engine::check_settings`]).
 pub fn report(
     project: &Project,
     drafts: &Drafts,
     profile: Option<&RuleProfile>,
+    settings: &crate::layout::CheckSettings,
 ) -> Result<PreflightReport> {
     let mut items = Vec::new();
     let checked: Cow<'_, Project> = match profile {
@@ -291,7 +293,7 @@ pub fn report(
         _ => Cow::Borrowed(project),
     };
     let p: &Project = &checked;
-    let issues = crate::issues::report_with(p, drafts, &IssueScope::All, true)?;
+    let issues = crate::issues::report_with(p, drafts, &IssueScope::All, true, settings)?;
     for row in &issues.rows {
         let Some(severity) = severity(row) else {
             continue;

@@ -41,7 +41,7 @@ fn round(diameter: f64, plated: bool) -> Hole {
 }
 
 fn found(project: &Project, code: &str) -> Vec<Finding> {
-    checks(project)
+    checks(project, &Default::default())
         .into_iter()
         .filter(|f| f.code == code)
         .collect()

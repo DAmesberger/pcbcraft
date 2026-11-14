@@ -112,11 +112,23 @@ fn execute(session: &mut Session, request: Value) -> Result<Value> {
 /// `SPARKSMITH_CACHE_DIR` when set). When they cannot be read the session
 /// still runs without sources, says so, and refuses source changes instead
 /// of reporting them saved.
-fn user_session(engine: Engine) -> Session {
+fn user_session(mut engine: Engine) -> Session {
     let sources = session::sources::Sources::from_env().unwrap_or_else(|error| {
         eprintln!("library sources unavailable: {error}");
         session::sources::Sources::unavailable(error.to_string())
     });
+    // The checks take the user's Settings (as the app does); without them
+    // they report each impedance target they cannot check.
+    match sparksmith_io::settings::check_settings_from_env()
+        .map_err(|e| e.to_string())
+        .and_then(|settings| {
+            engine
+                .set_check_settings(settings)
+                .map_err(|e| e.to_string())
+        }) {
+        Ok(()) => {}
+        Err(error) => eprintln!("check settings unavailable: {error}"),
+    }
     Session::with_sources(engine, sources)
 }
 

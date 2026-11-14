@@ -64,7 +64,7 @@ fn whole_after(p: &Project, pair: &DiffPair, plan: &RoutePlan) -> Fallible<Proje
     let of = |n: Id| lengths.get(&n).map_or(0.0, |l| l.total);
     assert!((of(A) - of(B)).abs() < 1e-6, "{} {}", of(A), of(B));
     assert!(
-        !layout::checks(&after)
+        !layout::checks(&after, &Default::default())
             .iter()
             .any(|f| f.code.starts_with("pair.")),
         "no pair finding"

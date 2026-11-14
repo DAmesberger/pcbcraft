@@ -1359,7 +1359,7 @@ fn an_unrouted_exposed_pad_land_is_reported_although_its_terminal_is_one_net() -
             .ok_or_else(|| Error::NotFound(format!("pad {pad}")))
     };
     let unrouted = |engine: &Engine| -> Vec<u32> {
-        let mut pads: Vec<u32> = crate::layout::checks(engine.project())
+        let mut pads: Vec<u32> = crate::layout::checks(engine.project(), engine.check_settings())
             .into_iter()
             .filter(|f| {
                 f.code == "board.unrouted" && f.objects.contains(&ObjectRef::Net { id: net })
@@ -1391,7 +1391,7 @@ fn an_unrouted_exposed_pad_land_is_reported_although_its_terminal_is_one_net() -
     route(&mut engine, 21, 22)?;
     assert_eq!(unrouted(&engine), [21, 22, 23]);
     assert!(
-        crate::layout::checks(engine.project())
+        crate::layout::checks(engine.project(), engine.check_settings())
             .iter()
             .any(|f| f.code == "board.unrouted"
                 && f.objects

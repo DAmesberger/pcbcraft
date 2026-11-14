@@ -47,7 +47,7 @@ fn raw_findings(engine: &Engine) -> Fallible<usize> {
         count += usize::from(report.purchasing.state == PurchasingState::NoPart);
     }
     count += crate::erc::checks(project).len();
-    count += crate::layout::checks(project).len();
+    count += crate::layout::checks(project, &Default::default()).len();
     Ok(count)
 }
 

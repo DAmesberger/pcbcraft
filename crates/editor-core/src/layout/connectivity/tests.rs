@@ -78,9 +78,9 @@ fn c0_a_straight_track_joins_the_pads() -> Result<()> {
     assert_eq!(connectivity(&project), Vec::new());
     assert!(layout::airwires(&project).is_empty());
     assert!(
-        layout::checks(&project).is_empty(),
+        layout::checks(&project, &Default::default()).is_empty(),
         "{:?}",
-        layout::checks(&project)
+        layout::checks(&project, &Default::default())
     );
     Ok(())
 }
@@ -426,7 +426,7 @@ fn a_partial_graph_reports_the_check_limit_once() -> Result<()> {
             .collect::<Vec<_>>(),
         vec!["board.check_limit"]
     );
-    let all = layout::checks(&project);
+    let all = layout::checks(&project, &Default::default());
     assert_eq!(codes(&all, "board.check_limit").len(), 1, "{all:?}");
     Ok(())
 }
@@ -533,7 +533,7 @@ fn a_track_overlapping_an_island_only_at_its_edge_joins_it() -> Result<()> {
         ElementKind::Track { index: 0 },
         id
     ));
-    assert_eq!(layout::checks(&project), Vec::new());
+    assert_eq!(layout::checks(&project, &Default::default()), Vec::new());
     // 0.06 mm further up, the island is clear of the copper: removed.
     let mut apart = fixture()?;
     track(&mut apart, R1_2, R2_1, top())?;
@@ -570,7 +570,7 @@ fn a_via_land_overlapping_an_island_joins_it() -> Result<()> {
     let id = filled(&mut project, outline.clone(), solid)?;
     assert_eq!(islands(&project, id), Some((1, 0)));
     assert!(joined_to_fill(&project, ElementKind::Via { index: 0 }, id));
-    let found = layout::checks(&project);
+    let found = layout::checks(&project, &Default::default());
     assert_eq!(
         codes(&found, "fill.island_unconnected"),
         Vec::new(),
@@ -588,7 +588,7 @@ fn a_via_land_overlapping_an_island_joins_it() -> Result<()> {
         ..solid
     };
     filled(&mut project, outline, keep)?;
-    let found = layout::checks(&project);
+    let found = layout::checks(&project, &Default::default());
     let [dead] = codes(&found, "fill.island_unconnected")
         .try_into()
         .map_err(|f: Vec<Finding>| Error::Invalid(format!("one finding: {f:?}")))?;

@@ -53,7 +53,7 @@ fn the_showcase_is_a_routed_four_layer_board_with_tented_and_open_vias() -> Resu
     );
     // Fully routed and clean: no board, via or electrical findings, no
     // airwires. Connectivity runs through the vias.
-    let checks = layout::checks(project);
+    let checks = layout::checks(project, &Default::default());
     assert!(checks.is_empty(), "{checks:#?}");
     assert!(layout::airwires(project).is_empty());
     let erc = erc::checks(project);
@@ -83,7 +83,7 @@ fn the_showcase_connects_through_its_vias() -> Result<()> {
     assert_eq!(airwires.len(), 1);
     assert!(airwires.iter().all(|(a, b)| a.net == scl && b.net == scl));
     assert!(
-        layout::checks(engine.project())
+        layout::checks(engine.project(), engine.check_settings())
             .iter()
             .any(|f| f.code == "board.unrouted")
     );

@@ -309,7 +309,8 @@ impl PcbEditor {
         let mut highlight = None;
         let response = kit::card::card(ui, &inspector, |ui, region| match region {
             kit::card::Region::Body => {
-                let (operation, lit) = net_classes_body(ui, project, &mut card);
+                let (operation, lit) =
+                    net_classes_body(ui, project, &mut card, engine.check_settings());
                 highlight = lit.or(highlight);
                 operation
             }
@@ -336,6 +337,7 @@ fn net_classes_body(
     ui: &mut Ui,
     project: &Project,
     card: &mut NetClassesCard,
+    settings: &layout::CheckSettings,
 ) -> (Option<Operation>, Option<Id>) {
     let report = class_report(project);
     let mut operation = None;
@@ -386,7 +388,7 @@ fn net_classes_body(
         .cloned()
     {
         operation = class_section(ui, project, card, &class).or(operation);
-        operation = signal_section(ui, project, card, &class).or(operation);
+        operation = signal_section(ui, project, card, &class, settings).or(operation);
         operation = clearance_section(ui, project, card, &class).or(operation);
         lit = members_section(ui, card, &report, &class);
     }
@@ -503,7 +505,13 @@ fn signal_section(
     project: &Project,
     card: &mut NetClassesCard,
     class: &NetClass,
+    settings: &layout::CheckSettings,
 ) -> Option<Operation> {
+    // Empty, the class takes the Settings value (Settings, Rules).
+    let tolerance_hint = settings.impedance_tolerance.map_or_else(
+        || "Not checked".to_owned(),
+        |pct| format!("{} % (Settings)", kit::number_text(pct)),
+    );
     let mut edited: Option<NetClass> = None;
     let s = &class.signal;
     let summary = match (s.impedance, s.diff_impedance) {
@@ -521,15 +529,15 @@ fn signal_section(
         |ui| {
             type Set = fn(&mut NetClass, Option<f64>);
             // (label, value, unit, hint while empty, error, setter)
-            type Field = (
+            type Field<'a> = (
                 &'static str,
                 Option<f64>,
                 &'static str,
-                &'static str,
+                &'a str,
                 &'static str,
                 Set,
             );
-            let rows: [Field; 4] = [
+            let rows: [Field<'_>; 4] = [
                 (
                     "Impedance",
                     s.impedance,
@@ -550,8 +558,8 @@ fn signal_section(
                     "Tolerance",
                     s.impedance_tolerance,
                     "%",
-                    "10 %",
-                    "Enter a percentage, or leave it empty for 10 %",
+                    &tolerance_hint,
+                    "Enter a percentage, or leave it empty for the Settings value",
                     |c, v| c.signal.impedance_tolerance = v,
                 ),
                 (

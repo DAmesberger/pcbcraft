@@ -155,7 +155,12 @@ fn a_lost_pad_reference_is_reported_and_blocks_preflight() -> Fallible<()> {
         "{findings:#?}"
     );
     assert_eq!(project.placements.first().cloned(), before);
-    let report = crate::fabrication::preflight::report(&project, &engine.document().drafts, None)?;
+    let report = crate::fabrication::preflight::report(
+        &project,
+        &engine.document().drafts,
+        None,
+        &Default::default(),
+    )?;
     assert!(
         report
             .items

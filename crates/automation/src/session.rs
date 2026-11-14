@@ -1282,6 +1282,7 @@ impl Session {
                         profile,
                         options: params.options,
                     },
+                    self.engine.check_settings(),
                     &mut |_| {},
                 )?;
                 let mut value = serde_json::to_value(report)?;
@@ -1586,7 +1587,7 @@ impl Session {
             // The findings view people and agents act on is
             // `project.issues` (severity, wording, merging, locating).
             "erc": erc::checks(project),
-            "board_checks": layout::checks(project),
+            "board_checks": layout::checks(project, self.engine.check_settings()),
         })
     }
 

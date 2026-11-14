@@ -9,7 +9,7 @@ use super::support::*;
 use crate::layout::meander::{MeanderStyle, TuneAmount, TuneRequest};
 use crate::layout::pair::{PairLeg, PairRouteRequest};
 use crate::layout::{self, LayoutCommand};
-use crate::rules::signal::{DiffPairId, DiffPairSpec, LengthGroupSpec, SignalRules};
+use crate::rules::signal::{CheckSettings, DiffPairId, DiffPairSpec, LengthGroupSpec, SignalRules};
 use crate::rules::{NetClassSpec, RulesCommand};
 use crate::schematic::SchematicCommand;
 use crate::{
@@ -37,6 +37,9 @@ fn pad_of(engine: &Engine, instance: Id, terminal: u32) -> Result<Point> {
 
 fn usb(signal: SignalRules) -> Result<Usb> {
     let mut engine = Engine::demo()?;
+    // The host's Settings tolerance, as the app and the CLI set it from
+    // the user's settings or the shipped defaults.
+    engine.set_check_settings(SETTINGS)?;
     let r1 = by_designator(&engine, "R1")?;
     let template = engine
         .project()
@@ -146,12 +149,16 @@ fn usb(signal: SignalRules) -> Result<Usb> {
     })
 }
 
+/// The Settings value the tests' host states: 10 %.
+const SETTINGS: CheckSettings = CheckSettings {
+    impedance_tolerance: Some(10.0),
+};
+
+/// A 90 Ω pair class that states no tolerance of its own: the host's
+/// Settings value applies.
 fn usb90() -> SignalRules {
     SignalRules {
         diff_impedance: Some(90.0),
-        // A check needs a stated limit: without a tolerance the target
-        // only sets widths.
-        impedance_tolerance: Some(10.0),
         pair_max_skew: Some(0.1),
         pair_max_uncoupled: Some(5.0),
         ..Default::default()
@@ -185,7 +192,7 @@ fn straight(usb: &Usb) -> Vec<PairLeg> {
 }
 
 fn board_codes(engine: &Engine) -> Vec<String> {
-    layout::checks(engine.project())
+    layout::checks(engine.project(), engine.check_settings())
         .into_iter()
         .map(|f| f.code)
         .collect()
@@ -244,7 +251,7 @@ fn a_routed_pair_runs_coupled_at_the_derived_gap() -> Result<()> {
         "pair.uncoupled",
         "impedance.mismatch",
     ] {
-        let hits: Vec<_> = layout::checks(usb.engine.project())
+        let hits: Vec<_> = layout::checks(usb.engine.project(), usb.engine.check_settings())
             .into_iter()
             .filter(|f| {
                 f.code == code
@@ -520,7 +527,7 @@ fn length_groups_report_and_flag_mismatches() -> Result<()> {
         .find(|g| g.group == group)
         .ok_or_else(|| Error::NotFound("group".into()))?;
     assert!(!row.ok && row.members.len() == 2);
-    let findings: Vec<_> = layout::checks(usb.engine.project())
+    let findings: Vec<_> = layout::checks(usb.engine.project(), usb.engine.check_settings())
         .into_iter()
         .filter(|f| f.code == "length.mismatch")
         .collect();
@@ -592,6 +599,89 @@ fn a_narrow_pair_gap_and_an_off_target_width_are_found() -> Result<()> {
         }),
     )?;
     assert!(board_codes(&usb.engine).contains(&"pair.gap".to_owned()));
+    Ok(())
+}
+
+#[test]
+fn impedance_is_checked_against_the_class_tolerance_else_the_settings_one() -> Result<()> {
+    let mut usb = usb(usb90())?;
+    let (width, gap) =
+        layout::impedance::pair_width_gap(usb.engine.project(), usb.nets[0], CopperLayer::Top);
+    let legs = straight(&usb);
+    apply(
+        &mut usb.engine,
+        Operation::Layout(LayoutCommand::RoutePair {
+            request: PairRouteRequest {
+                pair: usb.pair,
+                start: usb.start,
+                legs,
+                end: Some(usb.end),
+                width: Some(2.0 * width),
+                gap: Some(gap),
+            },
+        }),
+    )?;
+    let impedance = |engine: &Engine| -> Vec<(String, String)> {
+        layout::checks(engine.project(), engine.check_settings())
+            .into_iter()
+            .filter(|f| f.code.starts_with("impedance."))
+            .map(|f| (f.code, f.message))
+            .collect()
+    };
+    // The class states none: the Settings 10 %.
+    let found = impedance(&usb.engine);
+    assert!(
+        found.len() == 1 && found[0].0 == "impedance.mismatch" && found[0].1.contains("± 10 %"),
+        "{found:?}"
+    );
+    // The class's own tolerance wins over Settings.
+    let mut class = usb
+        .engine
+        .project()
+        .rules
+        .net_classes
+        .first()
+        .cloned()
+        .ok_or_else(|| Error::NotFound("class".into()))?;
+    class.signal.impedance_tolerance = Some(5.0);
+    apply(
+        &mut usb.engine,
+        Operation::Rules(RulesCommand::EditNetClass {
+            class: class.clone(),
+        }),
+    )?;
+    let found = impedance(&usb.engine);
+    assert!(
+        found.len() == 1 && found[0].1.contains("± 5 %"),
+        "{found:?}"
+    );
+    // Neither: never a guess, a finding that names what is missing.
+    class.signal.impedance_tolerance = None;
+    apply(
+        &mut usb.engine,
+        Operation::Rules(RulesCommand::EditNetClass { class }),
+    )?;
+    usb.engine.set_check_settings(CheckSettings::default())?;
+    let found = impedance(&usb.engine);
+    assert!(
+        found.len() == 1
+            && found[0].0 == "impedance.no_tolerance"
+            && found[0].1.contains("Settings"),
+        "{found:?}"
+    );
+    assert!(
+        crate::issues::style::check(&found[0].1).is_empty(),
+        "{found:?}"
+    );
+    // A Settings value out of bounds is refused and changes nothing.
+    assert!(
+        usb.engine
+            .set_check_settings(CheckSettings {
+                impedance_tolerance: Some(0.1),
+            })
+            .is_err()
+    );
+    assert_eq!(usb.engine.check_settings(), &CheckSettings::default());
     Ok(())
 }
 
@@ -764,7 +854,7 @@ fn an_open_branch_is_not_skew_and_the_dangling_check_reports_it() -> Result<()> 
     assert!((net_row.length.total - total - 4.0).abs() < 1e-9);
     assert_eq!(net_row.path, Some(row.positive));
     assert!((net_row.length.total - row.positive - 4.0).abs() < 1e-9);
-    let findings = layout::checks(usb.engine.project());
+    let findings = layout::checks(usb.engine.project(), usb.engine.check_settings());
     assert!(
         !findings.iter().any(|f| f.code.starts_with("pair.")),
         "{findings:?}"
@@ -889,7 +979,7 @@ fn a_pin_to_pin_branch_is_a_track_between_pins_and_raises_nothing() -> Result<()
             .iter()
             .any(|&id| f.objects.contains(&crate::ObjectRef::Net { id }))
     };
-    let findings = layout::checks(usb.engine.project());
+    let findings = layout::checks(usb.engine.project(), usb.engine.check_settings());
     assert!(
         !findings.iter().any(|f| f.code.starts_with("pair.")
             || f.code == "board.track_dangling"
@@ -985,7 +1075,7 @@ fn skew_is_checked_only_against_a_class_limit() -> Result<()> {
             .first()
             .ok_or_else(|| Error::NotFound("pair".into()))?;
         assert!((pair.skew - added).abs() < 0.05, "{pair:?}");
-        let skews: Vec<_> = layout::checks(usb.engine.project())
+        let skews: Vec<_> = layout::checks(usb.engine.project(), usb.engine.check_settings())
             .into_iter()
             .filter(|f| f.code == "pair.skew")
             .collect();
@@ -1027,7 +1117,12 @@ fn the_production_check_warns_on_open_pair_copper_and_skew() -> Result<()> {
         };
         branch(&mut usb, net, at, [at[0], at[1] + away])?;
         let warnings = |engine: &Engine, code: &str| -> Result<Vec<String>> {
-            let report = preflight::report(engine.project(), &Default::default(), None)?;
+            let report = preflight::report(
+                engine.project(),
+                &Default::default(),
+                None,
+                engine.check_settings(),
+            )?;
             Ok(report
                 .items
                 .into_iter()

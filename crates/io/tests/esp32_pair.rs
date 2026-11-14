@@ -100,7 +100,7 @@ fn the_receptacle_jumpers_are_off_the_path_and_not_skew() -> Fallible {
     );
     assert!(close(total("USB_DP")? - usb.positive, 2.245, 0.002));
     assert!(close(total("USB_DN")? - usb.negative, 6.98, 0.005));
-    let findings = layout::checks(&p);
+    let findings = layout::checks(&p, &Default::default());
     assert!(pair_findings(&findings).is_empty(), "{findings:?}");
     // The report CLI and MCP callers read lists the paths and nothing off
     // them: no branches, and nothing called a stub.
@@ -145,7 +145,7 @@ fn real_skew_on_the_path_is_still_reported() -> Fallible {
     let report = length::report(&p);
     let usb = row(&report)?;
     assert!(close(usb.skew, 1.0, 0.01), "{usb:?}");
-    let findings = layout::checks(&p);
+    let findings = layout::checks(&p, &Default::default());
     assert!(
         findings.iter().any(|f| f.code == "pair.skew"),
         "{:?}",
@@ -211,7 +211,7 @@ fn set_endpoints_are_measured_and_validated() -> Fallible {
     assert!(close(usb.negative, 29.915 + 6.98, 0.01), "{usb:?}");
     assert!(close(usb.skew, 5.98, 0.01), "{usb:?}");
     assert!(
-        layout::checks(engine.project())
+        layout::checks(engine.project(), engine.check_settings())
             .iter()
             .any(|f| f.code == "pair.skew")
     );
@@ -286,7 +286,7 @@ fn a_track_across_the_pair_never_tears_it() -> Fallible {
             let report = length::report(&after);
             let usb = row(&report)?;
             assert!(usb.skew <= skew_before + 0.075, "{at}: {usb:?}");
-            let findings = layout::checks(&after);
+            let findings = layout::checks(&after, &Default::default());
             assert!(
                 pair_findings(&findings).is_empty(),
                 "{at}: {:?}",

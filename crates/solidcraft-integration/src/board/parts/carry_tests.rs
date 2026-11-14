@@ -24,7 +24,7 @@ fn pad(project: &Project, instance: Id, n: usize) -> Fallible<WorldPad> {
 }
 
 fn board_codes(project: &Project) -> Vec<String> {
-    let mut codes: Vec<String> = layout::checks(project)
+    let mut codes: Vec<String> = layout::checks(project, &Default::default())
         .into_iter()
         .map(|f| f.code)
         .collect();
@@ -33,7 +33,7 @@ fn board_codes(project: &Project) -> Vec<String> {
 }
 
 fn unrouted(project: &Project) -> usize {
-    layout::checks(project)
+    layout::checks(project, &Default::default())
         .iter()
         .filter(|f| f.code == "board.unrouted")
         .count()
