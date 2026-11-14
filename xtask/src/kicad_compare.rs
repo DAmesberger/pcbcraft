@@ -139,9 +139,10 @@ fn kind_of(e: &(dyn std::error::Error + 'static)) -> String {
 
 fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     let bytes = std::fs::read(board)?;
-    let imported = import(&bytes)?;
     let project = board.with_extension("kicad_pro");
     let project = project.is_file().then_some(project);
+    let project_bytes = project.as_deref().map(std::fs::read).transpose()?;
+    let imported = import(&bytes, project_bytes.as_deref())?;
     let copper = imported.report.counts.copper_layers;
     let theirs = reference::plot(board, project.as_deref(), copper, dir)?;
     let set = fabrication::generate(
@@ -188,7 +189,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
             class: p.class.clone(),
         })
         .collect();
-    let diff = compare_sets(&ours, &theirs, Scope::Routed, &judge)?;
+    let diff = compare_sets(&ours, &theirs, Scope::Filled, &judge)?;
     let (mut text, ok, rows) = summarize(&imported.report, &diff, &judge, &pads);
     let (line, outline_ok) = outline_line(&imported, &theirs, judge.shift_nm)?;
     text.push_str(&line);
@@ -207,7 +208,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
 /// never build Solidcraft, so only with the `sketch` feature is there a
 /// board sketch engine (the outline imports as a sketch, as in the app and
 /// the CLI); without it the outline is the rectangle around it.
-fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported> {
+fn import(bytes: &[u8], project_file: Option<&[u8]>) -> Result<sparksmith_kicad::Imported> {
     let defaults = sparksmith_io::new_project::shipped()?;
     let profile = sparksmith_io::rule_profiles::for_new_board_from_env(None)?;
     Ok(sparksmith_kicad::import(
@@ -217,6 +218,7 @@ fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported> {
             presets: &defaults.presets,
             profile: Some(&profile),
             evaluators: evaluators(),
+            project_file,
         },
     )?)
 }
@@ -367,13 +369,15 @@ pub fn summarize(
         let status = if layer.passes { "pass" } else { "FAIL" };
         let _ = writeln!(
             out,
-            "  {:<16} {status} | kept {}/{} reference objects | ours {:.4} mm², kicad {:.4} mm², xor {:.6} mm² | worst {:.3} µm | arcs {} to {:.3} µm",
+            "  {:<16} {status} | kept {}/{} reference objects | ours {:.4} mm², kicad {:.4} mm², xor {:.6} mm² (ours only {:.6}, kicad only {:.6}) | worst {:.3} µm | arcs {} to {:.3} µm",
             layer.function,
             layer.kept_objects,
             layer.reference_objects,
             layer.diff.area_a_mm2,
             layer.diff.area_b_mm2,
             layer.diff.difference_mm2,
+            layer.diff.only_a_mm2,
+            layer.diff.only_b_mm2,
             layer.worst_um,
             layer.arc_pieces,
             layer.arc_worst_um
@@ -383,13 +387,17 @@ pub fn summarize(
             if row.kind == PieceKind::Other {
                 let _ = writeln!(
                     out,
-                    "      {:>5} pieces, widest {:.3} µm: {}",
-                    row.pieces, row.widest_um, row.class
+                    "      {:>5} pieces, widest {:.3} µm, {}: {}",
+                    row.pieces,
+                    row.widest_um,
+                    if row.ours { "ours only" } else { "kicad only" },
+                    row.class
                 );
             }
             rows.push(serde_json::json!({
                 "layer": layer.function,
                 "kind": format!("{:?}", row.kind),
+                "ours": row.ours,
                 "class": row.class,
                 "pieces": row.pieces,
                 "widest_um": row.widest_um,
@@ -444,7 +452,7 @@ mod tests {
               (property \"Value\" \"QQSECRETVALUE\" (at 0 0 0) (layer \"F.Fab\")) \
               (pad \"QQ7\" smd rect (at 0.4321 0 90) (size 1.2345 0.6789) (layers \"F.Cu\" \"F.Paste\" \"F.Mask\") \
                 (net 1 \"QQSECRETNET\") (pinfunction \"QQPINFN\") (zqxtoken 1))))";
-        let imported = import(text.as_bytes())?;
+        let imported = import(text.as_bytes(), None)?;
         let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
         let ours: Vec<File> = set
             .files

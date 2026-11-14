@@ -10,7 +10,7 @@
 //! held to a full board's output. [`Scope::Routed`] adds tracks and vias:
 //! on copper every object but zone fills (regions without a pad
 //! attribute) and non-conductor graphics, on mask and paste every flash,
-//! and every drill.
+//! and every drill. [`Scope::Filled`] adds the zone fills on copper.
 use crate::compare::{LayerDiff, compare};
 use crate::drills::{DrillDiff, hits, pair};
 use crate::gerber::{GerberFile, Kind, Object};
@@ -34,6 +34,8 @@ pub enum Scope {
     Pads,
     /// Pads, tracks and vias: everything but zone fills and drawings.
     Routed,
+    /// Pads, tracks, vias and zone fills: everything but drawings.
+    Filled,
 }
 
 /// A circle of the design whose copper the reference may approximate by
@@ -238,6 +240,22 @@ fn shifted_hits(mut hits: Vec<crate::drills::DrillHit>, shift: [i64; 2]) -> Vec<
     hits
 }
 
+/// Whether a reference object is a pad, track, via or zone fill of a
+/// layer of `function` ([`Scope::Filled`]): on copper anything but
+/// non-conductor drawings.
+fn filled_object(function: &str, object: &Object) -> bool {
+    if function.starts_with("Copper,") {
+        object
+            .aperture_attributes
+            .get(".AperFunction")
+            .and_then(|v| v.first())
+            .map(String::as_str)
+            != Some("NonConductor")
+    } else {
+        routed_object(function, object)
+    }
+}
+
 /// Compare `ours` with `reference` under `judge`.
 pub fn compare_sets(
     ours: &[File],
@@ -263,6 +281,7 @@ pub fn compare_sets(
                     Scope::All => true,
                     Scope::Pads => pad_object(function, o),
                     Scope::Routed => routed_object(function, o),
+                    Scope::Filled => filled_object(function, o),
                 };
                 let kept = file.objects.iter().filter(|o| keep(o)).count();
                 let shapes = shifted(polygons::render(file, keep)?, judge.shift_nm)?;
@@ -355,6 +374,8 @@ pub enum PieceKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassRow {
     pub kind: PieceKind,
+    /// The pieces are ours only (else the reference's only).
+    pub ours: bool,
     pub class: String,
     pub pieces: usize,
     pub widest_um: f64,
@@ -364,7 +385,7 @@ pub struct ClassRow {
 
 /// Group a layer's pieces by kind and pad class.
 pub fn attribute(layer: &LayerResult, judge: &Judge, pads: &[PadBox]) -> Vec<ClassRow> {
-    let mut rows: BTreeMap<(PieceKind, String), ClassRow> = BTreeMap::new();
+    let mut rows: BTreeMap<(PieceKind, bool, String), ClassRow> = BTreeMap::new();
     for piece in &layer.diff.pieces {
         let kind = if judge.on_arc(&piece.outline) {
             PieceKind::Arc
@@ -381,8 +402,10 @@ pub fn attribute(layer: &LayerResult, judge: &Judge, pads: &[PadBox]) -> Vec<Cla
                     && c[1] <= p.max[1] + 0.2
             })
             .map_or_else(|| "no pad".to_owned(), |p| p.class.clone());
-        let row = rows.entry((kind, class.clone())).or_insert(ClassRow {
+        let ours = piece.only_in_a;
+        let row = rows.entry((kind, ours, class.clone())).or_insert(ClassRow {
             kind,
+            ours,
             class,
             pieces: 0,
             widest_um: 0.0,

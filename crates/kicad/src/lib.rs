@@ -10,8 +10,10 @@
 pub mod board;
 pub mod import;
 pub mod items;
+pub mod project;
 pub mod report;
 mod routing;
+mod zones;
 pub mod sexpr;
 pub mod shape;
 pub mod translate;

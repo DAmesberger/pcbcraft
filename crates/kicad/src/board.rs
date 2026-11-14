@@ -113,6 +113,9 @@ pub struct Footprint {
     pub models: usize,
     /// Drawings on `Edge.Cuts` (not imported).
     pub edge_cuts: usize,
+    /// Zones and rule areas inside the footprint (KiCad writes their
+    /// outlines in board coordinates).
+    pub zones: Vec<crate::items::KZone>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -321,6 +324,15 @@ pub fn read(bytes: &[u8], report: &mut Report) -> Result<Board> {
         }
     }
     board.items.footprint_edges = board.footprints.iter().map(|f| f.edge_cuts).sum();
+    let footprint_zones: Vec<crate::items::KZone> = board
+        .footprints
+        .iter()
+        .flat_map(|f| f.zones.iter().cloned())
+        .collect();
+    if board.items.zones.len() + footprint_zones.len() > crate::items::MAX_ZONES {
+        return Err(BoardError::Limit("too many zones"));
+    }
+    board.items.zones.extend(footprint_zones);
     board.origin = match crate::items::edge_bounds(&board.items.edges) {
         // KiCad's y grows downward: the lower-left corner has the
         // largest y. Whole micrometres, outward, so coordinates written to
@@ -453,6 +465,12 @@ fn footprint(node: &Node, report: &mut Report) -> Result<Footprint> {
             }
             "fp_text" | "fp_text_box" | "dimension" => fp.drawings += 1,
             "model" => fp.models += 1,
+            "zone" => {
+                if fp.zones.len() >= crate::items::MAX_ZONES {
+                    return Err(BoardError::Limit("too many zones in a footprint"));
+                }
+                fp.zones.push(crate::items::zone(item)?);
+            }
             "net_tie_pad_groups" => fp.net_tie = true,
             "attr" => {
                 if item.args().iter().any(|a| a.atom() == Some("net_tie")) {
@@ -481,7 +499,7 @@ fn footprint(node: &Node, report: &mut Report) -> Result<Footprint> {
             | "placed"
             | "autoplace_cost90"
             | "autoplace_cost180"
-            | "zone"
+
             | "group"
             | "private_layers"
             | "embedded_fonts"

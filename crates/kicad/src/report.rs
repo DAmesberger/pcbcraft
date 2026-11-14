@@ -110,6 +110,16 @@ pub enum Case {
     OutlineDrawing,
     /// `Edge.Cuts` drawings inside footprints.
     FootprintOutline,
+    /// The project file's clearances and least track width, set over the
+    /// fab profile.
+    ProjectRules,
+    /// No project file: the fab profile's clearances stand.
+    NoProject,
+    /// A project file that is not readable JSON: the profile's stand.
+    ProjectUnreadable,
+    /// Several net classes, patterns or assignments: only the default
+    /// class's clearance is taken (classes are not imported yet).
+    NetClasses,
     /// Net names that are not label names (spaces, over 64 bytes, equal
     /// to another but for case), spelled anew.
     NetRenamed,
@@ -296,6 +306,22 @@ impl Case {
                 "B1",
                 Refused,
                 "outline drawings inside footprints, not imported",
+            ),
+            Self::ProjectRules => (
+                "D1",
+                Exact,
+                "project clearances (net class, edge, hole) and least track width set over the fab profile",
+            ),
+            Self::NoProject => ("D1", Report, "no project file: the fab profile's clearances stand"),
+            Self::ProjectUnreadable => (
+                "D1",
+                Refused,
+                "project file not readable: the fab profile's clearances stand",
+            ),
+            Self::NetClasses => (
+                "D1",
+                Approximate,
+                "several net classes: only the default class's clearance taken",
             ),
             Self::NetRenamed => (
                 "N1",

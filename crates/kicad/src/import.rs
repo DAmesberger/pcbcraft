@@ -113,6 +113,9 @@ pub struct Setup<'a> {
     /// The host's sketch engines: with a board evaluator the outline is
     /// imported as a board sketch, else as the rectangle around it.
     pub evaluators: Evaluators<'a>,
+    /// The board's project file (`.kicad_pro`), when there is one: its
+    /// clearances and least track width are set over the fab profile.
+    pub project_file: Option<&'a [u8]>,
 }
 
 /// Import a KiCad board file into a new project.
@@ -284,6 +287,8 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
     session.batches("layout.place", layout)?;
     let nets = crate::routing::connect(&mut session, &board, &placed_nets, &instances, &mut report)?;
     crate::routing::copper(&mut session, &board, &nets, &mut report)?;
+    session.project_rules(setup.project_file, &mut report);
+    crate::zones::fills(&mut session, &board, &nets, &mut report)?;
     report.counts.pads = board.footprints.iter().map(|f| f.pads.len()).sum();
     report.counts.pads_imported = records.len();
     report.add_n(Case::PadsExact, records.len());
@@ -456,6 +461,29 @@ impl Session<'_> {
         if let Some(open) = board.setup.vias_on_mask {
             overrides.push((RuleKey::TentVias, RuleValue::Flag(!open)));
         }
+        self.set_overrides(overrides, report);
+        Ok(())
+    }
+
+    /// The project file's clearances and least track width over the
+    /// rules. Set after the tracks and vias, which go in as the file has
+    /// them (a check finding, not a refusal, is the place for any the
+    /// project's rules flag), and before the fills, which they shape.
+    pub(crate) fn project_rules(&mut self, project_file: Option<&[u8]>, report: &mut Report) {
+        if self.engine.project().rules.require().is_err() {
+            return;
+        }
+        match project_file.map(|bytes| crate::project::read(bytes, report)) {
+            Some(Some(rules)) => {
+                report.add(Case::ProjectRules);
+                self.set_overrides(crate::project::overrides(&rules), report);
+            }
+            Some(None) => report.add(Case::ProjectUnreadable),
+            None => report.add(Case::NoProject),
+        }
+    }
+
+    fn set_overrides(&mut self, overrides: Vec<(RuleKey, RuleValue)>, report: &mut Report) {
         for (key, value) in overrides {
             if self
                 .apply(
@@ -467,7 +495,6 @@ impl Session<'_> {
                 report.add(Case::RuleRefused);
             }
         }
-        Ok(())
     }
 
     /// The board outline: a board sketch of the `Edge.Cuts` drawings (with

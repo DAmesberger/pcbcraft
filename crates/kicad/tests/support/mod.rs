@@ -21,6 +21,7 @@ pub fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported, sparksmith_kic
             presets: &presets,
             profile: Some(&profile),
             evaluators: Default::default(),
+            project_file: None,
         },
     )
 }
