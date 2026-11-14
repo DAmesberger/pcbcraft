@@ -27,7 +27,7 @@ If none is found, the message lists every folder searched and names the variable
 | Assist | `assist/` | Assistant run profiles and prompts |
 | Parts | `parts/` | Part files (`.solidcraft`), each with a sidecar |
 | Templates | `templates/` | Package templates and starter rows |
-| Generators | `generators/` | Built generator modules, `<name>.wasm` ([generator plugins](generator-plugins.md)) |
+| Generators | `generators/` | Generator bundles, `<name>/`: `generator.json`, the built module `<name>.wasm` and the part files it names, `parts/*.solidcraft` ([generator plugins](generator-plugins.md)) |
 | Defaults | `defaults/` | What a new project starts with: its fab profile, stackup and board size (`new-project.json`) |
 
 ## Rules
@@ -38,4 +38,4 @@ If none is found, the message lists every folder searched and names the variable
 - **No product or vendor names in code or tool text.** Names such as a fab house or a part number live only in the data that cites them.
 - **A missing or broken file is an error naming the file.** It never falls back silently to a value written in code.
 - **Packaging.** The macOS bundle copies `library/` into `Contents/Resources/library`.
-- **Generator modules are committed builds.** `cargo xtask generators build --update-lock` writes `library/generators/<name>.wasm`, and `cargo xtask generators check` fails when a shipped module is not a build `generators/modules.lock` records. Every platform ships the same bytes, so a part's key does not depend on where the program was built.
+- **Generator modules are committed builds.** `cargo xtask generators build --update-lock` writes each bundle `library/generators/<name>/`, and `cargo xtask generators check` fails when a shipped module is not a build `generators/modules.lock` records or a bundle differs from what its crate builds. Every platform ships the same bytes, so a part's key does not depend on where the program was built.
