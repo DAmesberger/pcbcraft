@@ -1432,8 +1432,10 @@ pub enum RulesCommand {
     /// Drop the project override of one rule (back to the profile value).
     #[serde(rename = "rules.clear_override")]
     ClearOverride { key: RuleKey },
-    /// Say where the project's own rule set comes from (`None`: set in this
-    /// project), at most 256 bytes: `{"command":"rules.set_project_source",
+    /// Say where the project's own rule set comes from.
+    ///
+    /// `None` means set in this project; at most 256 bytes:
+    /// `{"command":"rules.set_project_source",
     /// "params":{"source":"From the KiCad project"}}`.
     #[serde(rename = "rules.set_project_source")]
     SetProjectSource {

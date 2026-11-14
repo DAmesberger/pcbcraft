@@ -79,8 +79,9 @@ pub enum FillCommand {
     /// Delete a keepout.
     #[serde(rename = "keepout.delete")]
     DeleteKeepout { id: Id },
-    /// Set how fills join a placed part's pads, over each fill's settings:
-    /// the whole part's (`pad` omitted) or one pad's, which wins over the
+    /// Set how fills join a placed part's pads, over each fill's settings.
+    ///
+    /// The whole part's (`pad` omitted) or one pad's, which wins over the
     /// part's field by field. Empty `settings` removes the override. Fill
     /// copper near the part goes stale. Example:
     /// `{"command":"fill.set_pad_override","params":{"instance":7,"pad":1,

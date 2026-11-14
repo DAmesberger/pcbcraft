@@ -19,9 +19,10 @@ pub enum InstanceCommand {
     /// designator the core numbers it under the component's prefix.
     #[serde(rename = "component.place")]
     Place(NewInstance),
-    /// Create one board-only instance (a fiducial, mounting hole or logo):
-    /// every unit of its symbol unused, so it is on no sheet, and marked
-    /// board-only so schematic work leaves it alone. Place it on the board
+    /// Create one board-only instance: a fiducial, mounting hole or logo.
+    ///
+    /// Every unit of its symbol is unused, so it is on no sheet, and it is
+    /// marked board-only so schematic work leaves it alone. Place it on the board
     /// with `layout.place`. Without a designator the core numbers it under
     /// the component's prefix. The outcome is `Outcome::PartPlaced`.
     #[serde(rename = "component.place_board_only")]
