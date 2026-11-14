@@ -11,6 +11,7 @@ use crate::translate::{self, DefPad, Mapped};
 use sparksmith_core::functions::{Direction, TerminalFunctions};
 use sparksmith_core::geometry::Bounds;
 use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::layout::fill::FillCommand;
 use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
 use sparksmith_core::library::footprint_source::{SketchEdit, SketchRef};
 use sparksmith_core::library::samples::named_block_symbol;
@@ -22,7 +23,10 @@ use sparksmith_core::library::{
 };
 use sparksmith_core::materials::MaterialId;
 use sparksmith_core::model::board::BoardShape;
-use sparksmith_core::rules::{RuleKey, RuleProfile, RuleValue, RulesCommand};
+use sparksmith_core::model::fill::PadFillOverride;
+use sparksmith_core::rules::{
+    NetClassId, NetClassPattern, NetClassSpec, RuleKey, RuleProfile, RuleValue, RulesCommand,
+};
 use sparksmith_core::units::{Nm, PointNm};
 use sparksmith_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, FunctionId, Id,
@@ -114,8 +118,11 @@ pub struct Setup<'a> {
     /// imported as a board sketch, else as the rectangle around it.
     pub evaluators: Evaluators<'a>,
     /// The board's project file (`.kicad_pro`), when there is one: its
-    /// clearances and least track width are set over the fab profile.
+    /// rules become the project's own rule set.
     pub project_file: Option<&'a [u8]>,
+    /// The project's schematic files, when there are any: drawn as the
+    /// schematic; without them each pin gets a label of its board net.
+    pub schematic: Option<crate::schematic::SchematicFiles<'a>>,
 }
 
 /// Import a KiCad board file into a new project.
@@ -152,28 +159,57 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         )?;
     }
     session.outline(&board, &mut report)?;
-    // Each footprint's pads in its own definition frame; equal definitions
-    // are shared.
-    let mut definitions: Vec<Vec<Pad>> = Vec::new();
+    // The schematic, read first: each reference's KiCad symbol shapes its
+    // part's symbol.
+    let schematic = match setup.schematic.map(crate::schematic::read) {
+        Some(Ok(schematic)) => Some(schematic),
+        Some(Err(_)) => {
+            report.add(Case::SchematicUnreadable);
+            None
+        }
+        None => None,
+    };
+    let by_reference = schematic
+        .as_ref()
+        .map(crate::sheets::symbols_by_reference)
+        .unwrap_or_default();
+    // Each footprint's pads in its own definition frame, with its KiCad
+    // symbol; equal definitions are shared.
+    let mut definitions: Vec<(Vec<Pad>, Option<crate::schematic::LibSymbol>)> = Vec::new();
     let mut by_key: BTreeMap<String, usize> = BTreeMap::new();
     let mut uses: Vec<usize> = Vec::with_capacity(board.footprints.len());
     let mut per_footprint: Vec<Vec<PadRecord>> = Vec::with_capacity(board.footprints.len());
     let mut terminal_nets: Vec<Vec<(PackageTerminalId, u32)>> =
         Vec::with_capacity(board.footprints.len());
+    let mut zone_overrides: Vec<Vec<(PadId, PadFillOverride)>> =
+        Vec::with_capacity(board.footprints.len());
     for fp in &board.footprints {
         let mut records = Vec::new();
         let mut nets = Vec::new();
-        let pads = footprint_pads(&board, fp, &mut report, &mut records, &mut nets);
+        let mut overrides = Vec::new();
+        let pads = footprint_pads(
+            &board,
+            fp,
+            &mut report,
+            &mut records,
+            &mut nets,
+            &mut overrides,
+        );
         per_footprint.push(records);
         terminal_nets.push(nets);
-        let key = serde_json::to_string(&pads).map_err(|e| ImportError::Refused {
+        zone_overrides.push(overrides);
+        let symbol = by_reference.get(&fp.reference.to_ascii_uppercase()).cloned();
+        let mut key = serde_json::to_string(&pads).map_err(|e| ImportError::Refused {
             step: "footprint key",
             reason: e.to_string(),
         })?;
+        if let Some(symbol) = &symbol {
+            key.push_str(&format!("{symbol:?}"));
+        }
         let next = definitions.len();
         let index = *by_key.entry(key).or_insert(next);
         if index == next {
-            definitions.push(pads);
+            definitions.push((pads, symbol));
         }
         uses.push(index);
         report.add_n(Case::FootprintFabGraphics, fp.fab_graphics);
@@ -184,20 +220,18 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         }
         report.add_n(
             Case::PadZoneOverrides,
-            fp.pads.iter().filter(|p| p.zone_overrides).count(),
+            fp.pads.iter().filter(|p| !p.zone.is_empty()).count(),
         );
+        if !fp.zone.is_empty() {
+            report.add(Case::FootprintZoneOverrides);
+        }
     }
     report.counts.definitions = definitions.len();
     report.add_n(Case::ProjectOnly, definitions.len());
-    let mut sets: Vec<Option<Set>> = Vec::with_capacity(definitions.len());
-    for (k, pads) in definitions.into_iter().enumerate() {
-        // The core needs at least one electrical terminal unless a part
-        // file models the part (docs/mechanical-parts.md): a footprint of
-        // bare holes only is refused and listed.
-        if !pads.iter().any(|p| p.terminal.is_some()) {
-            sets.push(None);
-            continue;
-        }
+    let mut sets: Vec<Set> = Vec::with_capacity(definitions.len());
+    for (k, (pads, symbol)) in definitions.into_iter().enumerate() {
+        // A footprint without electrical pads (a fiducial, a mounting
+        // hole) becomes a part without terminals.
         let prefix = board
             .footprints
             .iter()
@@ -205,31 +239,42 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
             .find(|(_, u)| **u == k)
             .map(|(fp, _)| prefix_of(&fp.reference))
             .unwrap_or_else(|| "U".to_owned());
-        sets.push(Some(session.component_set(k, pads, &prefix)?));
+        sets.push(session.component_set(k, pads, &prefix, symbol.as_ref(), &mut report)?);
     }
+    // The schematic's sheets, and where each reference's unit goes.
+    let plan = match schematic {
+        Some(schematic) => {
+            let plan = crate::sheets::sheets(&mut session, &schematic, &mut report)?;
+            Some((schematic, plan))
+        }
+        None => None,
+    };
+    let mut labelled = std::collections::BTreeSet::new();
+    let mut unlabelled_places = Vec::new();
+    let mut first_units: Vec<Option<crate::sheets::UnitPlace>> = Vec::new();
+    let mut later_units: Vec<Vec<crate::sheets::UnitPlace>> = Vec::new();
     // Instances on the sheet, then on the board, in batches.
     let mut taken = std::collections::BTreeSet::new();
     let mut place = Vec::with_capacity(board.footprints.len());
     let mut placed: Vec<&Footprint> = Vec::with_capacity(board.footprints.len());
     let mut placed_nets = Vec::with_capacity(board.footprints.len());
+    let mut placed_overrides = Vec::with_capacity(board.footprints.len());
     let mut records = Vec::new();
-    for ((fp, (index, recs)), nets) in board
+    for (((fp, (index, recs)), nets), overrides) in board
         .footprints
         .iter()
         .zip(uses.iter().zip(per_footprint))
         .zip(terminal_nets)
+        .zip(zone_overrides)
     {
-        let Some(set) = sets.get(*index).ok_or(ImportError::Refused {
+        let set = sets.get(*index).ok_or(ImportError::Refused {
             step: "component.place",
             reason: "a footprint without its component".into(),
-        })?
-        else {
-            report.add_detail(Case::FootprintWithoutTerminals, &fp.reference, "", "");
-            continue;
-        };
+        })?;
         let n = placed.len();
         placed.push(fp);
         placed_nets.push(nets);
+        placed_overrides.push(overrides);
         records.extend(recs);
         let designator = if sparksmith_core::instances::designator_valid(&fp.reference)
             && taken.insert(fp.reference.to_ascii_uppercase())
@@ -239,19 +284,50 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
             report.add_detail(Case::Designator, &fp.reference, "", "");
             None
         };
+        if fp.board_only {
+            // KiCad's "not in schematic": on the board only.
+            report.add(Case::BoardOnly);
+            place.push(Operation::Instance(InstanceCommand::PlaceBoardOnly {
+                component: ComponentRef::new(set.component, Revision::FIRST),
+                representation: set.symbol,
+                physical: PhysicalChoice {
+                    binding: set.binding,
+                    footprint: set.footprint,
+                },
+                designator,
+            }));
+            continue;
+        }
         let column = (n % 16) as f64;
         let row = (n / 16) as f64;
+        let units = plan
+            .as_ref()
+            .and_then(|(_, p)| p.places.get(&fp.reference.to_ascii_uppercase()))
+            .filter(|u| !u.is_empty());
+        if plan.is_some() && units.is_none() {
+            report.add(Case::FootprintWithoutSymbol);
+            unlabelled_places.push(n);
+        }
+        // The first unit with the instance; the others after.
+        let first = units.and_then(|u| u.first()).copied();
+        later_units.push(units.map(|u| u[1..].to_vec()).unwrap_or_default());
+        first_units.push(first);
+        let (sheet, position, unit) = match first {
+            Some(u) => (Some(u.sheet), u.at, UnitId(u.unit.max(1))),
+            None => (
+                None,
+                [column * SHEET_PITCH_MM, -row * SHEET_PITCH_MM],
+                UnitId(1),
+            ),
+        };
         place.push(Operation::Instance(InstanceCommand::Place(NewInstance {
-            sheet: None,
+            sheet,
             component: ComponentRef::new(set.component, Revision::FIRST),
             designator,
             properties: vec![],
             representation: set.symbol,
-            unit: UnitId(1),
-            position: PointNm::from_mm_f64_rounded([
-                column * SHEET_PITCH_MM,
-                -row * SHEET_PITCH_MM,
-            ])
+            unit,
+            position: PointNm::from_mm_f64_rounded(position)
             .map_err(|e| ImportError::Refused {
                 step: "component.place",
                 reason: e.to_string(),
@@ -263,9 +339,21 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         })));
     }
     let mut instances: Vec<Id> = Vec::with_capacity(place.len());
+    let mut first_occurrences: Vec<Option<Id>> = Vec::with_capacity(place.len());
     for outcome in session.batches("component.place", place)? {
         match outcome {
-            Outcome::InstancePlaced { instance, .. } => instances.push(instance),
+            Outcome::InstancePlaced {
+                instance,
+                occurrence,
+                ..
+            } => {
+                instances.push(instance);
+                first_occurrences.push(Some(occurrence));
+            }
+            Outcome::PartPlaced { instance, .. } => {
+                instances.push(instance);
+                first_occurrences.push(None);
+            }
             _ => {
                 return Err(ImportError::Refused {
                     step: "component.place",
@@ -273,6 +361,17 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
                 });
             }
         }
+    }
+    // Every unit turned as KiCad turns it; the other units placed.
+    if plan.is_some() {
+        crate::sheets::units(
+            &mut session,
+            &instances,
+            &first_occurrences,
+            &first_units,
+            &later_units,
+            &mut report,
+        );
     }
     let mut layout = Vec::with_capacity(instances.len());
     for (fp, instance) in placed.iter().zip(&instances) {
@@ -285,10 +384,45 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         }));
     }
     session.batches("layout.place", layout)?;
-    let nets =
-        crate::routing::connect(&mut session, &board, &placed_nets, &instances, &mut report)?;
+    // Zone connection overrides: the footprint's for the part, each pad's
+    // own over it.
+    let mut overrides = Vec::new();
+    for ((fp, instance), pads) in placed.iter().zip(&instances).zip(&placed_overrides) {
+        let part = crate::zones::pad_override(&fp.zone, None);
+        if !part.is_empty() {
+            overrides.push(Operation::Fill(FillCommand::SetPadOverride {
+                instance: *instance,
+                pad: None,
+                settings: part,
+            }));
+        }
+        for (pad, settings) in pads {
+            overrides.push(Operation::Fill(FillCommand::SetPadOverride {
+                instance: *instance,
+                pad: Some(*pad),
+                settings: *settings,
+            }));
+        }
+    }
+    session.batches("fill.set_pad_override", overrides)?;
+    if let Some((schematic, plan)) = &plan {
+        crate::sheets::wire(&mut session, schematic, plan, &mut report)?;
+        for n in unlabelled_places {
+            if let Some(id) = instances.get(n) {
+                labelled.insert(*id);
+            }
+        }
+    }
+    let nets = crate::routing::connect(
+        &mut session,
+        &board,
+        &placed_nets,
+        &instances,
+        plan.is_some().then_some(&labelled),
+        &mut report,
+    )?;
     crate::routing::copper(&mut session, &board, &nets, &mut report)?;
-    session.project_rules(setup.project_file, &mut report);
+    session.project_rules(setup.project_file, &board, &nets, &mut report)?;
     crate::zones::fills(&mut session, &board, &nets, &mut report)?;
     report.counts.pads = board.footprints.iter().map(|f| f.pads.len()).sum();
     report.counts.pads_imported = records.len();
@@ -325,6 +459,7 @@ fn footprint_pads(
     report: &mut Report,
     records: &mut Vec<PadRecord>,
     nets: &mut Vec<(PackageTerminalId, u32)>,
+    overrides: &mut Vec<(PadId, PadFillOverride)>,
 ) -> Vec<Pad> {
     let mut pads = Vec::with_capacity(fp.pads.len());
     let mut terminals: BTreeMap<String, PackageTerminalId> = BTreeMap::new();
@@ -356,6 +491,16 @@ fn footprint_pads(
             }
         };
         pad.id = PadId(u32::try_from(pads.len() + 1).unwrap_or(u32::MAX));
+        // A footprint's "thermal for through-hole pads only" depends on
+        // the pad, so it lands on each pad.
+        let through_hole = pad.kind == PadKind::PlatedThrough;
+        let mut own = crate::zones::pad_override(&kpad.zone, Some(through_hole));
+        if fp.zone.connect == Some(3) && own.connection.is_none() {
+            own.connection = crate::zones::pad_override(&fp.zone, Some(through_hole)).connection;
+        }
+        if !own.is_empty() {
+            overrides.push((pad.id, own));
+        }
         if translate::needs_terminal(&pad) {
             let key = if pad.number.trim().is_empty() {
                 // Unnumbered plated pads land their own terminal each.
@@ -383,20 +528,8 @@ fn footprint_pads(
             report.add(Case::PasteWindow);
         }
     }
-    // The core needs an electrical terminal on every part (unless a part
-    // file models it): a footprint whose copper pads land none (a
-    // fiducial, a mounting pad) lands one on its first copper pad.
-    if !pads.iter().any(|p| p.terminal.is_some())
-        && let Some(pad) = pads.iter_mut().find(|p| {
-            matches!(
-                p.kind,
-                PadKind::Mechanical | PadKind::Fiducial | PadKind::Smd
-            )
-        })
-    {
-        pad.kind = PadKind::Mechanical;
-        pad.terminal = Some(translate::terminal_id(0));
-        report.add_detail(Case::TerminalAdded, &fp.reference, &pad.number, "");
+    if !pads.iter().any(|p| p.terminal.is_some()) {
+        report.add(Case::NoTerminals);
     }
     pads
 }
@@ -462,22 +595,140 @@ impl Session<'_> {
         Ok(())
     }
 
-    /// The project file's clearances and least track width over the
-    /// rules. Set after the tracks and vias, which go in as the file has
-    /// them (a check finding, not a refusal, is the place for any the
-    /// project's rules flag), and before the fills, which they shape.
-    pub(crate) fn project_rules(&mut self, project_file: Option<&[u8]>, report: &mut Report) {
+    /// The project file's rules as the project's own rule set, "From the
+    /// KiCad project", over the fab profile: the default class's values
+    /// and the board minimums as overrides (limits looser than the
+    /// profile's are not taken), every other class as a net class with its
+    /// name patterns and explicit assignments. Set after the tracks and
+    /// vias, which go in as the file has them (a check finding, not a
+    /// refusal, is the place for any the project's rules flag), and before
+    /// the fills, which they shape.
+    pub(crate) fn project_rules(
+        &mut self,
+        project_file: Option<&[u8]>,
+        board: &Board,
+        nets: &BTreeMap<u32, Id>,
+        report: &mut Report,
+    ) -> Result<(), ImportError> {
         if self.engine.project().rules.require().is_err() {
-            return;
+            return Ok(());
         }
-        match project_file.map(|bytes| crate::project::read(bytes, report)) {
-            Some(Some(rules)) => {
-                report.add(Case::ProjectRules);
-                self.set_overrides(crate::project::overrides(&rules), report);
+        let rules = match project_file.map(crate::project::read) {
+            Some(Some(rules)) => rules,
+            Some(None) => {
+                report.add(Case::ProjectUnreadable);
+                return Ok(());
             }
-            Some(None) => report.add(Case::ProjectUnreadable),
-            None => report.add(Case::NoProject),
+            None => {
+                report.add(Case::NoProject);
+                return Ok(());
+            }
+        };
+        report.add(Case::ProjectRules);
+        let profile = self.engine.project().rules.effective();
+        self.set_overrides(crate::project::overrides(&rules, &profile, report), report);
+        // Every other class, by name.
+        let mut classes: BTreeMap<String, NetClassId> = BTreeMap::new();
+        for class in &rules.classes {
+            let spec = NetClassSpec {
+                name: class.name.clone(),
+                track_width: class.track_width,
+                clearance: class.clearance,
+                via_drill: class.via_drill,
+                via_diameter: class.via_diameter,
+                diff_pair_width: class.diff_pair_width,
+                diff_pair_gap: class.diff_pair_gap,
+                ..NetClassSpec::default()
+            };
+            match self.apply(
+                "net_class.add",
+                Operation::Rules(RulesCommand::AddNetClass { class: spec }),
+            ) {
+                Ok(Outcome::NetClassAdded { class: id }) => {
+                    report.add(Case::NetClass);
+                    classes.insert(class.name.clone(), id);
+                }
+                _ => report.add(Case::NetClassRefused),
+            }
         }
+        // Patterns that name an imported class and are plain wildcards
+        // (`*`, `?`); the default class's need none.
+        let default = rules.default.as_ref().map(|c| c.name.as_str());
+        let mut patterns = Vec::new();
+        for (pattern, class) in &rules.patterns {
+            if Some(class.as_str()) == default {
+                continue;
+            }
+            let plain = !pattern.trim().is_empty()
+                && pattern.len() <= sparksmith_core::rules::MAX_PROFILE_TEXT
+                && !pattern.contains(['[', ']', '(', ')', '{', '}', '^', '$', '|', '\\', '+']);
+            match classes.get(class) {
+                Some(id) if plain => patterns.push(NetClassPattern {
+                    pattern: pattern.clone(),
+                    class: *id,
+                }),
+                _ => report.add(Case::NetClassPatternRefused),
+            }
+        }
+        // KiCad's class of each net (explicit, then the first matching
+        // pattern), assigned explicitly where our patterns, on our net
+        // names, would not give it.
+        let kicad_class = |name: &str| -> Option<&str> {
+            rules
+                .assignments
+                .iter()
+                .find(|(net, _)| net == name)
+                .map(|(_, c)| c.as_str())
+                .or_else(|| {
+                    rules
+                        .patterns
+                        .iter()
+                        .find(|(p, _)| sparksmith_core::rules::glob_matches(p, name))
+                        .map(|(_, c)| c.as_str())
+                })
+        };
+        let mut assign: BTreeMap<NetClassId, Vec<Id>> = BTreeMap::new();
+        for (number, net) in nets {
+            let kicad_name = board.items.nets.get(number).map_or("", String::as_str);
+            let Some(class) = kicad_class(kicad_name).filter(|c| Some(*c) != default) else {
+                continue;
+            };
+            let Some(id) = classes.get(class) else {
+                report.add(Case::NetClassPatternRefused);
+                continue;
+            };
+            let ours = self.engine.project().net_name(*net).to_owned();
+            let by_pattern = patterns
+                .iter()
+                .find(|p| sparksmith_core::rules::glob_matches(&p.pattern, &ours))
+                .map(|p| p.class);
+            if by_pattern != Some(*id) {
+                assign.entry(*id).or_default().push(*net);
+            }
+        }
+        if !patterns.is_empty() {
+            self.apply(
+                "net_class.set_patterns",
+                Operation::Rules(RulesCommand::SetPatterns { patterns }),
+            )?;
+        }
+        for (class, nets) in assign {
+            report.add_n(Case::NetClassAssigned, nets.len());
+            self.apply(
+                "net_class.assign",
+                Operation::Rules(RulesCommand::AssignNets {
+                    nets,
+                    class: Some(class),
+                }),
+            )?;
+        }
+        self.apply(
+            "rules.set_project_source",
+            Operation::Rules(RulesCommand::SetProjectSource {
+                source: Some(crate::project::SOURCE.to_owned()),
+            }),
+        )?;
+        Ok(())
     }
 
     fn set_overrides(&mut self, overrides: Vec<(RuleKey, RuleValue)>, report: &mut Report) {
@@ -595,6 +846,8 @@ impl Session<'_> {
         k: usize,
         pads: Vec<Pad>,
         prefix: &str,
+        kicad_symbol: Option<&crate::schematic::LibSymbol>,
+        report: &mut Report,
     ) -> Result<Set, ImportError> {
         let kinds = [
             DefinitionKind::Component,
@@ -630,16 +883,20 @@ impl Session<'_> {
                 reason: "five drafts expected".into(),
             });
         };
+        let mut unpinned = 0;
         let edits = drafts(
             k,
             pads,
             prefix,
+            kicad_symbol,
+            &mut unpinned,
             [component, symbol, package, footprint, binding],
         )
         .map_err(|e| ImportError::Refused {
             step: "library.edit",
             reason: e.to_string(),
         })?;
+        report.add_n(Case::TerminalWithoutPin, unpinned);
         self.batches(
             "library.publish",
             vec![
@@ -664,6 +921,8 @@ fn drafts(
     k: usize,
     pads: Vec<Pad>,
     prefix: &str,
+    kicad_symbol: Option<&crate::schematic::LibSymbol>,
+    unpinned: &mut usize,
     [component, symbol, package, footprint, binding]: [DefinitionId; 5],
 ) -> sparksmith_core::Result<Vec<DraftEdit>> {
     // Package terminals in id order, designated by their first pad's
@@ -687,7 +946,10 @@ fn drafts(
         .zip(designations.values())
         .map(|(t, n)| (*t, n.as_str()))
         .collect();
-    let symbol_body = named_block_symbol(component, &named)?;
+    let symbol_body = match kicad_symbol {
+        Some(lib) => crate::sheets::kicad_symbol(component, lib, &named, unpinned)?,
+        None => named_block_symbol(component, &named)?,
+    };
     let bounds = Bounds::of(pads.iter().flat_map(|p| {
         let b = p.bounds();
         [b.min, b.max]

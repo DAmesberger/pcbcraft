@@ -18,7 +18,8 @@ use crate::import::{ImportError, Session};
 use crate::items::KTrack;
 use crate::report::{Case, Report};
 use crate::translate::board_point;
-use sparksmith_core::geometry::Point;
+use sparksmith_core::geometry::{Point, distance};
+use sparksmith_core::layout::posture::MIN_SEGMENT_MM;
 use sparksmith_core::layout::{LayoutCommand, RouteEditSet, RouteRequest, ViaRequest};
 use sparksmith_core::model::LabelKind;
 use sparksmith_core::schematic::SchematicCommand;
@@ -40,7 +41,7 @@ fn mm(nm: Nm) -> f64 {
 
 /// A label name for a KiCad net name: whitespace and control characters
 /// become `_`, cut to 64 bytes on a character boundary.
-fn label_name(name: &str) -> String {
+pub(crate) fn label_name(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
     for c in name.chars() {
         let c = if c.is_whitespace() || c.is_control() {
@@ -93,11 +94,15 @@ fn names(board: &Board, numbers: &BTreeSet<u32>, report: &mut Report) -> BTreeMa
 /// label per terminal; the net of each KiCad net number that has a pad.
 /// `nets[k]` lists the package terminals of placed footprint `k` with
 /// their KiCad net numbers; `instances[k]` is its instance.
+/// With a schematic (`labelled` the instances it did not draw), only
+/// those get labels; the rest take their nets from the schematic's wiring,
+/// and the schematic's nets are compared with the board's, net for net.
 pub(crate) fn connect(
     session: &mut Session<'_>,
     board: &Board,
     nets: &[Vec<(PackageTerminalId, u32)>],
     instances: &[Id],
+    labelled: Option<&BTreeSet<Id>>,
     report: &mut Report,
 ) -> Result<BTreeMap<u32, Id>, ImportError> {
     // One net per terminal: pads sharing a number share their terminal.
@@ -123,12 +128,16 @@ pub(crate) fn connect(
     let names = names(board, &numbers, report);
     let mut labels = Vec::with_capacity(terminal_net.len());
     for (end, net) in &terminal_net {
+        if labelled.is_some_and(|only| !only.contains(&end.instance)) {
+            continue;
+        }
         let Some(name) = names.get(net) else { continue };
-        let at = sparksmith_core::schematic::pin_position(session.engine.project(), *end)
-            .ok_or_else(|| ImportError::Refused {
-                step: "label.place",
-                reason: "a terminal without a pin on the sheet".into(),
-            })?;
+        let Some(at) = sparksmith_core::schematic::pin_position(session.engine.project(), *end)
+        else {
+            // A board-only part has no pin on any sheet to label.
+            report.add(Case::BoardOnlyNet);
+            continue;
+        };
         let position = sparksmith_core::units::PointNm::from_mm_f64_rounded(at).map_err(|e| {
             ImportError::Refused {
                 step: "label.place",
@@ -153,7 +162,46 @@ pub(crate) fn connect(
         }
     }
     report.counts.nets = out.len();
+    if labelled.is_some() {
+        compare_nets(project, &terminal_net, report);
+    }
     Ok(out)
+}
+
+/// Whether the schematic's nets equal the board's, net for net: a board
+/// net is equal when all its pad terminals are on one schematic net (or,
+/// alone, on none) that holds no terminal of another board net.
+fn compare_nets(
+    project: &sparksmith_core::Project,
+    terminal_net: &BTreeMap<Endpoint, u32>,
+    report: &mut Report,
+) {
+    let mut members: BTreeMap<u32, Vec<Endpoint>> = BTreeMap::new();
+    for (end, net) in terminal_net {
+        members.entry(*net).or_default().push(*end);
+    }
+    let ours = |e: &Endpoint| project.net_of(*e).map(|n| n.id);
+    let mut boards_of: BTreeMap<Id, BTreeSet<u32>> = BTreeMap::new();
+    for (end, net) in terminal_net {
+        if let Some(id) = ours(end) {
+            boards_of.entry(id).or_default().insert(*net);
+        }
+    }
+    for ends in members.values() {
+        let mine: BTreeSet<Option<Id>> = ends.iter().map(ours).collect();
+        let equal = match mine.iter().collect::<Vec<_>>().as_slice() {
+            [Some(id)] => boards_of.get(id).is_some_and(|b| b.len() == 1),
+            [None] => ends.len() == 1,
+            _ => false,
+        };
+        if equal {
+            report.counts.schematic_nets_equal += 1;
+        } else if mine.len() > 1 {
+            report.counts.schematic_nets_split += 1;
+        } else {
+            report.counts.schematic_nets_merged += 1;
+        }
+    }
 }
 
 /// The copper layer a KiCad layer name is, by its place in the board's
@@ -229,10 +277,6 @@ pub(crate) fn copper(
             report.add(Case::ArcTrack);
         }
         for (start, end) in centre_line(board, track) {
-            if (start[0] - end[0]).hypot(start[1] - end[1]) < 0.01 {
-                report.add(Case::TrackTooShort);
-                continue;
-            }
             tracks.push(RouteRequest {
                 net: *net,
                 start,
@@ -243,6 +287,14 @@ pub(crate) fn copper(
         }
     }
     let tented = session.engine.project().rules.effective().mask.tent_vias;
+    let via_points: Vec<(Id, Point)> = board
+        .items
+        .vias
+        .iter()
+        .filter_map(|v| Some((*nets.get(&v.net)?, board_point(board, v.at))))
+        .collect();
+    let cleaned = clean_tiny(&mut tracks, &via_points);
+    report.add_n(Case::TinyTrackCleaned, cleaned);
     let mut vias = Vec::with_capacity(board.items.vias.len());
     for via in &board.items.vias {
         let Some(net) = nets.get(&via.net) else {
@@ -279,6 +331,100 @@ pub(crate) fn copper(
     let added = add(session, Vec::new(), vias, report)?;
     report.counts.vias = added;
     Ok(())
+}
+
+/// A track end's place on the nanometre grid, with its net and layer.
+type EndKey = (Id, CopperLayer, i64, i64);
+
+fn end_key(t: &RouteRequest, p: Point) -> EndKey {
+    (
+        t.net,
+        t.layer,
+        (p[0] * 1e6).round() as i64,
+        (p[1] * 1e6).round() as i64,
+    )
+}
+
+/// Remove track pieces shorter than the engine's least track length
+/// ([`MIN_SEGMENT_MM`]) and join their neighbours: the ends a tiny piece
+/// joins (on its net and layer, chained through other tiny pieces) become
+/// one point, a via's centre when one is there, else their mean, so every
+/// track that met the piece still meets the others and nothing dangles.
+/// Moving an end by less than the least length can change no
+/// connection: the copper graph joins by overlap, and the moved end stays
+/// within its old end's reach. Repeats while the joining makes new tiny
+/// pieces. Returns how many pieces were removed.
+pub(crate) fn clean_tiny(tracks: &mut Vec<RouteRequest>, vias: &[(Id, Point)]) -> usize {
+    let tiny = |t: &RouteRequest| distance(t.start, t.end) < MIN_SEGMENT_MM;
+    let mut removed = 0;
+    // Each pass removes at least one piece, so it ends.
+    while tracks.iter().any(tiny) {
+        // Union-find over the ends tiny pieces join.
+        let mut parent: BTreeMap<EndKey, EndKey> = BTreeMap::new();
+        fn root(parent: &mut BTreeMap<EndKey, EndKey>, k: EndKey) -> EndKey {
+            let mut r = k;
+            while let Some(p) = parent.get(&r).copied() {
+                if p == r {
+                    break;
+                }
+                r = p;
+            }
+            parent.insert(k, r);
+            r
+        }
+        let mut points: BTreeMap<EndKey, Point> = BTreeMap::new();
+        for t in tracks.iter().filter(|t| tiny(t)) {
+            let (a, b) = (end_key(t, t.start), end_key(t, t.end));
+            points.insert(a, t.start);
+            points.insert(b, t.end);
+            let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+            parent.entry(ra).or_insert(ra);
+            if ra != rb {
+                parent.insert(rb, ra);
+            }
+        }
+        // Each group's point: a via of its net there, else the mean.
+        let keys: Vec<EndKey> = points.keys().copied().collect();
+        let mut groups: BTreeMap<EndKey, Vec<Point>> = BTreeMap::new();
+        for k in &keys {
+            let r = root(&mut parent, *k);
+            if let Some(p) = points.get(k) {
+                groups.entry(r).or_default().push(*p);
+            }
+        }
+        let mut to: BTreeMap<EndKey, Point> = BTreeMap::new();
+        for (r, members) in &groups {
+            let via = vias.iter().find(|(net, v)| {
+                *net == r.0 && members.iter().any(|p| distance(*p, *v) < MIN_SEGMENT_MM)
+            });
+            let n = members.len() as f64;
+            let mean = [
+                members.iter().map(|p| p[0]).sum::<f64>() / n,
+                members.iter().map(|p| p[1]).sum::<f64>() / n,
+            ];
+            to.insert(*r, via.map_or(mean, |(_, v)| *v));
+        }
+        let before = tracks.len();
+        tracks.retain(|t| !tiny(t));
+        removed += before - tracks.len();
+        for t in tracks.iter_mut() {
+            for end in [false, true] {
+                let p = if end { t.end } else { t.start };
+                let k = end_key(t, p);
+                if parent.contains_key(&k) {
+                    let r = root(&mut parent, k);
+                    if let Some(q) = to.get(&r) {
+                        if end {
+                            t.end = *q;
+                        } else {
+                            t.start = *q;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    removed
 }
 
 /// Add tracks and vias in batches; a refused batch is halved until each
@@ -344,5 +490,58 @@ fn reason_kind(reason: &str) -> &'static str {
         "width"
     } else {
         "other"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(net: u64, start: Point, end: Point) -> RouteRequest {
+        RouteRequest {
+            net,
+            start,
+            end,
+            width: 0.2,
+            layer: CopperLayer::Top,
+        }
+    }
+
+    #[test]
+    fn a_tiny_piece_goes_and_its_neighbours_meet() {
+        // A chain A–B, a 4 µm piece B–B', then B'–C; a second net's track
+        // ends at B' too and must not be joined.
+        let b = [5.0, 0.0];
+        let b2 = [5.004, 0.0];
+        let mut tracks = vec![
+            track(1, [0.0, 0.0], b),
+            track(1, b, b2),
+            track(1, b2, [10.0, 0.0]),
+            track(2, b2, [5.004, 5.0]),
+        ];
+        assert_eq!(clean_tiny(&mut tracks, &[]), 1);
+        assert_eq!(tracks.len(), 3);
+        let mean = [5.002, 0.0];
+        assert!(distance(tracks[0].end, mean) < 1e-9);
+        assert!(distance(tracks[1].start, mean) < 1e-9);
+        // The other net's end stays.
+        assert!(distance(tracks[2].start, b2) < 1e-12);
+    }
+
+    #[test]
+    fn a_via_holds_the_joined_point_and_chains_collapse() {
+        let via = [1.0, 1.0];
+        let mut tracks = vec![
+            track(1, [0.0, 1.0], via),
+            track(1, via, [1.003, 1.0]),
+            track(1, [1.003, 1.0], [1.006, 1.0]),
+            track(1, [1.006, 1.0], [3.0, 1.0]),
+            // Becomes zero length once its ends join: removed next pass.
+            track(1, [1.006, 1.0], via),
+        ];
+        assert_eq!(clean_tiny(&mut tracks, &[(1, via)]), 3);
+        assert_eq!(tracks.len(), 2);
+        assert!(distance(tracks[0].end, via) < 1e-12);
+        assert!(distance(tracks[1].start, via) < 1e-12);
     }
 }

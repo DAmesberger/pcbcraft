@@ -95,6 +95,48 @@ pub struct Margins {
     pub paste_ratio: Option<f64>,
 }
 
+/// How zones join a footprint's or a pad's copper, over the zone's own
+/// settings (`zone_connect`, `clearance`, thermal width, gap and angle).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ZoneOverride {
+    /// 0 not joined, 1 thermal relief, 2 solid, 3 thermal for
+    /// through-hole pads only.
+    pub connect: Option<u8>,
+    pub clearance: Option<Nm>,
+    pub thermal_width: Option<Nm>,
+    pub thermal_gap: Option<Nm>,
+    /// Spoke angle, degrees (pads only).
+    pub thermal_angle: Option<f64>,
+}
+
+impl ZoneOverride {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+fn zone_override(node: &Node, path: &str) -> Result<ZoneOverride> {
+    let connect = opt_num(node, "zone_connect", path)?
+        .map(|v| {
+            if (0.0..=3.0).contains(&v) && v.fract() == 0.0 {
+                Ok(v as u8)
+            } else {
+                Err(BoardError::Value(format!("{path}/zone_connect")))
+            }
+        })
+        .transpose()?;
+    Ok(ZoneOverride {
+        connect,
+        clearance: opt_len(node, "clearance", path)?,
+        thermal_width: match opt_len(node, "thermal_bridge_width", path)? {
+            Some(w) => Some(w),
+            None => opt_len(node, "thermal_width", path)?,
+        },
+        thermal_gap: opt_len(node, "thermal_gap", path)?,
+        thermal_angle: opt_num(node, "thermal_bridge_angle", path)?,
+    })
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Footprint {
     /// `library:name` as written.
@@ -116,6 +158,10 @@ pub struct Footprint {
     /// Zones and rule areas inside the footprint (KiCad writes their
     /// outlines in board coordinates).
     pub zones: Vec<crate::items::KZone>,
+    /// Zone connection overrides for every pad of the footprint.
+    pub zone: ZoneOverride,
+    /// KiCad's "not in schematic" attribute: a part on the board only.
+    pub board_only: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -207,8 +253,8 @@ pub struct KPad {
     pub fiducial: bool,
     /// The pad's net number and name (`None`: no net).
     pub net: Option<(u32, String)>,
-    /// Per-pad zone connection or clearance overrides.
-    pub zone_overrides: bool,
+    /// Per-pad zone connection, clearance and thermal overrides.
+    pub zone: ZoneOverride,
     /// Tokens this importer does not know, by path.
     pub unknown: Vec<String>,
 }
@@ -432,6 +478,7 @@ fn footprint(node: &Node, report: &mut Report) -> Result<Footprint> {
         at: at_point,
         angle,
         margins: margins(node, path)?,
+        zone: zone_override(node, path)?,
         ..Footprint::default()
     };
     for item in node.args() {
@@ -473,8 +520,12 @@ fn footprint(node: &Node, report: &mut Report) -> Result<Footprint> {
             }
             "net_tie_pad_groups" => fp.net_tie = true,
             "attr" => {
-                if item.args().iter().any(|a| a.atom() == Some("net_tie")) {
+                let has = |flag: &str| item.args().iter().any(|a| a.atom() == Some(flag));
+                if has("net_tie") {
                     fp.net_tie = true;
+                }
+                if has("board_only") {
+                    fp.board_only = true;
                 }
             }
             "layer"
@@ -546,6 +597,7 @@ fn pad(node: &Node) -> Result<KPad> {
         margins: margins(node, path)?,
         rratio: opt_num(node, "roundrect_rratio", path)?.unwrap_or(0.0),
         chamfer_ratio: opt_num(node, "chamfer_ratio", path)?.unwrap_or(0.0),
+        zone: zone_override(node, path)?,
         ..KPad::default()
     };
     for item in node.args() {
@@ -587,7 +639,7 @@ fn pad(node: &Node) -> Result<KPad> {
             | "thermal_width"
             | "thermal_gap"
             | "thermal_bridge_width"
-            | "thermal_bridge_angle" => pad.zone_overrides = true,
+            | "thermal_bridge_angle" => {}
             "net" => {
                 let n = item.arg(0).and_then(|a| a.parse::<u32>().ok());
                 pad.net = n

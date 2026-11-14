@@ -265,15 +265,42 @@ fn paste_only_pads_become_windows_of_the_pad_under_them() -> Fallible<()> {
 }
 
 #[test]
-fn a_fiducial_part_lands_one_terminal() -> Fallible<()> {
+fn a_fiducial_is_a_part_without_terminals() -> Fallible<()> {
     let fiducial = Pad::smd("", "circle", [0.0, 0.0, 0.0], [1.0, 1.0])
         .layers("\"F.Cu\" \"F.Mask\"")
         .with("(property pad_prop_fiducial_loc) (solder_mask_margin 0.5)");
     let imported = import(one_footprint(vec![fiducial]).text().as_bytes())?;
-    let placed = placed_pads(imported.engine.project());
+    let project = imported.engine.project();
+    let placed = placed_pads(project);
     assert_eq!(placed.len(), 1);
-    assert_eq!(placed[0].pad.kind, PadKind::Mechanical);
-    assert_eq!(imported.report.count(Case::TerminalAdded), 1);
+    // No made-up terminal: the pad stays a fiducial and lands none.
+    assert_eq!(placed[0].pad.kind, PadKind::Fiducial);
+    assert_eq!(placed[0].terminal, None);
+    let instance = project.instance_by_designator("U1").ok_or("U1")?;
+    let component = project
+        .library
+        .component(instance.component)
+        .ok_or("component")?;
+    assert!(component.definition.terminals.is_empty());
+    assert_eq!(imported.report.count(Case::NoTerminals), 1);
+    // On the sheet like any part KiCad has in its schematic.
+    assert!(!instance.board_only);
+    assert_eq!(project.occurrences_of(instance.id).count(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_part_not_in_the_schematic_is_board_only() -> Fallible<()> {
+    let hole = Pad::npth([0.0, 0.0, 0.0], 3.2);
+    let mut board = one_footprint(vec![hole]);
+    board.footprints[0].extra = " (attr board_only exclude_from_bom)".into();
+    let imported = import(board.text().as_bytes())?;
+    let project = imported.engine.project();
+    let instance = project.instance_by_designator("U1").ok_or("U1")?;
+    assert!(instance.board_only);
+    assert_eq!(project.occurrences_of(instance.id).count(), 0);
+    assert!(project.placement_of(instance.id).is_some());
+    assert_eq!(imported.report.count(Case::BoardOnly), 1);
     Ok(())
 }
 
