@@ -658,6 +658,7 @@ pub fn place(project: &mut Project, request: NewInstance) -> Result<(Id, Id)> {
         pin_config: Default::default(),
         marking: Default::default(),
         text_placements: Default::default(),
+        board_only: false,
     });
     let sheet = request.sheet.unwrap_or_else(|| project.sheets.first());
     let occurrence = add_occurrence(project, id, request.unit, request.position, sheet)?;
@@ -708,6 +709,7 @@ pub fn place_off_sheet(
         pin_config: Default::default(),
         marking: Default::default(),
         text_placements: Default::default(),
+        board_only: false,
     });
     check_instance(project, id)?;
     check_designators(project)?;

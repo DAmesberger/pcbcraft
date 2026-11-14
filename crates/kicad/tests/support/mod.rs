@@ -8,6 +8,23 @@ use std::fmt::Write as _;
 /// `sparksmith_kicad::import` onto the core's test-fixture board, stackup
 /// presets and prototype fab profile, without a sketch engine.
 pub fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
+    import_with_project(bytes, None)
+}
+
+/// [`import`] with a project file (`.kicad_pro` JSON).
+pub fn import_with_project(
+    bytes: &[u8],
+    project_file: Option<&[u8]>,
+) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
+    import_with_schematic(bytes, project_file, None)
+}
+
+/// [`import`] with a project file and schematic files (root name, files).
+pub fn import_with_schematic(
+    bytes: &[u8],
+    project_file: Option<&[u8]>,
+    schematic: Option<(&str, &std::collections::BTreeMap<String, Vec<u8>>)>,
+) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
     let fixture = |e: sparksmith_core::Error| sparksmith_kicad::ImportError::Refused {
         step: "fixture",
         reason: e.to_string(),
@@ -21,7 +38,9 @@ pub fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported, sparksmith_kic
             presets: &presets,
             profile: Some(&profile),
             evaluators: Default::default(),
-            project_file: None,
+            project_file,
+            schematic: schematic
+                .map(|(root, files)| sparksmith_kicad::schematic::SchematicFiles { root, files }),
         },
     )
 }

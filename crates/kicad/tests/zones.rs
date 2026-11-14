@@ -100,3 +100,58 @@ fn rule_areas_become_keepouts_on_their_layers() -> Fallible<()> {
     assert!((b.max[0] - 6.0).abs() < 1e-9 && (b.max[1] - 6.0).abs() < 1e-9);
     Ok(())
 }
+
+#[test]
+fn footprint_and_pad_zone_overrides_become_fill_overrides() -> Fallible<()> {
+    use sparksmith_core::model::fill::PadFillOverride;
+    let mut board = zoned();
+    // The footprint: not joined, 0.3 mm spokes; pad 2: thermal at 45° and
+    // a 0.4 mm clearance.
+    board.footprints[0]
+        .extra
+        .push_str(" (zone_connect 0) (thermal_width 0.3)");
+    board.footprints[0].pads[1] = Pad::smd("2", "rect", [1.0, 0.0, 0.0], [0.8, 0.6])
+        .with("(net 1 \"GND\") (zone_connect 1) (thermal_bridge_angle 45) (clearance 0.4)");
+    let imported = import(board.text().as_bytes())?;
+    let project = imported.engine.project();
+    let r1 = project.instance_by_designator("R1").ok_or("R1")?;
+    let placement = project
+        .placements
+        .iter()
+        .find(|p| p.instance == r1.id)
+        .ok_or("placement")?;
+    assert_eq!(
+        placement.fill_override,
+        PadFillOverride {
+            connection: Some(PadConnection::None),
+            spoke_width: sparksmith_core::units::Nm::try_new(300_000),
+            ..Default::default()
+        }
+    );
+    assert_eq!(placement.pad_fill_overrides.len(), 1);
+    let pad = placement.pad_fill_overrides[0];
+    assert_eq!(pad.settings.connection, Some(PadConnection::Thermal));
+    assert_eq!(
+        pad.settings.spoke_angle.map(|a| a.to_degrees_f64()),
+        Some(45.0)
+    );
+    assert_eq!(pad.settings.clearance_mm(), Some(0.4));
+    // Pad 2 keeps the footprint's spoke width.
+    assert_eq!(
+        placement.fill_override_of(pad.pad).spoke_width,
+        sparksmith_core::units::Nm::try_new(300_000)
+    );
+    assert_eq!(imported.report.count(Case::PadZoneOverrides), 1);
+    assert_eq!(imported.report.count(Case::FootprintZoneOverrides), 1);
+    // Pad 1 follows the footprint, pad 2 its own.
+    let joined: Vec<_> = sparksmith_core::layout::placed_pads(project)
+        .into_iter()
+        .filter(|p| p.instance == r1.id)
+        .map(|p| p.fill_override.connection)
+        .collect();
+    assert_eq!(
+        joined,
+        [Some(PadConnection::None), Some(PadConnection::Thermal)]
+    );
+    Ok(())
+}

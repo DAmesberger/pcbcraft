@@ -139,7 +139,8 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     let project = board.with_extension("kicad_pro");
     let project = project.is_file().then_some(project);
     let project_bytes = project.as_deref().map(std::fs::read).transpose()?;
-    let imported = import(&bytes, project_bytes.as_deref())?;
+    let schematic = sparksmith_io::kicad_files::schematic_files(board)?;
+    let imported = import(&bytes, project_bytes.as_deref(), schematic.as_ref())?;
     let copper = imported.report.counts.copper_layers;
     let theirs = reference::plot(board, project.as_deref(), copper, dir)?;
     let set = fabrication::generate(
@@ -190,6 +191,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     let (mut text, ok, rows) = summarize(&imported.report, &diff, &judge, &pads);
     let (line, outline_ok) = outline_line(&imported, &theirs, judge.shift_nm)?;
     text.push_str(&line);
+    text.push_str(&findings_line(imported.engine.project()));
     let ok = ok && outline_ok;
     let local = serde_json::json!({
         "kicad_cli": reference::version(),
@@ -201,11 +203,30 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     Ok((text, ok))
 }
 
+/// The board checks' findings after the import, counted by code (fixed
+/// text: no name or place from the board).
+fn findings_line(project: &sparksmith_core::Project) -> String {
+    let mut by_code: std::collections::BTreeMap<String, usize> = Default::default();
+    for finding in sparksmith_core::layout::checks(project, &Default::default()) {
+        *by_code.entry(finding.code.to_string()).or_default() += 1;
+    }
+    let total: usize = by_code.values().sum();
+    let list: Vec<String> = by_code
+        .iter()
+        .map(|(code, n)| format!("{code} {n}"))
+        .collect();
+    format!("  findings         {total} | {}\n", list.join(", "))
+}
+
 /// Import a board onto the shipped new board and fab profile. The gates
 /// never build Solidcraft, so only with the `sketch` feature is there a
 /// board sketch engine (the outline imports as a sketch, as in the app and
 /// the CLI); without it the outline is the rectangle around it.
-fn import(bytes: &[u8], project_file: Option<&[u8]>) -> Result<sparksmith_kicad::Imported> {
+fn import(
+    bytes: &[u8],
+    project_file: Option<&[u8]>,
+    schematic: Option<&sparksmith_io::kicad_files::SchematicFiles>,
+) -> Result<sparksmith_kicad::Imported> {
     let defaults = sparksmith_io::new_project::shipped()?;
     let profile = sparksmith_io::rule_profiles::for_new_board_from_env(None)?;
     Ok(sparksmith_kicad::import(
@@ -216,6 +237,8 @@ fn import(bytes: &[u8], project_file: Option<&[u8]>) -> Result<sparksmith_kicad:
             profile: Some(&profile),
             evaluators: evaluators(),
             project_file,
+            schematic: schematic
+                .map(|(root, files)| sparksmith_kicad::schematic::SchematicFiles { root, files }),
         },
     )?)
 }
@@ -449,7 +472,7 @@ mod tests {
               (property \"Value\" \"QQSECRETVALUE\" (at 0 0 0) (layer \"F.Fab\")) \
               (pad \"QQ7\" smd rect (at 0.4321 0 90) (size 1.2345 0.6789) (layers \"F.Cu\" \"F.Paste\" \"F.Mask\") \
                 (net 1 \"QQSECRETNET\") (pinfunction \"QQPINFN\") (zqxtoken 1))))";
-        let imported = import(text.as_bytes(), None)?;
+        let imported = import(text.as_bytes(), None, None)?;
         let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
         let ours: Vec<File> = set
             .files

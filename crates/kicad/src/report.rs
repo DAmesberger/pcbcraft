@@ -62,16 +62,19 @@ pub enum Case {
     NetTie,
     /// G6: per-pad zone connection and clearance overrides.
     PadZoneOverrides,
+    /// G6: footprint-wide zone connection and clearance overrides.
+    FootprintZoneOverrides,
     /// G8: a pad with no copper (paste or mask only).
     PadWithoutCopper,
     /// G8: a paste-only pad, imported as a paste window of the pad under it.
     PasteWindow,
-    /// A part with no electrical pad (a fiducial, a mounting pad): its first
-    /// copper pad lands a terminal, as the core needs one.
-    TerminalAdded,
-    /// A footprint with no electrical pad (bare holes only): the core needs
-    /// a part file for a part without terminals.
-    FootprintWithoutTerminals,
+    /// A footprint with no electrical pad (a fiducial, a mounting hole):
+    /// a part without terminals.
+    NoTerminals,
+    /// A footprint KiCad marks "not in schematic": a board-only part.
+    BoardOnly,
+    /// A board-only part's pad on a net: no pin on a sheet joins it.
+    BoardOnlyNet,
     /// G8: a surface pad with copper on both outer sides.
     PadOnBothSides,
     /// A designator that was not valid or repeated, renumbered.
@@ -117,20 +120,67 @@ pub enum Case {
     NoProject,
     /// A project file that is not readable JSON: the profile's stand.
     ProjectUnreadable,
-    /// Several net classes, patterns or assignments: only the default
-    /// class's clearance is taken (classes are not imported yet).
-    NetClasses,
+    /// A net class imported into the project's own rule set.
+    NetClass,
+    /// A net class the rules refused (a value out of bounds).
+    NetClassRefused,
+    /// A class pattern that is not a plain wildcard or names no imported
+    /// class, or a net whose class was not imported.
+    NetClassPatternRefused,
+    /// Nets assigned to their class explicitly.
+    NetClassAssigned,
+    /// A KiCad limit looser than the fab profile's: the profile's kept.
+    RuleLooserThanFab,
     /// Net names that are not label names (spaces, over 64 bytes, equal
     /// to another but for case), spelled anew.
     NetRenamed,
     /// Pads of one terminal on two nets: the first net kept.
     TerminalOnTwoNets,
+    /// No schematic, or one that could not be read: pins labelled.
+    SchematicUnreadable,
+    /// Sheet symbols drawn (one per sheet instance).
+    SheetSymbol,
+    /// Symbols whose library symbol is missing from the file.
+    SymbolWithoutLibrary,
+    /// Symbols with no placed footprint of their reference.
+    SymbolWithoutFootprint,
+    /// Symbol pins with no pad of their number.
+    PinWithoutPad,
+    /// Footprints with no symbol in the schematic: their pins labelled.
+    FootprintWithoutSymbol,
+    /// Labels and power ports placed.
+    SchematicLabel,
+    /// Hidden power input pins, given a power port of their name.
+    HiddenPowerPin,
+    /// Pins of type "not connected", left unwired.
+    NoConnectPin,
+    /// Pins or labels on a wire's middle, with no wire end or junction
+    /// there: joined to it.
+    PinOnWire,
+    /// Labels named as the net KiCad's wires join them into (KiCad lets
+    /// one net carry several names; ours carry one).
+    LabelAlias,
+    /// Terminals no pin of their KiCad symbol names: a pin inside the body.
+    TerminalWithoutPin,
+    /// Units the engine refused to place or turn.
+    UnitRefused,
+    /// Symbol pins that meet no wire, label, other pin or no-connect flag.
+    PinUnconnected,
+    /// Labels, power ports and sheet pins the engine refused.
+    SchematicItemRefused,
+    /// Wires drawn.
+    SchematicWire,
+    /// Wires drawn straight, their corners refused.
+    SchematicWireStraightened,
+    /// Wires the engine refused.
+    SchematicWireRefused,
     /// Arc tracks, imported as chords.
     ArcTrack,
     /// Tracks on no net with pads (or on no copper layer).
     TrackWithoutNet,
-    /// Track pieces shorter than the engine's least track length.
-    TrackTooShort,
+    /// Track pieces shorter than the engine's least track length, removed
+    /// with their neighbours' ends joined.
+    TinyTrackCleaned,
     /// Tracks the engine's checks refused (clearance, outline, width).
     TrackRefused,
     /// Vias on no net with pads.
@@ -219,8 +269,13 @@ impl Case {
             ),
             Self::PadZoneOverrides => (
                 "G6",
-                Report,
-                "pads with zone connection or clearance overrides, not imported",
+                Exact,
+                "pads with zone connection, thermal or clearance overrides, imported as pad fill overrides",
+            ),
+            Self::FootprintZoneOverrides => (
+                "G6",
+                Exact,
+                "footprints with zone connection, thermal or clearance overrides, imported as part fill overrides",
             ),
             Self::PadWithoutCopper => (
                 "G8",
@@ -232,15 +287,20 @@ impl Case {
                 Exact,
                 "paste-only pads imported as paste windows of the pad under them",
             ),
-            Self::TerminalAdded => (
+            Self::NoTerminals => (
                 "-",
-                Report,
-                "parts without an electrical pad: one terminal added on a copper pad",
+                Exact,
+                "footprints without electrical pads, imported as parts without terminals",
             ),
-            Self::FootprintWithoutTerminals => (
+            Self::BoardOnly => (
                 "-",
+                Exact,
+                "footprints not in the schematic, imported as board-only parts",
+            ),
+            Self::BoardOnlyNet => (
+                "N1",
                 Refused,
-                "footprints without copper pads (holes or drawings only; a part without terminals needs a part file)",
+                "board-only parts' pads on a net (no schematic pin joins them)",
             ),
             Self::PadOnBothSides => ("G8", Refused, "surface pads on both outer sides"),
             Self::Designator => ("-", Report, "designators renumbered"),
@@ -310,7 +370,7 @@ impl Case {
             Self::ProjectRules => (
                 "D1",
                 Exact,
-                "project clearances (net class, edge, hole) and least track width set over the fab profile",
+                "project rules (default class, board minimums) set over the fab profile as the project's own rule set",
             ),
             Self::NoProject => (
                 "D1",
@@ -322,10 +382,22 @@ impl Case {
                 Refused,
                 "project file not readable: the fab profile's clearances stand",
             ),
-            Self::NetClasses => (
+            Self::NetClass => ("D1", Exact, "net classes imported"),
+            Self::NetClassRefused => ("D1", Refused, "net classes the rules refused"),
+            Self::NetClassPatternRefused => (
                 "D1",
-                Approximate,
-                "several net classes: only the default class's clearance taken",
+                Refused,
+                "net class patterns that are not plain wildcards or name no imported class",
+            ),
+            Self::NetClassAssigned => (
+                "D1",
+                Exact,
+                "nets assigned to their class explicitly (no pattern gives it on our names)",
+            ),
+            Self::RuleLooserThanFab => (
+                "D1",
+                Report,
+                "KiCad limits looser than the fab profile's (the fab limit kept)",
             ),
             Self::NetRenamed => (
                 "N1",
@@ -337,13 +409,87 @@ impl Case {
                 Refused,
                 "pads of one terminal on two nets (first net kept)",
             ),
+            Self::SchematicUnreadable => (
+                "K5",
+                Refused,
+                "schematic not readable: pins labelled with the board's nets",
+            ),
+            Self::SheetSymbol => ("K5", Exact, "sheet instances drawn as sheet symbols"),
+            Self::SymbolWithoutLibrary => (
+                "K5",
+                Refused,
+                "symbols whose library symbol is missing from the file",
+            ),
+            Self::SymbolWithoutFootprint => (
+                "K5",
+                Report,
+                "symbols without a placed footprint (not on the board)",
+            ),
+            Self::PinWithoutPad => ("K5", Report, "symbol pins without a pad of their number"),
+            Self::FootprintWithoutSymbol => (
+                "K5",
+                Approximate,
+                "footprints without a symbol: their pins labelled with the board's nets",
+            ),
+            Self::SchematicLabel => ("K5", Exact, "labels and power ports placed"),
+            Self::NoConnectPin => (
+                "K5",
+                Exact,
+                "pins of type \"not connected\", left unwired (they join nothing)",
+            ),
+            Self::HiddenPowerPin => (
+                "K5",
+                Exact,
+                "hidden power input pins, given a power port of their name",
+            ),
+            Self::PinOnWire => (
+                "K5",
+                Report,
+                "pins or labels on a wire's middle without a junction (joined to it)",
+            ),
+            Self::LabelAlias => (
+                "K5",
+                Approximate,
+                "labels renamed to the one name of the net KiCad's wires join them into",
+            ),
+            Self::TerminalWithoutPin => (
+                "K5",
+                Report,
+                "pads without a pin of their number on the KiCad symbol (a pin inside the body)",
+            ),
+            Self::UnitRefused => (
+                "K5",
+                Refused,
+                "symbol units the engine refused to place or turn",
+            ),
+            Self::PinUnconnected => (
+                "K5",
+                Report,
+                "symbol pins that meet no wire, label, other pin or no-connect flag",
+            ),
+            Self::SchematicItemRefused => (
+                "K5",
+                Refused,
+                "labels, power ports and sheet pins the engine refused",
+            ),
+            Self::SchematicWire => ("K5", Exact, "wires drawn"),
+            Self::SchematicWireStraightened => (
+                "K5",
+                Approximate,
+                "wires drawn straight (their corners refused)",
+            ),
+            Self::SchematicWireRefused => ("K5", Refused, "wires the engine refused"),
             Self::ArcTrack => (
                 "R1",
                 Approximate,
                 "arc tracks imported as chords within 0.25 µm",
             ),
             Self::TrackWithoutNet => ("R1", Refused, "tracks on no net with pads, not imported"),
-            Self::TrackTooShort => ("R1", Refused, "track pieces shorter than 0.01 mm"),
+            Self::TinyTrackCleaned => (
+                "R1",
+                Approximate,
+                "track pieces shorter than 0.01 mm removed, their neighbours' ends joined",
+            ),
             Self::TrackRefused => ("R1", Refused, "tracks the engine's checks refused"),
             Self::ViaWithoutNet => ("R1", Refused, "vias on no net with pads, not imported"),
             Self::ViaRefused => ("R1", Refused, "vias the engine's checks refused"),
@@ -410,6 +556,14 @@ pub struct Counts {
     pub tracks: usize,
     pub vias: usize,
     pub fills: usize,
+    /// Schematic sheets drawn.
+    pub sheets: usize,
+    /// Board nets whose pads the schematic joins exactly, net for net;
+    /// split over several schematic nets (or unjoined); joined with
+    /// another board net's pads.
+    pub schematic_nets_equal: usize,
+    pub schematic_nets_split: usize,
+    pub schematic_nets_merged: usize,
 }
 
 /// Most private details kept (the rows still count every case).
@@ -497,6 +651,12 @@ impl Report {
             c.vias,
             c.fills
         );
+        if c.sheets > 0 {
+            out.push_str(&format!(
+                "  schematic: {} sheets; board nets equal {}, split {}, joined with another {}\n",
+                c.sheets, c.schematic_nets_equal, c.schematic_nets_split, c.schematic_nets_merged
+            ));
+        }
         let mut rows = self.rows();
         rows.sort_by_key(|r| (r.fidelity, r.case));
         for row in rows {

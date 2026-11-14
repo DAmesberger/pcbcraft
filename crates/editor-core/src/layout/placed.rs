@@ -7,6 +7,7 @@ use crate::library::graphics::{
     DrawingLayer, Fill, Item, PlacedText, Side, TextContent, TextMetric,
 };
 use crate::library::{Datum, PAD_ARC_TOLERANCE_MM, Pad, PadSide};
+use crate::model::fill::PadFillOverride;
 use crate::model::{CopperLayer, Layer, Placement, Project};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,10 @@ pub struct PlacedPad {
     pub layer: Layer,
     pub terminal: Option<Endpoint>,
     pub net: Option<Id>,
+    /// How fills join this pad, over each fill's settings: the pad's own
+    /// override over its part's ([`Placement::fill_override_of`]).
+    #[serde(default, skip_serializing_if = "PadFillOverride::is_empty")]
+    pub fill_override: PadFillOverride,
 }
 
 /// Every pad of every placed part, in placement then pad order.
@@ -94,6 +99,7 @@ pub fn placed_pads(project: &Project) -> Vec<PlacedPad> {
                 layer,
                 net: terminal.and_then(|t| nets.get(&t).copied()),
                 terminal,
+                fill_override: placement.fill_override_of(pad.id),
             });
         }
     }

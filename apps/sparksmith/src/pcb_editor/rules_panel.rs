@@ -1038,6 +1038,11 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
         {
             panel.preview(engine, library, true);
         }
+        // The project's own rule set and where it comes from ("From the
+        // KiCad project"); the fab profile keeps the fab limits.
+        if let Some(source) = &rules.source {
+            kit::value_row(ui, "Project rules", source);
+        }
         match rules.overrides.len() {
             0 => {}
             n => {

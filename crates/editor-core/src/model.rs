@@ -85,6 +85,11 @@ pub struct ComponentInstance {
     /// footprint does.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub text_placements: std::collections::BTreeMap<crate::ids::GraphicId, TextPlacement>,
+    /// A part on the board only (a fiducial, mounting hole or logo): no
+    /// unit on any sheet (`component.place_board_only`). Schematic edits
+    /// and imports leave it alone; only an explicit removal removes it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub board_only: bool,
 }
 
 /// Where one instance prints a text of its footprint, relative to where the
@@ -359,6 +364,24 @@ pub struct Placement {
     pub rotation_deg: f64,
     pub layer: Layer,
     pub locked: bool,
+    /// How fills join this part's pads, over each fill's settings
+    /// (`fill.set_pad_override`).
+    #[serde(default, skip_serializing_if = "fill::PadFillOverride::is_empty")]
+    pub fill_override: fill::PadFillOverride,
+    /// Per-pad overrides, over [`Self::fill_override`]; one per pad, in
+    /// pad order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pad_fill_overrides: Vec<fill::PadFillOverrideEntry>,
+}
+
+impl Placement {
+    /// The fill override of one pad: its own over the part's.
+    pub fn fill_override_of(&self, pad: crate::ids::PadId) -> fill::PadFillOverride {
+        self.pad_fill_overrides
+            .iter()
+            .find(|e| e.pad == pad)
+            .map_or(self.fill_override, |e| e.settings.over(self.fill_override))
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]

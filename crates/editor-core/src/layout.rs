@@ -717,6 +717,8 @@ fn apply_inner(project: &mut Project, command: LayoutCommand) -> Result<Option<I
                 rotation_deg,
                 layer,
                 locked: false,
+                fill_override: Default::default(),
+                pad_fill_overrides: Vec::new(),
             });
         }
         LayoutCommand::Move {

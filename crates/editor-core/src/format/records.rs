@@ -107,6 +107,7 @@ pub const INSTANCES: Collection = Collection {
         "pin_config",
         "marking",
         "text_placements",
+        "board_only",
     ]),
     numbers: Numbers::FloatsAllowed,
 };
@@ -170,7 +171,15 @@ pub const PLACEMENTS: Collection = Collection {
     header: &[],
     type_field: None,
     sort: &["instance"],
-    records: records!(&["instance", "layer", "position", "rotation_deg", "locked"]),
+    records: records!(&[
+        "instance",
+        "layer",
+        "position",
+        "rotation_deg",
+        "locked",
+        "fill_override",
+        "pad_fill_overrides",
+    ]),
     numbers: Numbers::FloatsAllowed,
 };
 

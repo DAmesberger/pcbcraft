@@ -47,6 +47,7 @@ mod fill_paint;
 mod fill_tests;
 mod fill_tool;
 mod group;
+mod pad_fill_card;
 pub use group::Group;
 mod hold_mark;
 #[cfg(test)]
@@ -512,6 +513,10 @@ pub struct PcbEditor {
     fill_drag: Option<fill_tool::HandleDrag>,
     /// The Fill card's staged edit.
     fill_card: Option<fill_card::FillDraft>,
+    /// The Placement card's Fill connection edit, and the pad it applies
+    /// to (none: the whole part).
+    pad_fill: Option<pad_fill_card::PadFillDraft>,
+    pad_fill_target: Option<(Id, sparksmith_core::PadId)>,
     /// The Board shape mode (`board_shape_ui`).
     shape: board_shape_ui::ShapeMode,
     /// The Placement card's Board edge fields (`edge_card`).
@@ -631,6 +636,8 @@ impl Default for PcbEditor {
             fill_draw: Default::default(),
             fill_drag: None,
             fill_card: None,
+            pad_fill: None,
+            pad_fill_target: None,
             shape: Default::default(),
             edge: Default::default(),
             signals: None,

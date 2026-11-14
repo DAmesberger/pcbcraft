@@ -11,6 +11,7 @@ mod former_name;
 pub mod generated;
 pub mod generator_bundle;
 pub mod interface;
+pub mod kicad_files;
 pub mod library_folder;
 pub mod library_folder_index;
 pub mod materials;

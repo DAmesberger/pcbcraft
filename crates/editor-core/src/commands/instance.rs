@@ -19,6 +19,19 @@ pub enum InstanceCommand {
     /// designator the core numbers it under the component's prefix.
     #[serde(rename = "component.place")]
     Place(NewInstance),
+    /// Create one board-only instance (a fiducial, mounting hole or logo):
+    /// every unit of its symbol unused, so it is on no sheet, and marked
+    /// board-only so schematic work leaves it alone. Place it on the board
+    /// with `layout.place`. Without a designator the core numbers it under
+    /// the component's prefix. The outcome is `Outcome::PartPlaced`.
+    #[serde(rename = "component.place_board_only")]
+    PlaceBoardOnly {
+        component: crate::ids::ComponentRef,
+        representation: crate::ids::DefinitionId,
+        physical: PhysicalChoice,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        designator: Option<String>,
+    },
     /// Remove a component instance with its units. Direct only without wires
     /// or a placement; otherwise preview
     /// `Change::Instance { Remove }`.
@@ -113,6 +126,7 @@ pub enum InstanceCommand {
 // A new command chooses its permission class here.
 declare_classes!(InstanceCommand {
     Place "component.place" Edit "Place a component",
+    PlaceBoardOnly "component.place_board_only" Edit "Place a board-only part",
     Remove "component.remove" Edit "Remove a component",
     SetDesignator "instance.set_designator" Edit "Set a designator",
     SetProperties "instance.set_properties" Edit "Set instance properties",
@@ -154,6 +168,44 @@ pub(crate) fn apply_instance(project: &mut Project, command: InstanceCommand) ->
                 instance,
                 occurrence,
                 designator,
+            });
+        }
+        InstanceCommand::PlaceBoardOnly {
+            component,
+            representation,
+            physical,
+            designator,
+        } => {
+            let representation = project
+                .library
+                .component(component)
+                .and_then(|c| {
+                    c.definition
+                        .representations
+                        .iter()
+                        .find(|r| r.id == representation)
+                        .copied()
+                })
+                .ok_or_else(|| {
+                    crate::diagnostics::Error::NotFound(
+                        "The component lists no such symbol.".into(),
+                    )
+                })?;
+            let instance = instances::place_off_sheet(
+                project,
+                component,
+                representation,
+                physical,
+                designator,
+            )?;
+            let found = instances::instance_mut(project, instance)?;
+            found.board_only = true;
+            let designator = found.designator.clone();
+            return Ok(Outcome::PartPlaced {
+                instance,
+                designator,
+                component,
+                created: false,
             });
         }
         InstanceCommand::Remove { instance } => updates::stage(

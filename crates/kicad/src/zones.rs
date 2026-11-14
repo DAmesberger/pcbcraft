@@ -4,7 +4,7 @@
 //! per copper layer; its copper is then computed by our engine
 //! (`fill.refill`), never taken from the file's stored fill (decision:
 //! fills are recomputed). A rule area becomes a keepout.
-use crate::board::{Board, Nm, PointNm};
+use crate::board::{Board, PointNm, ZoneOverride};
 use crate::import::{ImportError, Session};
 use crate::items::{KZone, ZoneConnect};
 use crate::report::{Case, Report};
@@ -13,16 +13,18 @@ use sparksmith_core::geometry::Point;
 use sparksmith_core::layout::fill::{FillCommand, RefillTarget};
 use sparksmith_core::library::{Outline, Segment};
 use sparksmith_core::model::fill::{
-    FillSettings, FillSpec, IslandRemoval, KeepoutLayers, KeepoutRules, KeepoutSpec, PadConnections,
+    FillSettings, FillSpec, IslandRemoval, KeepoutLayers, KeepoutRules, KeepoutSpec,
+    PadConnections, PadFillOverride,
 };
 use sparksmith_core::rules::{PadConnection, ThermalRelief};
+use sparksmith_core::units::Nm;
 use sparksmith_core::{CopperLayer, Id, Operation};
 use std::collections::BTreeMap;
 
 /// Spokes KiCad draws per thermal relief.
 const SPOKES: u32 = 4;
 
-fn mm(nm: Nm) -> f64 {
+fn mm(nm: crate::board::Nm) -> f64 {
     nm as f64 / 1e6
 }
 
@@ -45,6 +47,28 @@ fn layers(board: &Board, zone: &KZone) -> Vec<CopperLayer> {
             k => u8::try_from(k).ok().map(CopperLayer::Inner),
         })
         .collect()
+}
+
+/// A KiCad footprint's or pad's zone override as our pad fill override.
+/// `through_hole` says how "thermal for through-hole pads only" (3)
+/// lands: thermal on a through-hole pad, not joined on another; `None`
+/// leaves it to each pad.
+pub(crate) fn pad_override(z: &ZoneOverride, through_hole: Option<bool>) -> PadFillOverride {
+    let connection = match (z.connect, through_hole) {
+        (Some(0), _) | (Some(3), Some(false)) => Some(PadConnection::None),
+        (Some(1), _) | (Some(3), Some(true)) => Some(PadConnection::Thermal),
+        (Some(2), _) => Some(PadConnection::Solid),
+        _ => None,
+    };
+    PadFillOverride {
+        connection,
+        spoke_width: z.thermal_width.filter(|w| *w > 0).and_then(Nm::try_new),
+        spoke_angle: z
+            .thermal_angle
+            .and_then(|a| sparksmith_core::units::Angle::from_degrees_f64_rounded(a).ok()),
+        thermal_gap: z.thermal_gap.filter(|g| *g >= 0).and_then(Nm::try_new),
+        clearance: z.clearance.filter(|c| *c > 0).and_then(Nm::try_new),
+    }
 }
 
 /// A closed outline of straight segments through `ring` (our frame).

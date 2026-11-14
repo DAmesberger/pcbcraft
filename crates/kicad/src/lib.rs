@@ -13,8 +13,10 @@ pub mod items;
 pub mod project;
 pub mod report;
 mod routing;
+pub mod schematic;
 pub mod sexpr;
 pub mod shape;
+mod sheets;
 pub mod translate;
 mod zones;
 

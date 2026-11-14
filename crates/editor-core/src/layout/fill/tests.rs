@@ -1399,3 +1399,140 @@ fn store_all_is_one_atomic_undo_step() -> Fallible<()> {
     assert_eq!(engine.to_file(), before);
     Ok(())
 }
+
+/// `fill.set_pad_override` on `instance` (the whole part, or one pad), then
+/// a refill.
+fn set_override(
+    engine: &mut Engine,
+    instance: Id,
+    pad: Option<crate::ids::PadId>,
+    settings: crate::model::fill::PadFillOverride,
+) -> Fallible<()> {
+    engine.apply(
+        engine.revision(),
+        Operation::Fill(FillCommand::SetPadOverride {
+            instance,
+            pad,
+            settings,
+        }),
+    )?;
+    refill(engine)
+}
+
+#[test]
+fn part_and_pad_overrides_change_how_the_fill_joins_a_pad() -> Fallible<()> {
+    use crate::model::fill::PadFillOverride;
+    let (mut engine, id, gnd) = showcase_with(CopperLayer::Bottom)?;
+    let pick = |p: &Project| {
+        placed_pads(p).into_iter().find(|pad| {
+            pad.net == Some(gnd) && pad.pad.kind == crate::library::PadKind::PlatedThrough
+        })
+    };
+    let header = pick(engine.project()).ok_or("no through-hole ground pin")?;
+    let (instance, pad) = (header.instance, header.pad.id);
+    let t = engine.project().rules.effective().fill.thermal;
+    let frame = header.pad_transform();
+    let centre = frame.apply([0.0, 0.0]);
+    let outline = header.outline().flatten(0.001);
+    let reach = header.pad.shape.extent();
+    let edge = |deg: f64| {
+        let (s, c) = deg.to_radians().sin_cos();
+        let mut d = 0.0;
+        while d < reach[0].hypot(reach[1])
+            && crate::geometry::polygon_contains(&outline, [centre[0] + c * d, centre[1] + s * d])
+        {
+            d += 0.001;
+        }
+        d
+    };
+    let between = frame.rotation_deg + t.angle_deg + 180.0 / f64::from(t.spoke_count);
+    let copper_at = |engine: &Engine, deg: f64, out: f64| -> Fallible<bool> {
+        Ok(copper_towards(
+            fill(engine.project(), id)?,
+            centre,
+            edge(deg) + out,
+            deg,
+        ))
+    };
+    // The fill's thermal relief: no copper between the spokes.
+    assert!(!copper_at(&engine, between, t.gap / 2.0)?);
+    let key = inputs_key(engine.project(), id)?;
+
+    // The part's override: solid. Copper now meets the pad between spokes,
+    // and the fill's copper went stale with the override.
+    let solid = PadFillOverride {
+        connection: Some(PadConnection::Solid),
+        ..Default::default()
+    };
+    engine.apply(
+        engine.revision(),
+        Operation::Fill(FillCommand::SetPadOverride {
+            instance,
+            pad: None,
+            settings: solid,
+        }),
+    )?;
+    assert_ne!(inputs_key(engine.project(), id)?, key);
+    refill(&mut engine)?;
+    assert!(copper_at(&engine, between, t.gap / 2.0)?);
+    assert!(joined_to(engine.project(), id).contains(&ObjectRef::Pad { instance, pad }));
+
+    // The pad's own override wins: not joined, cleared at the clearance it
+    // names (above the rule's).
+    let none = PadFillOverride {
+        connection: Some(PadConnection::None),
+        clearance: Some(crate::units::Nm::from_mm_f64_rounded(0.6)?),
+        ..Default::default()
+    };
+    set_override(&mut engine, instance, Some(pad), none)?;
+    assert!(!joined_to(engine.project(), id).contains(&ObjectRef::Pad { instance, pad }));
+    for k in 0..16 {
+        let deg = 22.5 * f64::from(k);
+        assert!(!copper_at(&engine, deg, 0.55)?, "copper at {deg}°");
+    }
+
+    // Thermal again, with the spokes turned 45° and widened: copper where
+    // the turned spokes run, none along the fill's own spoke directions.
+    let turned = PadFillOverride {
+        connection: Some(PadConnection::Thermal),
+        spoke_angle: Some(crate::units::Angle::from_degrees_f64_rounded(
+            t.angle_deg + 45.0,
+        )?),
+        spoke_width: Some(crate::units::Nm::from_mm_f64_rounded(t.spoke_width * 1.5)?),
+        ..Default::default()
+    };
+    set_override(&mut engine, instance, Some(pad), turned)?;
+    assert!(joined_to(engine.project(), id).contains(&ObjectRef::Pad { instance, pad }));
+    let spoke = frame.rotation_deg + t.angle_deg + 45.0;
+    assert!(copper_at(&engine, spoke, t.gap / 2.0)?);
+    assert!(!copper_at(&engine, spoke + 45.0, t.gap / 2.0)?);
+
+    // Empty settings remove the override; out-of-bounds ones are refused.
+    let bad = PadFillOverride {
+        spoke_width: Some(crate::units::Nm::ZERO),
+        ..Default::default()
+    };
+    assert!(
+        engine
+            .apply(
+                engine.revision(),
+                Operation::Fill(FillCommand::SetPadOverride {
+                    instance,
+                    pad: Some(pad),
+                    settings: bad,
+                }),
+            )
+            .is_err()
+    );
+    set_override(&mut engine, instance, Some(pad), PadFillOverride::default())?;
+    set_override(&mut engine, instance, None, PadFillOverride::default())?;
+    let placement = engine
+        .project()
+        .placements
+        .iter()
+        .find(|p| p.instance == instance)
+        .ok_or("no placement")?;
+    assert!(placement.fill_override.is_empty() && placement.pad_fill_overrides.is_empty());
+    assert!(!copper_at(&engine, between, t.gap / 2.0)?);
+    Ok(())
+}

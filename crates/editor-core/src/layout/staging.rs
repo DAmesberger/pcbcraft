@@ -46,6 +46,8 @@ pub(crate) fn stage(project: &mut Project, missing: Vec<Id>) -> Result<()> {
             rotation_deg: 0.0,
             layer: Layer::Top,
             locked: false,
+            fill_override: Default::default(),
+            pad_fill_overrides: Vec::new(),
         });
     }
     let boxes = part_boxes(project);

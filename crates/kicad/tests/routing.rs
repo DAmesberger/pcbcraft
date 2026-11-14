@@ -120,9 +120,10 @@ fn tracks_and_vias_land_on_their_nets_and_layers() -> Fallible<()> {
         .flat_map(|t| [t.start[1], t.end[1]])
         .fold(f64::MIN, f64::max);
     assert!((top - 11.0).abs() < 1e-3, "{top}");
-    // The 4 µm piece is below the engine's least length; the track on a
-    // net without pads has nowhere to go. Both are counted.
-    assert_eq!(report.count(Case::TrackTooShort), 1);
+    // The 4 µm piece is below the engine's least length and is cleaned
+    // away; the track on a net without pads has nowhere to go. Both are
+    // counted.
+    assert_eq!(report.count(Case::TinyTrackCleaned), 1);
     assert_eq!(report.count(Case::TrackWithoutNet), 1);
     assert_eq!(report.count(Case::TrackRefused), 0);
     assert_eq!(report.counts.vias, 1);
@@ -139,5 +140,55 @@ fn a_track_the_checks_refuse_is_listed_and_the_rest_imported() -> Fallible<()> {
     let imported = import(board.text().as_bytes())?;
     assert_eq!(imported.report.count(Case::TrackRefused), 1);
     assert!(imported.report.counts.tracks > 2);
+    Ok(())
+}
+
+#[test]
+fn the_project_files_rules_become_the_projects_own_rule_set() -> Fallible<()> {
+    // Original project rules: a default class, a Power class by pattern
+    // and by explicit assignment, and board minimums, one looser than the
+    // prototype profile's (the drill minimum, 0.05 < 0.1 mm).
+    let project_file = br#"{"board":{"design_settings":{"rules":{
+        "min_copper_edge_clearance":0.4,"min_through_hole_diameter":0.05}}},
+        "net_settings":{"classes":[
+          {"name":"Default","clearance":0.2,"track_width":0.25,"via_diameter":0.6,"via_drill":0.3},
+          {"name":"Power","clearance":0.3,"track_width":0.5,"diff_pair_width":0.2,"diff_pair_gap":0.2}],
+        "netclass_patterns":[{"netclass":"Power","pattern":"G*"}],
+        "netclass_assignments":{"my net":"Power"}}}"#;
+    let imported = support::import_with_project(routed().text().as_bytes(), Some(project_file))?;
+    let project = imported.engine.project();
+    let report = &imported.report;
+    let rules = &project.rules;
+    assert_eq!(rules.source.as_deref(), Some("From the KiCad project"));
+    assert_eq!(rules.net_classes.len(), 1);
+    let power = &rules.net_classes[0];
+    assert_eq!(power.name, "Power");
+    assert_eq!(power.track_width, Some(0.5));
+    assert_eq!(power.diff_pair_gap, Some(0.2));
+    assert_eq!(report.count(Case::NetClass), 1);
+    // The pattern carries over; "my net" is "my_net" here, so it is
+    // assigned explicitly.
+    assert_eq!(rules.patterns.len(), 1);
+    assert_eq!(report.count(Case::NetClassAssigned), 1);
+    let class = |name: &str| {
+        project
+            .nets
+            .iter()
+            .find(|n| n.name == name)
+            .and_then(|n| rules.class_of(n.id, &n.name))
+    };
+    // "GND" is "GND~2" here ('gnd' took the name): the pattern still matches.
+    assert_eq!(class("GND~2"), Some(power.id));
+    assert_eq!(class("gnd"), None);
+    assert_eq!(class("my_net"), Some(power.id));
+    assert_eq!(class("SIG"), None);
+    // The board minimums: the edge clearance is taken, the looser drill
+    // minimum is not (the profile's stays).
+    let effective = rules.effective();
+    use sparksmith_core::rules::CopperObject::{BoardEdge, Track};
+    assert!((effective.copper.clearance.get(Track, BoardEdge) - 0.4).abs() < 1e-9);
+    assert!((effective.holes.drill_min - 0.1).abs() < 1e-9);
+    assert!((effective.copper.track_width_default - 0.25).abs() < 1e-9);
+    assert_eq!(report.count(Case::RuleLooserThanFab), 1);
     Ok(())
 }

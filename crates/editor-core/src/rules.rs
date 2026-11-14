@@ -1091,6 +1091,12 @@ pub struct ProjectRules {
     /// none until one is chosen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<RuleProfile>,
+    /// Where the project's own rule set (its overrides, net classes and
+    /// pairs) comes from, in the user's words ("From the KiCad project");
+    /// none: set in this project. The fab profile still holds the fab
+    /// limits (`rules.set_project_source`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     /// At most one per key, in [`RuleKey::all`] order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<RuleOverride>,
@@ -1426,6 +1432,14 @@ pub enum RulesCommand {
     /// Drop the project override of one rule (back to the profile value).
     #[serde(rename = "rules.clear_override")]
     ClearOverride { key: RuleKey },
+    /// Say where the project's own rule set comes from (`None`: set in this
+    /// project), at most 256 bytes: `{"command":"rules.set_project_source",
+    /// "params":{"source":"From the KiCad project"}}`.
+    #[serde(rename = "rules.set_project_source")]
+    SetProjectSource {
+        #[serde(default)]
+        source: Option<String>,
+    },
     /// Add a net class; the outcome names it (`Outcome::NetClassAdded`).
     #[serde(rename = "net_class.add")]
     AddNetClass { class: NetClassSpec },
@@ -1481,6 +1495,7 @@ declare_classes!(RulesCommand {
     SetOptions "rules.set_fab_options" Edit "Choose fab profile options",
     SetOverride "rules.set_override" Edit "Override a rule",
     ClearOverride "rules.clear_override" Edit "Clear a rule override",
+    SetProjectSource "rules.set_project_source" Edit "Name the project rules' source",
     AddNetClass "net_class.add" Edit "Add a net class",
     EditNetClass "net_class.edit" Edit "Edit a net class",
     DeleteNetClass "net_class.delete" Edit "Delete a net class",
@@ -1549,6 +1564,17 @@ fn apply_to(rules: &mut ProjectRules, command: RulesCommand) -> Result<Option<si
             rules
                 .overrides
                 .sort_by_key(|o| order.iter().position(|k| *k == o.key));
+        }
+        RulesCommand::SetProjectSource { source } => {
+            let source = source
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty());
+            if source.as_ref().is_some_and(|s| s.len() > MAX_PROFILE_TEXT) {
+                return Err(Error::Limit(format!(
+                    "rules.project_source: at most {MAX_PROFILE_TEXT} bytes"
+                )));
+            }
+            rules.source = source;
         }
         RulesCommand::ClearOverride { key } => {
             let key = key.normalized();

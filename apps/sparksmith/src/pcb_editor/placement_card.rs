@@ -1,5 +1,5 @@
-//! The Placement card of the selected instance (Placement, Connections and
-//! the Rotate 90° / Flip / Schematic › footer), or the not-placed state
+//! The Placement card of the selected instance (Placement, Connections,
+//! Fill connection and the Rotate 90° / Flip / Schematic › footer), or the not-placed state
 //! with Update PCB (docs/sidebar-ia.md, "Properties card by subject").
 //!
 //! Fields commit live: Position (x and y together) and Rotation on Enter
@@ -175,8 +175,9 @@ impl PcbEditor {
         self.editing = focused;
         let edge = self.edge_section(ui, self.cached_revision.unwrap_or(0), project, placement);
         self.connections_section(ui, project, placement.instance);
+        let fills = self.pad_fill_section(ui, project, placement);
         if action.is_none() {
-            return state.or(edge);
+            return state.or(edge).or(fills);
         }
         let (command, field) = action?;
         let origin = field.map_or(Origin::Command, |f| Origin::Field(f.id()));

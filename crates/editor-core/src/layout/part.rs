@@ -55,6 +55,8 @@ pub(super) fn place(
         rotation_deg,
         layer,
         locked: false,
+        fill_override: Default::default(),
+        pad_fill_overrides: Vec::new(),
     });
     Ok(instance)
 }

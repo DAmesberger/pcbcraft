@@ -163,13 +163,13 @@ Publish rules per kind are owned by `library::publish_findings` and use domain v
 
 - **Every kind with local IDs:** the [local-ID rules](#identity).
 - **Component:**
-  - 1–256 terminals with unique nonzero IDs and printable names.
+  - 0–256 terminals with unique nonzero IDs and printable names (a fiducial, mounting hole or logo has none).
   - ≥ 1 representation, at most one per symbol lineage. Each listed symbol has the same owner lineage and gives every terminal exactly one pin (`component.pin_missing`, `component.pin_unknown`); every `Field` text it shows is a field the component selects (`component.text_field_unknown`).
   - Implementations at most one per binding lineage. Each listed binding has the same owner lineage, maps every terminal to at least one package terminal and maps no unknown terminal.
   - Slice 2: field selections are unique per field lineage, and defaults satisfy their field.
   - Slice 3: function declarations are valid (`functions::declaration_findings`); every `FunctionKey` in constraints and in listed bindings' `unavailable` names a function of its own terminal; the default resolution (fixed functions and design defaults, no explicit selections) has no conflicts under the component's capacity and `Excludes` constraints; no listed binding marks a fixed function or a design default unavailable (`functions::binding_findings`).
 - **Symbol:** 1–64 units with unique IDs and labels; pins with unique terminals across all units (`symbol.pin_duplicate`); every unit draws something or has a pin (`symbol.unit_empty`); finite geometry within the [graphics bounds](#drawable-symbol-graphics-g1a); each graphic passes the `graphic.*`, `text.empty` and `text.too_long` rules.
-- **Package:** 1–512 terminals with unique IDs and unique printable designations; positive finite envelope.
+- **Package:** 0–512 terminals with unique IDs and unique printable designations; positive finite envelope.
 - **Footprint:** 1–1024 pads with unique IDs and a valid shape; SMD and plated-through pads land a package terminal and non-plated holes and fiducials never do; every landed terminal exists in the pinned package; every package terminal has ≥ 1 pad; holes, pad vias and paste windows lie inside their land; drawings, polarity and the stored source are consistent; finite datum. The full list is in [footprint data and rules](#footprint-data-and-rules-f1-core).
 - **Binding:**
   - Every package terminal of the pinned package maps to exactly one electrical terminal, and no unknown package terminal is mapped.

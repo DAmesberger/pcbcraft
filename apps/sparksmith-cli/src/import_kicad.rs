@@ -70,6 +70,7 @@ pub fn run(args: &[String]) -> Result<()> {
         .is_file()
         .then(|| std::fs::read(&project))
         .transpose()?;
+    let schematic = sparksmith_io::kicad_files::schematic_files(&board)?;
     let defaults = sparksmith_io::new_project::shipped()?;
     let profile = sparksmith_io::rule_profiles::for_new_board_from_env(choice)?;
     let imported = sparksmith_kicad::import(
@@ -80,6 +81,9 @@ pub fn run(args: &[String]) -> Result<()> {
             profile: Some(&profile),
             evaluators: sparksmith_automation::session::hosted(),
             project_file: project.as_deref(),
+            schematic: schematic
+                .as_ref()
+                .map(|(root, files)| sparksmith_kicad::schematic::SchematicFiles { root, files }),
         },
     )?;
     let report = imported.report.clone();

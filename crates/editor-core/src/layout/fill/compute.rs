@@ -62,6 +62,9 @@ pub(crate) struct Ctx<'a> {
     /// Each pad's board bounds, by index into `pads`.
     pad_bounds: Vec<Option<[Point; 2]>>,
     classes: BTreeMap<Id, Option<NetClassId>>,
+    /// The farthest any pad's fill override reaches (clearance, or relief
+    /// gap and spoke), mm.
+    override_reach: f64,
     keys: BTreeMap<Id, String>,
     copper: BTreeMap<Id, FilledCopper>,
 }
@@ -125,6 +128,10 @@ impl<'a> Ctx<'a> {
             .iter()
             .map(|n| (n.id, project.rules.class_of(n.id, &n.name)))
             .collect();
+        let override_reach = pads
+            .iter()
+            .map(|p| p.fill_override.reach_mm())
+            .fold(0.0, f64::max);
         Self {
             project,
             rules: project.rules.effective(),
@@ -133,6 +140,7 @@ impl<'a> Ctx<'a> {
             pad_bounds,
             keepouts: effective_keepouts(project),
             classes,
+            override_reach,
             keys: BTreeMap::new(),
             copper: BTreeMap::new(),
         }
@@ -144,6 +152,18 @@ impl<'a> Ctx<'a> {
 
     /// The fill's gap to another net's `object` of `class`.
     fn clearance(&self, fill: &Fill, object: CopperObject, class: Option<NetClassId>) -> f64 {
+        self.clearance_over(fill, object, class, None)
+    }
+
+    /// [`Self::clearance`] with `own` (a pad's fill override) in place of
+    /// the fill's own clearance.
+    fn clearance_over(
+        &self,
+        fill: &Fill,
+        object: CopperObject,
+        class: Option<NetClassId>,
+        own: Option<f64>,
+    ) -> f64 {
         let r = &self.project.rules;
         let side = |object, class| ClearanceSide { object, class };
         let pair = r
@@ -152,7 +172,9 @@ impl<'a> Ctx<'a> {
                 side(object, class),
             )
             .value;
-        let own = fill.settings.clearance.unwrap_or(self.rules.fill.clearance);
+        let own = own
+            .or(fill.settings.clearance)
+            .unwrap_or(self.rules.fill.clearance);
         let copper = object.is_copper();
         if copper { pair.max(own) } else { pair }
     }
@@ -199,7 +221,7 @@ impl<'a> Ctx<'a> {
             most = most.max(p.mm);
         }
         let t = self.thermal(fill);
-        most.max(t.gap + t.spoke_width) + 2.0 * FILL_CHORD_MM + 0.01
+        most.max(t.gap + t.spoke_width).max(self.override_reach) + 2.0 * FILL_CHORD_MM + 0.01
     }
 
     fn fill(&self, id: Id) -> Result<&'a Fill> {
@@ -425,17 +447,22 @@ impl<'a> Ctx<'a> {
                 continue;
             };
             let on = pad.on_copper(fill.layer);
+            let o = &pad.fill_override;
             let connection = if same(pad.net) && on {
-                self.connection(fill, Some(pad.pad.kind))
+                o.connection
+                    .unwrap_or_else(|| self.connection(fill, Some(pad.pad.kind)))
             } else {
                 PadConnection::None
             };
+            let thermal = o.thermal(thermal);
             let frame = pad.pad_transform();
             if on {
                 match connection {
                     PadConnection::None => {
+                        let class = self.class(pad.net);
                         let gap =
-                            self.clearance(fill, CopperObject::Pad, self.class(pad.net)) + tol;
+                            self.clearance_over(fill, CopperObject::Pad, class, o.clearance_mm())
+                                + tol;
                         if let Some(shape) = pad.pad.shape.grown(gap, tol) {
                             rings.extend(geom::ccw(shape.transformed(&frame).flatten(tol)));
                         }

@@ -169,12 +169,12 @@ impl PackageDefinition {
 
     pub(super) fn findings(&self, id: DefinitionId, out: &mut Vec<Finding>) {
         let this = ObjectRef::Definition { id };
-        // A part-file body may be purely mechanical (docs/mechanical-parts.md).
-        let least = usize::from(!matches!(self.model, super::PackageModel::PartFile(_)));
-        if !(least..=MAX_PACKAGE_TERMINALS).contains(&self.terminals.len()) {
+        // A package may have no physical terminal: a fiducial, a mounting
+        // hole, a logo or a mechanical part (docs/mechanical-parts.md).
+        if self.terminals.len() > MAX_PACKAGE_TERMINALS {
             out.push(issue(
                 "package.terminal_count",
-                format!("A package needs {least}–{MAX_PACKAGE_TERMINALS} physical terminals."),
+                format!("A package has at most {MAX_PACKAGE_TERMINALS} physical terminals."),
                 vec![this],
             ));
         }
