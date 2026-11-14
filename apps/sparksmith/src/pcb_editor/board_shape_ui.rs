@@ -1191,8 +1191,9 @@ impl PcbEditor {
             |ui| {
                 // Each parameter is one row of the list: its name, its
                 // expression (`fx expr = value` when it is driven) and its
-                // remove action. Double-click, Enter or F2 edits the value
-                // in its row; Enter or leaving the field commits it.
+                // remove action. A click on the value, a double-click,
+                // Enter or F2 edits it in its row; Enter or leaving the
+                // field commits it.
                 let results: Vec<Option<String>> = board
                     .parameters
                     .iter()
@@ -1242,6 +1243,7 @@ impl PcbEditor {
                     multiple: false,
                     delete: editable,
                     editing: editing.is_some(),
+                    click_edits: true,
                     ..list::ListView::new(
                         list_id,
                         "Board parameters",

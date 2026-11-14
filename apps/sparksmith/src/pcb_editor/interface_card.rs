@@ -680,8 +680,8 @@ impl PcbEditor {
     }
 
     /// The datums on the Layout canvas or in 3D, after the view is drawn.
-    /// With `at_rest` off (PCB 3D while its Board interface entry is
-    /// off), only an interface being edited shows: the hovered or selected
+    /// With `at_rest` off (the Layers menus' Board interface entry is
+    /// off, as by default), only an interface being edited shows: the hovered or selected
     /// datum, and while a preview is docked the board's datums.
     pub(super) fn paint_datums(
         &mut self,

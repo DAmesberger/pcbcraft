@@ -41,6 +41,9 @@ pub struct ListView<'a> {
     pub filtered: bool,
     /// A value of the list is being edited: Esc cancels it first.
     pub editing: bool,
+    /// A plain click on a row's value opens its editor, as a number field
+    /// takes one click; a click elsewhere on the row selects it.
+    pub click_edits: bool,
     /// The object hovered elsewhere, for the edge pill when its row is
     /// scrolled out of view.
     pub highlighted: Option<RowKey>,
@@ -58,6 +61,7 @@ impl<'a> ListView<'a> {
             delete: false,
             filtered: false,
             editing: false,
+            click_edits: false,
             highlighted: None,
         }
     }
@@ -258,11 +262,21 @@ impl ListView<'_> {
                     pass.clicks.push(Input::DoubleClick { key: line.key });
                 } else if r.clicked {
                     let m = ui.input(|i| i.modifiers);
-                    pass.clicks.push(Input::Click {
-                        key: line.key,
-                        extend: m.shift,
-                        toggle: m.command,
-                    });
+                    let on_value = r
+                        .response
+                        .interact_pointer_pos()
+                        .is_some_and(|p| r.value_rect.contains(p));
+                    if self.click_edits && on_value && !m.shift && !m.command {
+                        // The value edits on one click, as a double-click
+                        // anywhere on the row does.
+                        pass.clicks.push(Input::DoubleClick { key: line.key });
+                    } else {
+                        pass.clicks.push(Input::Click {
+                            key: line.key,
+                            extend: m.shift,
+                            toggle: m.command,
+                        });
+                    }
                 }
                 if let Some(grip) = &r.grip {
                     if grip.drag_started() {

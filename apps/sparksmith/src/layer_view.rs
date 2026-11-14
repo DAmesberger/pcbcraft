@@ -12,8 +12,9 @@
 //!
 //! The Board interface entry (finding 18 of the fourth E2E run) is not
 //! a layer of the model: it shows the board interface's datums painted
-//! over the view, off by default. It is kept beside the [`LayerView`], so
-//! turning it never repacks or rebuilds anything.
+//! over the view, off by default, one setting with PCB 2D's entry. It is
+//! kept beside the [`LayerView`], so turning it never repacks or rebuilds
+//! anything.
 use crate::shell;
 use egui::{Align2, FontId, Sense, Ui, pos2, vec2};
 use sparksmith_core::{CopperLayer, Layer};

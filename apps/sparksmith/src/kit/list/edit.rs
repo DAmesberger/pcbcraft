@@ -1,5 +1,6 @@
-//! The inline value editor of a list row (double-click, Enter or F2): a
-//! field in the row's value rect. Enter commits, Esc cancels, Tab commits
+//! The inline value editor of a list row (a click on the value where the
+//! list allows it, a double-click, Enter or F2): a field in the row's
+//! value rect. Enter commits, Esc cancels, Tab commits
 //! and moves to the next editable row, and leaving the field commits (the
 //! card's live-commit rule). Invalid text gets a red ring; the caller shows
 //! why under the row (`row::field_error`) and sends nothing, so the
