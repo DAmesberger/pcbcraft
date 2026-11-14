@@ -12,9 +12,9 @@
 //! mm`), so editing a parameter moves the part when the board re-solves.
 //! The dimensions are a `kit::list` (list-system spec): each row reads
 //! "Front face → bottom edge" with its decimal-aligned value (`fx expr =
-//! value` when driven) and a Lost or Inexact badge. Double-click, Enter or
-//! F2 edits the value in its row (one `layout.dimension_edit`); the row's
-//! delete action or ⌫ removes it (`layout.dimension_delete`) and leaves
+//! value` when driven) and a Lost or Inexact badge. A click on the value,
+//! a double-click, Enter or F2 edits it in its row (one
+//! `layout.dimension_edit`); the row's delete action or ⌫ removes it (`layout.dimension_delete`) and leaves
 //! the part where it is; the grip or ⌥↑/⌥↓ reorders the part's dimensions
 //! (`layout.dimension_order`, document data, one undo step). Hovering a
 //! row lights its dimension on the canvas and in 3D; clicking it selects
@@ -530,6 +530,7 @@ impl PcbEditor {
                     reorder: true,
                     delete: true,
                     editing: editing.is_some(),
+                    click_edits: true,
                     ..ListView::new(
                         id,
                         "Dimensions",

@@ -22,9 +22,20 @@ fn key(k: Key, modifiers: Modifiers) -> Event {
 
 /// Show a bounded list of `lines` and return its output.
 fn show(ui: &mut egui::Ui, lines: &[Line<'_>], layout: Layout) -> ListOutput {
+    show_with(ui, lines, layout, false)
+}
+
+/// [`show`], with a click on a value opening its editor when `click_edits`.
+fn show_with(
+    ui: &mut egui::Ui,
+    lines: &[Line<'_>],
+    layout: Layout,
+    click_edits: bool,
+) -> ListOutput {
     let view = ListView {
         delete: true,
         reorder: true,
+        click_edits,
         ..ListView::new(egui::Id::unique("test-list"), "Parts", layout)
     };
     let values = ["12.700 mm", "3 mm", "-1.25 mm", "40 mm", "Held", "0.5 mm"];
@@ -90,6 +101,48 @@ fn rows_fit_230pt_and_numbers_align_on_the_point() {
     );
     // Units in their own faint slot.
     assert!(painted.iter().any(|p| p.text == "mm"));
+}
+
+/// Where values edit on a click (Board parameters, Dimensions), one click
+/// on a row's value opens its editor, as a number field does; a click on
+/// its name only selects. Without the rule a click on a value selects.
+#[test]
+fn a_click_on_a_value_edits_where_the_list_allows_it() {
+    let l = lines();
+    let bounded = Layout::Bounded { rows: 8 };
+    let mut h = Harness::new(300.0, 400.0);
+    let mut out = ListOutput::default();
+    h.frame(vec![], |ui| out = show_with(ui, &l, bounded, true));
+    let c2 = RowKey::of("C2");
+    let value = out
+        .value_rects
+        .iter()
+        .find(|(k, _)| *k == c2)
+        .map(|(_, r)| r.center());
+    assert!(
+        value.is_some(),
+        "C2's value is drawn: {:?}",
+        out.value_rects
+    );
+    let value = value.unwrap_or_default();
+    h.click(value, |ui| out = show_with(ui, &l, bounded, true));
+    assert!(
+        out.effects.contains(&Effect::Activate(c2)),
+        "{:?}",
+        out.effects
+    );
+    assert!(out.state.selection.contains(&c2));
+    let name = Pos2::new(30.0, value.y);
+    h.click(name, |ui| out = show_with(ui, &l, bounded, true));
+    assert!(
+        !out.effects.iter().any(|e| matches!(e, Effect::Activate(_))),
+        "{:?}",
+        out.effects
+    );
+    let mut h = Harness::new(300.0, 400.0);
+    h.frame(vec![], |ui| out = show(ui, &l, bounded));
+    h.click(value, |ui| out = show(ui, &l, bounded));
+    assert_eq!(out.effects, vec![Effect::Selected]);
 }
 
 /// A click focuses the list and selects; ↓ moves; ⇧↓ extends; ⌘A
