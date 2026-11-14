@@ -731,6 +731,24 @@ impl Project {
     pub fn net_name(&self, id: Id) -> &str {
         self.net(id).map_or("unknown net", |n| n.name.as_str())
     }
+    /// Whether `other` has this project's schematic, unchanged: the same
+    /// library, sheets and section handles for instances, occurrences,
+    /// wires, junctions, labels, sheet symbols, drawings and nets (a
+    /// written section is a new handle, [`Shared`]). An edit of the board
+    /// alone leaves them so, and then nothing derived from the schematic
+    /// (its normal form, the nets, their checks) needs doing again.
+    pub fn same_schematic(&self, other: &Project) -> bool {
+        Shared::ptr_eq(&self.instances, &other.instances)
+            && Shared::ptr_eq(&self.occurrences, &other.occurrences)
+            && Shared::ptr_eq(&self.wires, &other.wires)
+            && Shared::ptr_eq(&self.junctions, &other.junctions)
+            && Shared::ptr_eq(&self.labels, &other.labels)
+            && Shared::ptr_eq(&self.sheet_symbols, &other.sheet_symbols)
+            && Shared::ptr_eq(&self.drawings, &other.drawings)
+            && Shared::ptr_eq(&self.nets, &other.nets)
+            && self.sheets == other.sheets
+            && self.library == other.library
+    }
 }
 
 /// Whether an edit may make consequential changes (remove wires, placements)

@@ -22,10 +22,16 @@ pub fn edited(before: &Project, after: &Project) -> Result<()> {
     if before.library != after.library {
         library::validate(&after.library)?;
     }
-    project_except_library(after)
+    // An edit that left the schematic as it was (a board edit) skips its
+    // instance, schematic and net rules, which read only the schematic.
+    project_checks(after, !before.same_schematic(after))
 }
 
 fn project_except_library(p: &Project) -> Result<()> {
+    project_checks(p, true)
+}
+
+fn project_checks(p: &Project, schematic: bool) -> Result<()> {
     if p.material_table != crate::materials::BUILTIN_REVISION {
         return Err(Error::Unsupported(format!(
             "material table revision {} is not this build's ({}); package looks would change",
@@ -73,10 +79,12 @@ fn project_except_library(p: &Project) -> Result<()> {
     if let Some(link) = p.assembly_link.as_deref() {
         crate::interface::assembly_link::check_link(link)?;
     }
-    instances::check_all(p)?;
-    instances::check_designators(p)?;
-    schematic::validate(p)?;
-    nets::validate(p)?;
+    if schematic {
+        instances::check_all(p)?;
+        instances::check_designators(p)?;
+        schematic::validate(p)?;
+        nets::validate(p)?;
+    }
     layout::validate(p)?;
     Ok(())
 }

@@ -723,6 +723,7 @@ fn a_board_past_the_former_caps_opens_checks_and_edits() -> Result<()> {
     let vias: Vec<Id> = engine.project().vias.iter().map(|v| v.id).collect();
     let tracks: Vec<Id> = engine.project().tracks.iter().map(|t| t.id).collect();
     let at = engine.revision();
+    let before = engine.project().clone();
     engine.apply(
         at,
         Operation::Layout(LayoutCommand::LockObjects {
@@ -734,6 +735,11 @@ fn a_board_past_the_former_caps_opens_checks_and_edits() -> Result<()> {
         }),
     )?;
     assert!(engine.project().vias.iter().all(|v| v.locked));
+    // A board edit leaves the schematic and its nets as they were: not
+    // derived again, and still shared with the step before.
+    let after = engine.project();
+    assert!(after.same_schematic(&before));
+    assert!(crate::shared::Shared::ptr_eq(&after.nets, &before.nets));
     engine.undo()?;
     let at = engine.revision();
     engine.apply(

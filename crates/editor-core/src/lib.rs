@@ -1770,9 +1770,16 @@ impl Engine {
             }
         };
         if !Arc::ptr_eq(&candidate.project, &self.document.project) {
+            // A board edit leaves the schematic as it was: its normal form
+            // and nets stand, so they are not derived again.
+            let schematic_edited = !candidate.project.same_schematic(&self.document.project);
             let project = Arc::make_mut(&mut candidate.project);
-            schematic::tidy(project)?;
-            let changes = nets::reconcile(project)?;
+            let changes = if schematic_edited {
+                schematic::tidy(project)?;
+                nets::reconcile(project)?
+            } else {
+                nets::NetChanges::default()
+            };
             // Explicit net-class assignments follow their nets through
             // merges and splits; a net that no longer exists takes its
             // assignment with it.
@@ -1815,12 +1822,12 @@ impl Engine {
             }
             // Board-following fills take the (possibly changed) outline.
             layout::fill::follow_board(project)?;
-            if !reviewed {
+            if !reviewed && schematic_edited {
                 schematic::protect_routed_nets(&self.document.project, project)?;
             }
             // Every operation, from any surface: two named nets become one
             // only when a reviewed update asks for it.
-            if !merge_named {
+            if !merge_named && schematic_edited {
                 nets::refuse_named_merges(&self.document.project, project)?;
             }
             // The interface's automatic datums follow the board: a new
