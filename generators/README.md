@@ -14,8 +14,7 @@ Status: slices GP0, GP1 and GP2. A part can be made from a module through the co
 | `crates/generators-probe` | A test module: the host itself built for wasm32, so the native tests can show the wasm32 build gives the same results. Never shipped. |
 | `crates/generators-fixture` | A test plugin (`sparksmith-gen-fixture`): `generate-part` beside an `edit` command, so it may import the host functions; during `generate-part` it calls all three and draws a 45° arc. Its golden case runs natively, under wasmi and under the probe. Never shipped. |
 | `generators/<name>/` | One generator: `Cargo.toml` (cdylib), `build.rs` (the part files' SHA-256 as constants), `src/`, `presets.json`, `golden.json`, `parts/` (its part files, each `<stem>.solidcraft` with a `<stem>.part.json` sidecar in the shipped part files' format: title, summary, licence, provenance). |
-| `generators/modules.lock` | Each module's SHA-256 per build host, committed. |
-| `library/generators/<name>/` | The shipped **bundle**, committed: `generator.json` (the manifest), `<name>.wasm` (a build the lock records) and `parts/*.solidcraft`. `build --update-lock` writes it, `check` verifies it. |
+| `library/generators/<name>/` | The shipped **bundle**, committed: `generator.json` (the manifest), `<name>.wasm` (the module; its SHA-256, which the manifest records, is the module's one hash) and `parts/*.solidcraft`. `build --ship` writes it, `check` verifies that the source builds to it. |
 
 `cargo xtask layers` keeps it apart: a generator crate depends on the SDK and the ABI only, only generator crates depend on the SDK, nothing depends on a generator crate or on the probe, and the ABI crate depends on no workspace crate (so `sparksmith-core` can use its types and trait without an interpreter).
 
@@ -67,7 +66,7 @@ The chip generator ships four part files (resistor, capacitor, ferrite or induct
 
 ## ABI 1 changes
 
-ABI 1 is open to change until the first release; each change is listed here, and module hashes and golden hashes are updated deliberately with it (`build --update-lock`).
+ABI 1 is open to change until the first release; each change is listed here, and module hashes and golden hashes are updated deliberately with it (`build --ship`).
 
 | Date | Slice | Change | Effect |
 | --- | --- | --- | --- |
@@ -78,27 +77,31 @@ ABI 1 is open to change until the first release; each change is listed here, and
 ## Build and check
 
 ```sh
-cargo xtask generators build                # build every module, print sizes and hashes
-cargo xtask generators build --update-lock  # … write modules.lock (the only way it changes) and library/generators/
-cargo xtask generators check                # in `cargo xtask ci`: build, compare with the lock, golden cases three ways
-cargo xtask generators reproduce            # two clean builds, compared with each other and the lock
-cargo xtask generators measure              # the numbers below
+cargo xtask generators build         # build every module, print sizes and hashes, note any difference from the committed copy
+cargo xtask generators build --ship  # … and write library/generators/<name>/ (the only way it changes)
+cargo xtask generators check         # in `cargo xtask ci`: build, compare with the committed modules, golden cases three ways
+cargo xtask generators reproduce     # two clean builds, compared with each other and the committed modules
+cargo xtask generators measure       # the numbers below
 ```
 
-Modules build in the `generator` profile (`opt-level = "s"`, LTO, one codegen unit, `panic = "abort"`, stripped, overflow checks on), each crate in its own cargo invocation with `--locked`, with the workspace and Cargo home remapped to `/src` and `/cargo` and the caller's `RUSTFLAGS` dropped. The modules are `no_std` (the SDK supplies dlmalloc and a trapping panic handler), so no `std` code or host path enters them except panic locations, which keep their source paths.
+Modules build in the `generator` profile (`opt-level = "s"`, LTO, one codegen unit, `panic = "abort"`, stripped, overflow checks on), each crate in its own cargo invocation with `--locked`, with the workspace and Cargo home remapped to `/src` and `/cargo` and rustc run through `xtask` as its rustc wrapper (`generators::wrap_rustc`). The caller's `RUSTFLAGS`, `RUSTC_WRAPPER` (sccache included), `CARGO_INCREMENTAL` and `CARGO_PROFILE_GENERATOR_*` are left out. The modules are `no_std` (the SDK supplies dlmalloc and a trapping panic handler), so no `std` code or host path enters them except panic locations, which keep their remapped source paths.
 
-A module's bytes depend on its source to the line and column, since panic locations are kept: any edit of a generator, the SDK or the ABI changes every affected module's hash, and `check` fails until `build --update-lock` records it.
+A module has one hash: the SHA-256 of its committed `library/generators/<name>/<name>.wasm`, which the bundle's manifest records. There is no separate lock file. A module's bytes depend on its source to the line and column, since panic locations are kept: any edit of a generator, the SDK or the ABI changes every affected module's hash, and `check` fails until `build --ship` writes the new module and it is committed.
 
 **Golden cases.** Each crate's `golden.json` holds requests with complete parameters and the result hash of each. `check` runs them natively (the crate's own test), under wasmi natively, and under the probe, which is wasmi built for wasm32 running inside the native wasmi; all three must give the recorded hashes, and the probe must also report the same fuel as the native host.
 
-## Reproducibility (11 November 2026)
+## Reproducibility (14 November 2026)
 
-- Two clean builds on macOS (aarch64, Nix shell, rustc 1.96.0): identical bytes (`cargo xtask generators reproduce`).
-- The bytes are reproducible per build host, not across hosts. The same sources and rustc 1.96.0 gave three different modules of the same size (281 021 bytes): macOS aarch64 `c400a194…`, Linux aarch64 `7068941e…` and Linux x86_64 `ce8027d9…` (official `rust:1.96.0` containers). Two Linux hosts differing only in architecture differ too, so the likely cause is the host triple, not paths or the OS: cargo mixes `rustc -vV` (which names the host) into each crate's `-C metadata`, and the 53 469 differing bytes start in the function and type tables, consistent with a reordering. The mechanism is not confirmed beyond this.
-- So `modules.lock` keeps one hash per build host, and `check` compares the hash for the host it runs on: a different hash fails, a host with none recorded gets a note with the hash it built. Windows has none yet; there the source paths in panic locations also differ (backslashes).
-- A module changed on one host drops the other hosts' hashes when the lock is updated; rebuild there (or in a container, as above) to record them.
+The same source builds to the same module bytes on any checkout path, on macOS and on Linux. Measured with rustc 1.96.0 in the Nix shell from empty target directories: the `chip` module (234 868 bytes) is `82d5e6c7…` on macOS aarch64 from two checkout paths and on Linux x86_64.
 
-**Host-independent builds (14 November 2026, slice B4).** The cause is confirmed: cargo's `-C metadata` seeds each crate's stable id, which orders the module's functions. Every generator build now runs rustc through `xtask` as its rustc wrapper (`generators::wrap_rustc`), which replaces cargo's value with a hash of what identifies the crate within the build (package name and version, crate name and types, the `--cfg` set and the target), none of which names the host. Measured on macOS aarch64: two builds whose cargo metadata differs (`__CARGO_DEFAULT_LIB_METADATA` set or not) gave identical bytes with the wrapper, and different bytes without it (the wrapper also changed the hash, as expected). Not yet measured on Linux: the Linux x86_64 hash is to be recorded on atlas-dev; if it equals the macOS hash, `modules.lock` can record one hash for every host. Either way part identity no longer depends on the build: a part key is the generator's id and parameters, and a shipped module rebuilt to other bytes at the same version makes the same part (G15).
+What makes it so:
+
+- **`-C metadata`.** Cargo's value hashes, among other things, `rustc -vV`, which names the host. It seeds each crate's stable id, and with it the order of the module's functions: before B4 the same source gave a different module on each host. `wrap_rustc` drops every `-C metadata` and passes one hash of what identifies the crate within the build (package name and version, crate name and types, the `--cfg` set and the target), none of which names the host or the path.
+- **Paths.** The workspace and Cargo home are remapped (`/src`, `/cargo`), so neither the checkout path nor the registry location enters a panic location; the standard library is precompiled with `/rustc/<commit>` paths. The target directory lies inside the workspace, so the build script's `OUT_DIR` is remapped too.
+- **Stale artifacts.** Every mismatch measured on 14 November (`b84e4dd4…` in the main checkout, `53781caf…` on Linux) came from a target directory holding crates compiled before the wrapper existed. Cargo's fingerprint ignores `RUSTC_WRAPPER`, so it reused them with cargo's own metadata. Shown directly: one build without the wrapper followed by `generators build` recompiled nothing and gave `9a7bcea3…`. There are two guards now. The build's flags carry a cache key, `-Cmetadata=wrapper-<SHA-256 of the xtask binary>`: cargo fingerprints the flags, so a new wrapper recompiles everything, and the wrapper drops the key before rustc sees it. And `check`, on a mismatch, deletes `target/generators` and builds once more from empty, failing only if the clean build still differs.
+- **Windows** is not measured and not compared: the remap leaves backslashes after `/src` in panic locations, so its bytes are expected to differ. There `check` verifies the bundles and runs the golden cases only (`COMPARE_BYTES` in `xtask/src/generators.rs`); no per-host hash is kept. `.gitattributes` keeps the bundles and part files byte-exact on checkout.
+
+Part identity has not depended on these bytes since B4: a part key is the generator's id and parameters, and a module rebuilt to other bytes at the same version makes the same part (G15). The module hash names the embedded asset; the bundle hash is provenance.
 
 ## Measurements and limits (11 November 2026)
 
@@ -141,4 +144,4 @@ The fuel limit and the response bound are tied: raise them together. The project
 1. `generators/<name>/` with a `Cargo.toml` like `chip`'s (crate type `cdylib` + `rlib`, `unsafe_code = "deny"` because the export macro allows it for `#[unsafe(no_mangle)]`, the SDK as the only dependency) and `#![cfg_attr(target_arch = "wasm32", no_std)]`.
 2. Add it to the workspace members.
 3. Implement `Generator` and call `export_generator!`.
-4. Write `golden.json`, run `cargo test -p <crate> golden` (a mismatch prints the hash produced), check the geometry by hand-derived tests, then `cargo xtask generators build --update-lock`.
+4. Write `golden.json`, run `cargo test -p <crate> golden` (a mismatch prints the hash produced), check the geometry by hand-derived tests, then `cargo xtask generators build --ship`.

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// The repository's chip generator bundle (`cargo xtask generators build`
-/// keeps it equal to modules.lock and the crate's part files).
+/// keeps it equal to the crate's module and part files).
 const BUNDLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../library/generators/chip");
 
 /// A shipped library in `dir` holding only the chip generator's bundle.

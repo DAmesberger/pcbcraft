@@ -25,7 +25,7 @@ jobs:
           # Keep the build when tests fail, so the next run reuses it.
           cache-on-failure: true
       # Includes the generator modules: built for wasm32, compared with
-      # the hash generators/modules.lock records for the runner's host and
+      # the committed library/generators/*/*.wasm (not on Windows) and
       # their golden cases run natively, under wasmi and under wasm32 wasmi.
       - name: Verify native code, wasm library and generator modules
         run: cargo xtask ci

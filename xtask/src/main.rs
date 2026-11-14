@@ -151,7 +151,7 @@ fn run() -> Result<()> {
         "raw-keys" => raw_keys::check(),
         _ => Err(
             "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
-             | licences --check | brand-crates | clean-room | no-builtin-data | generic-terms | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
+             | licences --check | brand-crates | clean-room | no-builtin-data | generic-terms | ui-containers | ui-forms | raw-keys | generators build [--ship] | check | reproduce | measure \
              | format-lock [--update] | surface --check | --update | kicad-compare [--design PATH]"
                 .into(),
         ),
