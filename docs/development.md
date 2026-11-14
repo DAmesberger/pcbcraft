@@ -43,7 +43,7 @@ Navigation: scroll zooms; middle-drag pans; right-drag orbits in 3D. Cmd/Ctrl+S 
 
 ## File versions
 
-The project file carries a format `version` (`sparksmith_core::format::FILE_VERSION`, 2 since 14 November 2026) and, when it uses any, the named optional `features` it uses ([plan §4.7](design/file-format-plan.md#47-versions-and-migrations)).
+The project file carries a format `version` (`sparksmith_core::format::FILE_VERSION`, 2 since 14 November 2026) and, when it uses any, the named optional `features` it uses ([plan §4.7](design/file-format-plan.md#47-versions-and-migrations)). The project tree that replaces the single document, its two layouts and its encoding rules are specified in [the file format](file-format.md).
 
 - **Every incompatible change raises the version.** `cargo xtask format-lock` catches a stored type that changed without one. A change that only adds an optional capability may instead add a name to `format::FEATURES` and its test to `format::features_used`: a file lists a feature only when it uses it, so designs without it stay readable by older builds, and a build refuses a feature it does not know, naming it.
 - **Converter chain.** `sparksmith_io::convert::STEPS` holds one pure step per version, each rewriting the document's JSON from N to N + 1 (step 1 to 2 is the former `cargo xtask convert-v1`: the units migration so far and fab profiles as files). After the steps the file is read as the app reads it, its remembered hashes are recomputed, and it is written as the app writes it.

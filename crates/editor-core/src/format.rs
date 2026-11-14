@@ -11,6 +11,16 @@
 //! [`FILE_VERSION`]; an older file is refused with the command that converts
 //! it (`sparksmith convert`, the chain in `sparksmith_io::convert`), and a
 //! newer one is never guessed at.
+//!
+//! The project tree that replaces the single document (docs/file-format.md)
+//! is built from [`files`] (the tree in memory), [`layout`] (the two file
+//! layouts), [`records`] (declared field order and sort keys) and
+//! [`table`] (the table reply shape). Nothing saves through them yet.
+pub mod files;
+pub mod layout;
+pub mod records;
+pub mod table;
+
 use crate::diagnostics::{Error, Result};
 use crate::library::Drafts;
 use crate::library::bundle::AssetBytes;
