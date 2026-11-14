@@ -323,8 +323,12 @@ pub fn read(bytes: &[u8], report: &mut Report) -> Result<Board> {
     board.items.footprint_edges = board.footprints.iter().map(|f| f.edge_cuts).sum();
     board.origin = match crate::items::edge_bounds(&board.items.edges) {
         // KiCad's y grows downward: the lower-left corner has the
-        // largest y.
-        Some([min, max]) => [min[0], max[1]],
+        // largest y. Whole micrometres, outward, so coordinates written to
+        // the micrometre (drill files) round as KiCad's do.
+        Some([min, max]) => [
+            min[0].div_euclid(1000) * 1000,
+            -((-max[1]).div_euclid(1000) * 1000),
+        ],
         None => board.aux_origin.unwrap_or_default(),
     };
     Ok(board)

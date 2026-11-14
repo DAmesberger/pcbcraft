@@ -56,6 +56,11 @@ pub struct Judge {
     /// Added to every reference coordinate before comparing, nm (when the
     /// two sets use different origins).
     pub shift_nm: [i64; 2],
+    /// How far two drill files written to a coarser resolution may round
+    /// one hit apart, nm, added to the tolerance for drill hits: files at
+    /// 1 µm per axis that round a half micrometre differently differ by up
+    /// to √2 µm.
+    pub drill_resolution_nm: i32,
 }
 
 impl Judge {
@@ -65,6 +70,7 @@ impl Judge {
             arc_tolerance_nm: tolerance_nm,
             arcs: Vec::new(),
             shift_nm: [0, 0],
+            drill_resolution_nm: 0,
         }
     }
 
@@ -300,7 +306,7 @@ pub fn compare_sets(
     let mut kinds: Vec<&String> = mine.keys().chain(theirs.keys()).collect();
     kinds.sort();
     kinds.dedup();
-    let tolerance_mm = f64::from(tolerance_nm) / 1e6;
+    let tolerance_mm = f64::from(tolerance_nm + judge.drill_resolution_nm) / 1e6;
     for kind in kinds {
         let a = match mine.get(kind) {
             Some(file) => hits(file, |_| true)?,

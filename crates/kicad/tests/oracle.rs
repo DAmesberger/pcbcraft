@@ -52,6 +52,8 @@ fn synthetic_footprints_match_kicad_within_a_micron() -> Fallible<()> {
     // maximum error of 5 µm: pieces on those arcs may be 6 µm wide.
     let judge = Judge {
         shift_nm: imported.plot_shift_nm(),
+        // Both drill files are written to 1 µm.
+        drill_resolution_nm: 1415,
         tolerance_nm: 1000,
         arc_tolerance_nm: 6000,
         arcs: imported

@@ -155,10 +155,14 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
     let mut by_key: BTreeMap<String, usize> = BTreeMap::new();
     let mut uses: Vec<usize> = Vec::with_capacity(board.footprints.len());
     let mut per_footprint: Vec<Vec<PadRecord>> = Vec::with_capacity(board.footprints.len());
+    let mut terminal_nets: Vec<Vec<(PackageTerminalId, u32)>> =
+        Vec::with_capacity(board.footprints.len());
     for fp in &board.footprints {
         let mut records = Vec::new();
-        let pads = footprint_pads(&board, fp, &mut report, &mut records);
+        let mut nets = Vec::new();
+        let pads = footprint_pads(&board, fp, &mut report, &mut records, &mut nets);
         per_footprint.push(records);
+        terminal_nets.push(nets);
         let key = serde_json::to_string(&pads).map_err(|e| ImportError::Refused {
             step: "footprint key",
             reason: e.to_string(),
@@ -204,8 +208,14 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
     let mut taken = std::collections::BTreeSet::new();
     let mut place = Vec::with_capacity(board.footprints.len());
     let mut placed: Vec<&Footprint> = Vec::with_capacity(board.footprints.len());
+    let mut placed_nets = Vec::with_capacity(board.footprints.len());
     let mut records = Vec::new();
-    for (fp, (index, recs)) in board.footprints.iter().zip(uses.iter().zip(per_footprint)) {
+    for ((fp, (index, recs)), nets) in board
+        .footprints
+        .iter()
+        .zip(uses.iter().zip(per_footprint))
+        .zip(terminal_nets)
+    {
         let Some(set) = sets.get(*index).ok_or(ImportError::Refused {
             step: "component.place",
             reason: "a footprint without its component".into(),
@@ -216,6 +226,7 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         };
         let n = placed.len();
         placed.push(fp);
+        placed_nets.push(nets);
         records.extend(recs);
         let designator = if sparksmith_core::instances::designator_valid(&fp.reference)
             && taken.insert(fp.reference.to_ascii_uppercase())
@@ -271,6 +282,8 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         }));
     }
     session.batches("layout.place", layout)?;
+    let nets = crate::routing::connect(&mut session, &board, &placed_nets, &instances, &mut report)?;
+    crate::routing::copper(&mut session, &board, &nets, &mut report)?;
     report.counts.pads = board.footprints.iter().map(|f| f.pads.len()).sum();
     report.counts.pads_imported = records.len();
     report.add_n(Case::PadsExact, records.len());
@@ -305,6 +318,7 @@ fn footprint_pads(
     fp: &Footprint,
     report: &mut Report,
     records: &mut Vec<PadRecord>,
+    nets: &mut Vec<(PackageTerminalId, u32)>,
 ) -> Vec<Pad> {
     let mut pads = Vec::with_capacity(fp.pads.len());
     let mut terminals: BTreeMap<String, PackageTerminalId> = BTreeMap::new();
@@ -349,6 +363,9 @@ fn footprint_pads(
                 id
             });
             pad.terminal = Some(id);
+            if let Some((net, _)) = &kpad.net {
+                nets.push((id, *net));
+            }
         }
         records.push(PadRecord {
             class,
@@ -390,16 +407,20 @@ struct Set {
     binding: DefinitionId,
 }
 
-struct Session<'a> {
-    engine: Engine,
-    evaluators: Evaluators<'a>,
+pub(crate) struct Session<'a> {
+    pub(crate) engine: Engine,
+    pub(crate) evaluators: Evaluators<'a>,
 }
 
 /// Board parameters a rectangle sketch starts with (`board.start_sketch`).
 const RECTANGLE_PARAMETERS: [&str; 2] = ["width", "height"];
 
 impl Session<'_> {
-    fn apply(&mut self, step: &'static str, op: Operation) -> Result<Outcome, ImportError> {
+    pub(crate) fn apply(
+        &mut self,
+        step: &'static str,
+        op: Operation,
+    ) -> Result<Outcome, ImportError> {
         self.engine
             .apply_hosted(self.engine.revision(), op, self.evaluators)
             .map_err(|e| ImportError::Refused {
@@ -528,7 +549,7 @@ impl Session<'_> {
     }
 
     /// Apply `ops` in batches of at most [`sparksmith_core::MAX_BATCH`].
-    fn batches(
+    pub(crate) fn batches(
         &mut self,
         step: &'static str,
         ops: Vec<Operation>,

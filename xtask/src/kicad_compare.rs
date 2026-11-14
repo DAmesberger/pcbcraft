@@ -24,6 +24,9 @@ const TOLERANCE_NM: i32 = 1000;
 /// KiCad approximates round custom-pad primitives within the board's
 /// maximum error (5 µm by default): such pieces may be 1 µm wider.
 const ARC_TOLERANCE_NM: i32 = 6000;
+/// Both drill files are written to 1 µm per axis: a hit whose place ends
+/// in half a micrometre may round apart by √2 µm (beyond the tolerance).
+const DRILL_RESOLUTION_NM: i32 = 1415;
 /// Folders a design search skips: version control, KiCad's backups and
 /// local history.
 fn skipped(name: &str) -> bool {
@@ -163,6 +166,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     }
     let judge = Judge {
         shift_nm: imported.plot_shift_nm(),
+        drill_resolution_nm: DRILL_RESOLUTION_NM,
         tolerance_nm: TOLERANCE_NM,
         arc_tolerance_nm: ARC_TOLERANCE_NM,
         arcs: imported
@@ -184,7 +188,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
             class: p.class.clone(),
         })
         .collect();
-    let diff = compare_sets(&ours, &theirs, Scope::Pads, &judge)?;
+    let diff = compare_sets(&ours, &theirs, Scope::Routed, &judge)?;
     let (mut text, ok, rows) = summarize(&imported.report, &diff, &judge, &pads);
     let (line, outline_ok) = outline_line(&imported, &theirs, judge.shift_nm)?;
     text.push_str(&line);

@@ -110,6 +110,37 @@ pub enum Case {
     OutlineDrawing,
     /// `Edge.Cuts` drawings inside footprints.
     FootprintOutline,
+    /// Net names that are not label names (spaces, over 64 bytes, equal
+    /// to another but for case), spelled anew.
+    NetRenamed,
+    /// Pads of one terminal on two nets: the first net kept.
+    TerminalOnTwoNets,
+    /// Arc tracks, imported as chords.
+    ArcTrack,
+    /// Tracks on no net with pads (or on no copper layer).
+    TrackWithoutNet,
+    /// Track pieces shorter than the engine's least track length.
+    TrackTooShort,
+    /// Tracks the engine's checks refused (clearance, outline, width).
+    TrackRefused,
+    /// Vias on no net with pads.
+    ViaWithoutNet,
+    /// Vias the engine's checks refused.
+    ViaRefused,
+    /// Vias whose unused inner annular rings KiCad removes.
+    ViaUnusedLayers,
+    /// Zones imported as fills (one per copper layer).
+    Zone,
+    /// Rule areas imported as keepouts.
+    Keepout,
+    /// Zones not imported (arcs in the outline, no net with pads, no rules).
+    ZoneRefused,
+    /// Zones of several outline polygons, each a fill.
+    ZonePolygons,
+    /// Hatched zones, filled solid.
+    ZoneHatched,
+    /// Zones with corner smoothing, filled without it.
+    ZoneSmoothing,
 }
 
 impl Case {
@@ -266,6 +297,37 @@ impl Case {
                 Refused,
                 "outline drawings inside footprints, not imported",
             ),
+            Self::NetRenamed => (
+                "N1",
+                Report,
+                "net names spelled anew as label names (spaces, length, case)",
+            ),
+            Self::TerminalOnTwoNets => (
+                "N1",
+                Refused,
+                "pads of one terminal on two nets (first net kept)",
+            ),
+            Self::ArcTrack => ("R1", Approximate, "arc tracks imported as chords within 0.25 µm"),
+            Self::TrackWithoutNet => ("R1", Refused, "tracks on no net with pads, not imported"),
+            Self::TrackTooShort => ("R1", Refused, "track pieces shorter than 0.01 mm"),
+            Self::TrackRefused => ("R1", Refused, "tracks the engine's checks refused"),
+            Self::ViaWithoutNet => ("R1", Refused, "vias on no net with pads, not imported"),
+            Self::ViaRefused => ("R1", Refused, "vias the engine's checks refused"),
+            Self::ViaUnusedLayers => (
+                "R1",
+                Approximate,
+                "vias without unused inner rings in KiCad, imported with rings on every layer",
+            ),
+            Self::Zone => ("Z1", Exact, "zone layers imported as fills, filled by our engine"),
+            Self::Keepout => ("Z1", Exact, "rule areas imported as keepouts"),
+            Self::ZoneRefused => (
+                "Z1",
+                Refused,
+                "zones not imported (arcs in the outline, no net with pads, no rules)",
+            ),
+            Self::ZonePolygons => ("Z1", Approximate, "zones of several outlines, each a fill"),
+            Self::ZoneHatched => ("Z1", Approximate, "hatched zones, filled solid"),
+            Self::ZoneSmoothing => ("Z1", Approximate, "zones with corner smoothing, filled without"),
         }
     }
 }
@@ -301,6 +363,11 @@ pub struct Counts {
     pub pads_imported: usize,
     /// Cutouts of the imported board outline.
     pub cutouts: usize,
+    /// Nets with pads, tracks and vias imported, fills made.
+    pub nets: usize,
+    pub tracks: usize,
+    pub vias: usize,
+    pub fills: usize,
 }
 
 /// Most private details kept (the rows still count every case).
@@ -375,14 +442,18 @@ impl Report {
     pub fn summary(&self) -> String {
         let c = &self.counts;
         let mut out = format!(
-            "KiCad board format {}: {} copper layers, {} footprints ({} on the back), {} footprint definitions, {} of {} pads imported\n",
+            "KiCad board format {}: {} copper layers, {} footprints ({} on the back), {} footprint definitions, {} of {} pads imported, {} nets, {} track pieces, {} vias, {} fills\n",
             self.format_version,
             c.copper_layers,
             c.footprints,
             c.footprints_back,
             c.definitions,
             c.pads_imported,
-            c.pads
+            c.pads,
+            c.nets,
+            c.tracks,
+            c.vias,
+            c.fills
         );
         let mut rows = self.rows();
         rows.sort_by_key(|r| (r.fidelity, r.case));

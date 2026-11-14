@@ -11,6 +11,7 @@ pub mod board;
 pub mod import;
 pub mod items;
 pub mod report;
+mod routing;
 pub mod sexpr;
 pub mod shape;
 pub mod translate;
