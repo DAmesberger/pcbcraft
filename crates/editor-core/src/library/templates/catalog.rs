@@ -981,6 +981,39 @@ pub fn provenance(resolved: &ResolvedRow, as_row: bool) -> String {
     }
 }
 
+/// Provenance text as a person reads it. Drafts built from a template row
+/// record the row's exact identity ("[built-in starter table usb_c.json
+/// format 1]", see [`provenance`]); that text is stored and hashed, so it
+/// stays, and displays name the row by its kind instead: "From the
+/// built-in template ‘USB-C …’; values from …; lands from the cited
+/// drawing; verify against the selected component datasheet." Any other
+/// text is returned unchanged.
+pub fn readable_provenance(text: &str) -> String {
+    const ROW: &str = " package template row ‘";
+    let readable = || {
+        let (lead, rest) = text.split_once(ROW)?;
+        if !matches!(lead, "From" | "Custom values edited from") {
+            return None;
+        }
+        let (name, rest) = rest.split_once("’ [")?;
+        let (identity, rest) = rest.split_once("] (")?;
+        let (basis, tail) = rest.split_once("); ")?;
+        let kind = if identity.starts_with("built-in starter table ") {
+            "the built-in template"
+        } else if identity.starts_with("project row ") {
+            "the project's template"
+        } else if identity.starts_with("library ") {
+            "a library template"
+        } else if identity == "custom entry" {
+            "the custom template"
+        } else {
+            return None;
+        };
+        Some(format!("{lead} {kind} ‘{name}’; {basis}; {tail}"))
+    };
+    readable().unwrap_or_else(|| text.to_owned())
+}
+
 /// A new package-row draft body and meta (`library.save_package_row`):
 /// the family and family revision of `values`, its aliases and
 /// provenance, no citation (the row is estimated until one is added).

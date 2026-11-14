@@ -33,7 +33,7 @@ use crate::library_sources::FolderPick;
 use crate::refusal::{self, Origin};
 use crate::template_gallery::{self, Found};
 use egui::{Rect, Ui, pos2};
-use sparksmith_core::catalog::generic::GenericCandidate;
+use sparksmith_core::catalog::generic::{GenericCandidate, MAX_WORDS};
 use sparksmith_core::catalog::templates::TemplateHit;
 use sparksmith_core::catalog::{
     self, CatalogContext, CatalogEntry, EntryKey, Hit, ItemReport, MAX_CONTEXT, MAX_QUERY,
@@ -42,6 +42,7 @@ use sparksmith_core::catalog::{
 use sparksmith_core::ids::{LibraryId, SourceLineageId};
 use sparksmith_core::issues::MAX_TITLE;
 use sparksmith_core::library::import::OtherRevision;
+use sparksmith_core::library::templates::catalog::readable_provenance;
 use sparksmith_core::library::templates::generic::GenericState;
 use sparksmith_core::{
     ComponentRef, DefinitionId, DefinitionKind, Engine, Id, PartRef, Query, QueryResult, Revision,
@@ -210,6 +211,27 @@ struct Results {
     generic: Vec<GenericCandidate>,
     /// The rows the highlight moves over, top to bottom.
     order: Vec<Slot>,
+    /// Place mode: the words left out of a text that found nothing as a
+    /// whole (`PlacePalette::partial`).
+    ignored: Vec<String>,
+}
+
+/// What one text finds: components, template rows and generic parts.
+struct Lookup {
+    report: Result<SearchReport, String>,
+    templates: Found,
+    generic: Vec<GenericCandidate>,
+}
+
+impl Lookup {
+    /// Nothing found and nothing hidden.
+    fn is_empty(&self) -> bool {
+        self.report
+            .as_ref()
+            .map_or(true, |r| r.results.is_empty() && r.hidden.is_empty())
+            && self.templates.hits.is_empty()
+            && self.generic.is_empty()
+    }
 }
 
 /// One row of the result list.
@@ -475,18 +497,6 @@ impl PlacePalette {
             return;
         }
         let kept = self.highlighted_hit().map(|h| h.entry.key());
-        let report = match engine.query_with(
-            Query::Search {
-                query: self.search_text(),
-                limit: Some(ROWS),
-                include_drafts: false,
-            },
-            &self.context,
-        ) {
-            Ok(QueryResult::Search(report)) => Ok(report),
-            Ok(_) => Err("unexpected report".into()),
-            Err(error) => Err(error.to_string()),
-        };
         // A new text starts at the best match; a document or context
         // change keeps the highlighted entry where it still exists.
         let new_text = self.results.as_ref().is_none_or(|r| r.query != self.query);
@@ -496,6 +506,67 @@ impl PlacePalette {
             self.scroll = true;
             self.notice = None;
         }
+        self.targets = match &self.mode {
+            Mode::Assign { instances } => instances
+                .iter()
+                .filter_map(|id| engine.project().instance(*id))
+                .map(|i| i.component)
+                .collect(),
+            Mode::Place => Vec::new(),
+        };
+        self.rows = RowContext::of(engine.project(), &self.context);
+        let mut found = self.lookup(engine, &self.search_text());
+        let mut ignored = Vec::new();
+        // A typing error is shown, not worked around.
+        if matches!(self.mode, Mode::Place)
+            && found.report.is_ok()
+            && found.is_empty()
+            && let Some((words, partial)) = self.partial(engine)
+        {
+            ignored = words;
+            found = partial;
+        }
+        let Lookup {
+            report,
+            templates,
+            generic,
+        } = found;
+        let hits = report.as_ref().map_or(&[][..], |r| &r.results[..]);
+        let order = row_order(hits, &generic, &templates.hits, &self.context);
+        if !new_text
+            && let Some(key) = kept
+            && let Some(at) = order.iter().position(
+                |s| matches!(s, Slot::Hit(i) if hits.get(*i).is_some_and(|h| h.entry.key() == key)),
+            )
+        {
+            self.highlighted = at;
+        }
+        self.results = Some(Results {
+            revision: engine.revision(),
+            context: generations,
+            query: self.query.clone(),
+            report,
+            templates,
+            generic,
+            order,
+            ignored,
+        });
+    }
+
+    /// The component search, template rows and generic parts for `text`.
+    fn lookup(&self, engine: &Engine, text: &str) -> Lookup {
+        let report = match engine.query_with(
+            Query::Search {
+                query: text.to_owned(),
+                limit: Some(ROWS),
+                include_drafts: false,
+            },
+            &self.context,
+        ) {
+            Ok(QueryResult::Search(report)) => Ok(report),
+            Ok(_) => Err("unexpected report".into()),
+            Err(error) => Err(error.to_string()),
+        };
         let report = report.map(|mut report| {
             match &self.mode {
                 // Only Parts of the instances' component lineages can be
@@ -525,19 +596,10 @@ impl PlacePalette {
             }
             report
         });
-        self.targets = match &self.mode {
-            Mode::Assign { instances } => instances
-                .iter()
-                .filter_map(|id| engine.project().instance(*id))
-                .map(|i| i.component)
-                .collect(),
-            Mode::Place => Vec::new(),
-        };
-        self.rows = RowContext::of(engine.project(), &self.context);
         let (mut templates, generic) = match &self.mode {
             Mode::Place => (
-                template_gallery::find(engine, &self.query, ROWS, &self.context),
-                template_gallery::find_generic(engine, &self.query),
+                template_gallery::find(engine, text, ROWS, &self.context),
+                template_gallery::find_generic(engine, text),
             ),
             Mode::Assign { .. } => (Found::default(), Vec::new()),
         };
@@ -564,25 +626,50 @@ impl PlacePalette {
                 report.total = report.total.saturating_sub(before - report.results.len());
                 report
             });
-        let hits = report.as_ref().map_or(&[][..], |r| &r.results[..]);
-        let order = row_order(hits, &generic, &templates.hits, &self.context);
-        if !new_text
-            && let Some(key) = kept
-            && let Some(at) = order.iter().position(
-                |s| matches!(s, Slot::Hit(i) if hits.get(*i).is_some_and(|h| h.entry.key() == key)),
-            )
-        {
-            self.highlighted = at;
-        }
-        self.results = Some(Results {
-            revision: engine.revision(),
-            context: generations,
-            query: self.query.clone(),
+        Lookup {
             report,
             templates,
             generic,
-            order,
-        });
+        }
+    }
+
+    /// A text that finds nothing as a whole, read without the words that
+    /// find nothing alone ("ldo sot-23-5" lists SOT-23-5): first without
+    /// one such word, then without all of them. The words left out and
+    /// what the rest finds; none when that finds nothing either.
+    fn partial(&self, engine: &Engine) -> Option<(Vec<String>, Lookup)> {
+        let text = self.search_text();
+        let words: Vec<&str> = text.split_whitespace().collect();
+        if words.len() < 2 || words.len() > MAX_WORDS || text.contains('"') {
+            return None;
+        }
+        let unknown: Vec<usize> = (0..words.len())
+            .filter(|&i| self.lookup(engine, words[i]).is_empty())
+            .collect();
+        if unknown.len() == words.len() {
+            return None;
+        }
+        let without = |left_out: &[usize]| {
+            words
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| !left_out.contains(i))
+                .map(|(_, w)| *w)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let tries = unknown
+            .iter()
+            .map(std::slice::from_ref)
+            .chain((unknown.len() > 1).then_some(&unknown[..]));
+        for left_out in tries {
+            let found = self.lookup(engine, &without(left_out));
+            if !found.is_empty() {
+                let words = left_out.iter().map(|&i| words[i].to_owned()).collect();
+                return Some((words, found));
+            }
+        }
+        None
     }
 
     /// The highlighted folder component, if the highlighted row is one.
@@ -888,6 +975,13 @@ impl PlacePalette {
                         .map(|h| format!("{} hidden ({})", h.count, h.reason))
                         .collect();
                     kit::search_chips(ui, &report.chips, &hidden.join(", "));
+                    if let Some(r) = self.results.as_ref().filter(|r| !r.ignored.is_empty()) {
+                        kit::search_message(
+                            ui,
+                            &format!("Ignored: {}", r.ignored.join(", ")),
+                            false,
+                        );
+                    }
                     let found = self.results.as_ref().map(|r| &r.templates);
                     let templates = found.map_or(&[][..], |f| &f.hits);
                     let more = found.map_or(0, |f| f.more);
@@ -1664,6 +1758,7 @@ fn values_line(entry: &CatalogEntry) -> String {
 /// The description as one hint line, its full text (and the provenance)
 /// on hover.
 fn description_hint(ui: &mut Ui, description: &str, provenance: &str) {
+    let provenance: &str = &readable_provenance(provenance);
     let line = if description.is_empty() {
         provenance
     } else {
@@ -2063,6 +2158,7 @@ mod tests {
             query: palette.query.clone(),
             generic: Vec::new(),
             order: (0..report.results.len()).map(Slot::Hit).collect(),
+            ignored: Vec::new(),
             report: Ok(report),
             templates: Found::default(),
         });
@@ -2284,6 +2380,7 @@ mod tests {
                 query: palette.query.clone(),
                 generic: Vec::new(),
                 order: (0..report.results.len()).map(Slot::Hit).collect(),
+                ignored: Vec::new(),
                 report: Ok(report.clone()),
                 templates: Found::default(),
             });
@@ -2451,6 +2548,39 @@ mod tests {
             .collect();
         kinds.dedup();
         assert_eq!(kinds, ["project", "generic", "template", "folder"]);
+        Ok(())
+    }
+
+    /// A word nothing knows does not empty the list: "ldo sot-23-5" lists
+    /// what "sot-23-5" does and names the word it left out; a text every
+    /// word of which finds something is searched as it is.
+    #[test]
+    fn an_unknown_word_is_ignored_and_named() -> Result<(), Box<dyn std::error::Error>> {
+        let engine = Engine::profiled()?;
+        let mut palette = PlacePalette::default();
+        palette.open();
+        let mut shown = |query: &str| -> Result<_, Box<dyn std::error::Error>> {
+            palette.query = query.into();
+            palette.refresh(&engine);
+            let results = palette.results.as_ref().ok_or("results")?;
+            let names: Vec<String> = results
+                .templates
+                .hits
+                .iter()
+                .map(|h| h.name.clone())
+                .collect();
+            Ok((names, results.ignored.clone()))
+        };
+        let (alone, ignored) = shown("sot-23-5")?;
+        assert!(alone.iter().any(|n| n == "SOT-23-5"), "{alone:?}");
+        assert!(ignored.is_empty());
+        assert_eq!(
+            shown("ldo sot-23-5")?,
+            (alone.clone(), vec!["ldo".to_owned()])
+        );
+        assert_eq!(shown("sot-23-5 ldo")?, (alone, vec!["ldo".to_owned()]));
+        let (_, ignored) = shown("ldo zzqx")?;
+        assert!(ignored.is_empty());
         Ok(())
     }
 
