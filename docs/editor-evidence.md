@@ -246,6 +246,22 @@ A via edit on the large board still copies the whole via collection, about 55 by
 
 `project.undo`, `project.redo`, `project.new` and `project.open` now require `expected_revision`, as every other document-changing request does. `Session::execute` checks it once, from `Request::expected_revision`, before any file is read or written. The engine's `undo_at`/`redo_at` check it again through `Engine::check_revision`. The desktop's own undo and redo use the current revision. A catalog test requires the parameter on every non-read request except the named file and settings effects.
 
+## Large-board benchmark
+
+`crates/solidcraft-integration/tests/large_board.rs` (ignored; `cargo test --profile ci -p sparksmith-solidcraft --test large_board -- --ignored --nocapture`) builds an original synthetic board past the former caps: the showcase's small parts repeated to 2,009 placements (9,297 pads, 9,274 nets), 10,021 through vias and 19,462 tracks on 4 layers, a 500 × 560 mm board, two board pours. Measured 14 November 2026, `ci` profile, Apple M5 Max shared with other agents' builds (load average 41–50), best of three runs:
+
+| Step | Time |
+| --- | --- |
+| Save (encode, 10.5 MiB) / open (decode and validate) | 42 ms / 68 ms |
+| Copper graph | 25 ms |
+| Board checks (graph given) / `project.issues`, every area | 104 ms / 161 ms |
+| Edit: via tenting / new track / track width / move a part (then the next revision's copper graph, about 25 ms) | 7 / 39 / 37 / 114 ms |
+| Refill both pours (fill worker) | 3.4 s |
+| Board plan (78,890 bodies) | 47 ms |
+| Live 3D model, cold / after a via edit (3D worker) | 3.7 s / 0.47 s |
+
+Before this work the live 3D model of this board took 314 s and its update 208 s (every part's legend and every track cap met every opening and cover); a via edit took 32 ms. The cold 3D model is mostly the part designs' kernel time (the persisted part cache, A7, is the planned fix), so the founder's target of a 3D view that opens instantly is not met on a cold open; edits, checks and open of 10,000 vias are within seconds.
+
 ## Remaining release work
 
 The initial editors are intentionally narrow: traces and through vias only (board checks and copper connectivity use each pad's exact outline, with curved edges flattened within 2 µm); PCB 2D draws every copper layer and the board vias, routes through a via with V and places vias with the Via tool, but has no stackup editor (stackups are set through commands, the CLI or MCP); board builds grow about linearly with vias (measured in [PCB realism](pcb-realism.md#build-cost-measured): 10,000 vias build in about 3 s, and the 3D view shows them instanced in about 0.1 s); the 3D model is prepared in the background while the board is edited in 2D; manual routes; electrical and clearance checks against the board's fab profile, which the user imports or writes from a fabricator's published capabilities. One fill of a 200 × 200 mm plane over 10,000 through vias took 1.40 s in a release build (macOS arm64). Copper fills are authored with the Fill tool (outline with arcs), edited through the Fill card and outline handles, drawn in PCB 2D (solid, hatched or outlines only) and built in PCB 3D as saved copper under the display-only mask (an inner fill in its own foil level of the laminate); their copper is computed by the fill core (`fill.refill`), and the showcase carries a bottom ground pour and an inner ground plane with stitching vias. No manufacturing-ready DRC claim follows from zero basic-check messages.
