@@ -13,10 +13,10 @@ pub mod items;
 pub mod project;
 pub mod report;
 mod routing;
-mod zones;
 pub mod sexpr;
 pub mod shape;
 pub mod translate;
+mod zones;
 
 pub use import::{ImportError, Imported, PadRecord, Setup, import};
 pub use report::Report;

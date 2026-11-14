@@ -133,9 +133,9 @@ fn tracks_and_vias_land_on_their_nets_and_layers() -> Fallible<()> {
 fn a_track_the_checks_refuse_is_listed_and_the_rest_imported() -> Fallible<()> {
     let mut board = routed();
     // A SIG track across R3's GND pads: the clearance check refuses it.
-    board.items.push_str(
-        "  (segment (start 18 16) (end 22 16) (width 0.25) (layer \"F.Cu\") (net 1))\n",
-    );
+    board
+        .items
+        .push_str("  (segment (start 18 16) (end 22 16) (width 0.25) (layer \"F.Cu\") (net 1))\n");
     let imported = import(board.text().as_bytes())?;
     assert_eq!(imported.report.count(Case::TrackRefused), 1);
     assert!(imported.report.counts.tracks > 2);

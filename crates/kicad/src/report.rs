@@ -76,7 +76,7 @@ pub enum Case {
     PadOnBothSides,
     /// A designator that was not valid or repeated, renumbered.
     Designator,
-    /// G9/G10: board-level objects this slice does not import.
+    /// G9/G10: board-level drawings, texts and dimensions (not imported).
     BoardObjects,
     /// G12: 3D model references.
     Models,
@@ -247,7 +247,7 @@ impl Case {
             Self::BoardObjects => (
                 "G9",
                 Report,
-                "board-level objects (tracks, vias, zones, drawings), not in this slice",
+                "board-level drawings, texts and dimensions, not imported (slice K7)",
             ),
             Self::Models => ("G12", Report, "3D model references, ignored"),
             Self::PadOutOfRange => (
@@ -312,7 +312,11 @@ impl Case {
                 Exact,
                 "project clearances (net class, edge, hole) and least track width set over the fab profile",
             ),
-            Self::NoProject => ("D1", Report, "no project file: the fab profile's clearances stand"),
+            Self::NoProject => (
+                "D1",
+                Report,
+                "no project file: the fab profile's clearances stand",
+            ),
             Self::ProjectUnreadable => (
                 "D1",
                 Refused,
@@ -333,7 +337,11 @@ impl Case {
                 Refused,
                 "pads of one terminal on two nets (first net kept)",
             ),
-            Self::ArcTrack => ("R1", Approximate, "arc tracks imported as chords within 0.25 µm"),
+            Self::ArcTrack => (
+                "R1",
+                Approximate,
+                "arc tracks imported as chords within 0.25 µm",
+            ),
             Self::TrackWithoutNet => ("R1", Refused, "tracks on no net with pads, not imported"),
             Self::TrackTooShort => ("R1", Refused, "track pieces shorter than 0.01 mm"),
             Self::TrackRefused => ("R1", Refused, "tracks the engine's checks refused"),
@@ -344,7 +352,11 @@ impl Case {
                 Approximate,
                 "vias without unused inner rings in KiCad, imported with rings on every layer",
             ),
-            Self::Zone => ("Z1", Exact, "zone layers imported as fills, filled by our engine"),
+            Self::Zone => (
+                "Z1",
+                Exact,
+                "zone layers imported as fills, filled by our engine",
+            ),
             Self::Keepout => ("Z1", Exact, "rule areas imported as keepouts"),
             Self::ZoneRefused => (
                 "Z1",
@@ -353,7 +365,11 @@ impl Case {
             ),
             Self::ZonePolygons => ("Z1", Approximate, "zones of several outlines, each a fill"),
             Self::ZoneHatched => ("Z1", Approximate, "hatched zones, filled solid"),
-            Self::ZoneSmoothing => ("Z1", Approximate, "zones with corner smoothing, filled without"),
+            Self::ZoneSmoothing => (
+                "Z1",
+                Approximate,
+                "zones with corner smoothing, filled without",
+            ),
         }
     }
 }

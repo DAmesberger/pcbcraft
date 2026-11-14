@@ -117,10 +117,7 @@ pub fn compare_design(design: &Path) -> Result<(String, bool)> {
             }
         }
     }
-    let _ = writeln!(
-        summary,
-        "outputs under target/kicad-compare/ (local only)"
-    );
+    let _ = writeln!(summary, "outputs under target/kicad-compare/ (local only)");
     Ok((summary, passed))
 }
 

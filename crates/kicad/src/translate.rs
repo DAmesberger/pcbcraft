@@ -496,10 +496,7 @@ fn paste_rule(
         // KiCad takes a relative margin per axis (oracle): on a pad that is
         // not square the opening is no offset of the land, so it is a paste
         // window of the land's shape at the opening's size.
-        let grow = [
-            mm(margin) + ratio * size[0],
-            mm(margin) + ratio * size[1],
-        ];
+        let grow = [mm(margin) + ratio * size[0], mm(margin) + ratio * size[1]];
         if let Some(window) = ratio_window(shape, size, grow)? {
             report.add(Case::PasteRatioWindow);
             return Ok(PasteRule::Windows(vec![window]));

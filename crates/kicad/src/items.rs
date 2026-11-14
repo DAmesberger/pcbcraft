@@ -254,7 +254,10 @@ pub fn edge_bounds(edges: &[EdgeItem]) -> Option<[PointNm; 2]> {
             EdgeItem::Poly { points: ring } => points.extend(ring.iter().map(|p| f(*p))),
             EdgeItem::Circle { center, radius } => {
                 let c = f(*center);
-                points.extend([[c[0] - radius, c[1] - radius], [c[0] + radius, c[1] + radius]]);
+                points.extend([
+                    [c[0] - radius, c[1] - radius],
+                    [c[0] + radius, c[1] + radius],
+                ]);
             }
             EdgeItem::Arc { start, mid, end } => {
                 let (s, m, e) = (f(*start), f(*mid), f(*end));
@@ -397,8 +400,8 @@ pub fn via(node: &Node) -> Result<KVia> {
                 .collect()
         })
         .unwrap_or_default();
-    let [a, b] = <[String; 2]>::try_from(layers)
-        .map_err(|_| BoardError::Value(format!("{path}/layers")))?;
+    let [a, b] =
+        <[String; 2]>::try_from(layers).map_err(|_| BoardError::Value(format!("{path}/layers")))?;
     let kind = node
         .args()
         .iter()
@@ -420,12 +423,16 @@ pub fn via(node: &Node) -> Result<KVia> {
         net: net_number(node, path)?,
         tenting,
         remove_unused_layers: node.child("remove_unused_layers").is_some()
-            || node.args().iter().any(|a| a.atom() == Some("remove_unused_layers")),
+            || node
+                .args()
+                .iter()
+                .any(|a| a.atom() == Some("remove_unused_layers")),
     })
 }
 
 fn yes(node: Option<&Node>) -> bool {
-    node.and_then(|n| n.arg(0)).is_some_and(|a| a == "not_allowed")
+    node.and_then(|n| n.arg(0))
+        .is_some_and(|a| a == "not_allowed")
 }
 
 /// Read a `zone`.
@@ -441,8 +448,13 @@ pub fn zone(node: &Node) -> Result<KZone> {
         zone.layers.push(layer.to_owned());
     }
     if let Some(layers) = node.child("layers") {
-        zone.layers
-            .extend(layers.args().iter().filter_map(Node::atom).map(str::to_owned));
+        zone.layers.extend(
+            layers
+                .args()
+                .iter()
+                .filter_map(Node::atom)
+                .map(str::to_owned),
+        );
     }
     if let Some(connect) = node.child("connect_pads") {
         zone.connect = match connect.arg(0) {

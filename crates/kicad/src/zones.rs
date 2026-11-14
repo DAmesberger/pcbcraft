@@ -13,8 +13,7 @@ use sparksmith_core::geometry::Point;
 use sparksmith_core::layout::fill::{FillCommand, RefillTarget};
 use sparksmith_core::library::{Outline, Segment};
 use sparksmith_core::model::fill::{
-    FillSettings, FillSpec, IslandRemoval, KeepoutLayers, KeepoutRules, KeepoutSpec,
-    PadConnections,
+    FillSettings, FillSpec, IslandRemoval, KeepoutLayers, KeepoutRules, KeepoutSpec, PadConnections,
 };
 use sparksmith_core::rules::{PadConnection, ThermalRelief};
 use sparksmith_core::{CopperLayer, Id, Operation};
@@ -36,11 +35,9 @@ fn layers(board: &Board, zone: &KZone) -> Vec<CopperLayer> {
         .iter()
         .enumerate()
         .filter(|(k, name)| {
-            zone.layers.iter().any(|l| {
-                l == *name
-                    || l == "*.Cu"
-                    || (l == "F&B.Cu" && (*k == 0 || *k == last))
-            })
+            zone.layers
+                .iter()
+                .any(|l| l == *name || l == "*.Cu" || (l == "F&B.Cu" && (*k == 0 || *k == last)))
         })
         .filter_map(|(k, _)| match k {
             0 => Some(CopperLayer::Top),

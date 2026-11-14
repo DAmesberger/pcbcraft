@@ -6,9 +6,7 @@
 use crate::{Error, Result};
 use sparksmith_core::Point;
 use sparksmith_core::geometry::Shape;
-use sparksmith_core::library::{
-    Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment,
-};
+use sparksmith_core::library::{Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment};
 
 /// Plated barrel wall: copper plated onto a drilled hole's wall, 25 µm,
 /// IPC-6012's least average hole-wall copper for class 3 (class 2 asks
@@ -267,7 +265,9 @@ pub fn shape_contour(shape: &PadShape, grow: f64) -> Option<Contour> {
             }
             // The core's true offset, so the native opening is the one
             // checks, 2D and fabrication output use.
-            let grown = shape.grown(grow, FLATTEN_TOLERANCE_MM)?.flatten(FLATTEN_TOLERANCE_MM);
+            let grown = shape
+                .grown(grow, FLATTEN_TOLERANCE_MM)?
+                .flatten(FLATTEN_TOLERANCE_MM);
             let (first, rest) = grown.split_first()?;
             let mut segments: Vec<Segment> =
                 rest.iter().map(|p| Segment::Line { to: *p }).collect();

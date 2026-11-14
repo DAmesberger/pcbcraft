@@ -11,6 +11,8 @@ use crate::translate::{self, DefPad, Mapped};
 use sparksmith_core::functions::{Direction, TerminalFunctions};
 use sparksmith_core::geometry::Bounds;
 use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{SketchEdit, SketchRef};
 use sparksmith_core::library::samples::named_block_symbol;
 use sparksmith_core::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
@@ -19,16 +21,14 @@ use sparksmith_core::library::{
     designator_prefix_valid,
 };
 use sparksmith_core::materials::MaterialId;
+use sparksmith_core::model::board::BoardShape;
+use sparksmith_core::rules::{RuleKey, RuleProfile, RuleValue, RulesCommand};
 use sparksmith_core::units::{Nm, PointNm};
 use sparksmith_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, FunctionId, Id,
     InstanceCommand, LibraryCommand, Operation, Outcome, PackageRef, PackageTerminalId, PadId,
     PhysicalChoice, Revision, StackupPresets, SymbolRef, TerminalId, UnitId,
 };
-use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
-use sparksmith_core::library::footprint_source::{SketchEdit, SketchRef};
-use sparksmith_core::model::board::BoardShape;
-use sparksmith_core::rules::{RuleKey, RuleProfile, RuleValue, RulesCommand};
 use sparksmith_core::{Engine, Evaluators, NewBoard, instances::NewInstance};
 use std::collections::BTreeMap;
 
@@ -285,7 +285,8 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         }));
     }
     session.batches("layout.place", layout)?;
-    let nets = crate::routing::connect(&mut session, &board, &placed_nets, &instances, &mut report)?;
+    let nets =
+        crate::routing::connect(&mut session, &board, &placed_nets, &instances, &mut report)?;
     crate::routing::copper(&mut session, &board, &nets, &mut report)?;
     session.project_rules(setup.project_file, &mut report);
     crate::zones::fills(&mut session, &board, &nets, &mut report)?;
@@ -372,11 +373,7 @@ fn footprint_pads(
                 nets.push((id, *net));
             }
         }
-        records.push(PadRecord {
-            class,
-            world,
-            arcs,
-        });
+        records.push(PadRecord { class, world, arcs });
         pads.push(pad);
     }
     for (window, reference, number) in paste_only {
@@ -551,11 +548,7 @@ impl Session<'_> {
                     name: p.name.clone(),
                 }),
         );
-        edits.extend(
-            curves
-                .into_iter()
-                .map(|edit| BoardEdit::Sketch { edit }),
-        );
+        edits.extend(curves.into_iter().map(|edit| BoardEdit::Sketch { edit }));
         let max = sparksmith_core::layout::outline::MAX_BOARD_EDITS;
         for chunk in edits.chunks(max) {
             self.apply(

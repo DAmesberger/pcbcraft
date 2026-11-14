@@ -590,8 +590,16 @@ mod tests {
             return assert!(rect.grown(by, tol).is_some());
         };
         assert_eq!(radii, vec![by; 4]);
-        let grown = area(&rect.grown(by, tol).map(|s| s.flatten(tol)).unwrap_or_default());
-        assert!(close_to(grown, 2.0 + 6.0 * by + PI * by * by, 1e-4), "{grown}");
+        let grown = area(
+            &rect
+                .grown(by, tol)
+                .map(|s| s.flatten(tol))
+                .unwrap_or_default(),
+        );
+        assert!(
+            close_to(grown, 2.0 + 6.0 * by + PI * by * by, 1e-4),
+            "{grown}"
+        );
         let shrunk = rect.grown(-by, tol);
         assert!(
             matches!(&shrunk, Some(Shape::Polygon { radii, .. }) if radii.is_empty()),

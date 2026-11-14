@@ -3,9 +3,9 @@
 mod support;
 
 use sparksmith_core::DielectricKind;
+use sparksmith_core::library::footprint_source::SketchEdit;
 use sparksmith_kicad::board;
 use sparksmith_kicad::items::{EdgeItem, edge_bounds};
-use sparksmith_core::library::footprint_source::SketchEdit;
 use sparksmith_kicad::report::{Case, Report};
 use support::{Board, Footprint, Pad, import};
 
@@ -101,8 +101,7 @@ fn outline_drawings_become_counter_clockwise_sketch_curves() -> Fallible<()> {
 }
 
 #[test]
-fn without_a_sketch_engine_the_outline_is_its_box_and_parts_follow_the_origin() -> Fallible<()>
-{
+fn without_a_sketch_engine_the_outline_is_its_box_and_parts_follow_the_origin() -> Fallible<()> {
     let imported = import(outlined().text().as_bytes())?;
     let project = imported.engine.project();
     assert_eq!(imported.report.count(Case::OutlineRectangle), 1);

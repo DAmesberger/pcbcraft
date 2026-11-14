@@ -6,10 +6,10 @@ use crate::board::{Board, Nm, PointNm};
 use crate::items::{EdgeItem, StackLayer};
 use crate::report::{Case, Report};
 use crate::translate::board_point;
+use sparksmith_core::StackupPresets;
 use sparksmith_core::geometry::{Bounds, Point};
 use sparksmith_core::library::footprint_source::SketchEdit;
 use sparksmith_core::{CopperFoil, DielectricKind, Stackup};
-use sparksmith_core::StackupPresets;
 
 fn mm(nm: Nm) -> f64 {
     nm as f64 / 1e6

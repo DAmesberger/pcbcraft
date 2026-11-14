@@ -28,7 +28,12 @@ fn zoned() -> Board {
     let gnd = |n: &'static str, x: f64| {
         Pad::smd(n, "rect", [x, 0.0, 0.0], [0.8, 0.6]).with("(net 1 \"GND\")")
     };
-    let mut fp = Footprint::new("R1", [8.0, 10.0, 0.0], false, vec![gnd("1", -1.0), gnd("2", 1.0)]);
+    let mut fp = Footprint::new(
+        "R1",
+        [8.0, 10.0, 0.0],
+        false,
+        vec![gnd("1", -1.0), gnd("2", 1.0)],
+    );
     // A footprint's own rule area: KiCad writes its outline in board
     // coordinates.
     fp.extra = " (zone (net 0) (net_name \"\") (layer \"F.Cu\") (hatch edge 0.5) \

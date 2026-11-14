@@ -499,7 +499,6 @@ fn footprint(node: &Node, report: &mut Report) -> Result<Footprint> {
             | "placed"
             | "autoplace_cost90"
             | "autoplace_cost180"
-
             | "group"
             | "private_layers"
             | "embedded_fonts"

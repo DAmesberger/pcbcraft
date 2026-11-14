@@ -214,15 +214,22 @@ fn shifted(mut shapes: Shapes, shift: [i64; 2]) -> Fallible<Shapes> {
     let (dx, dy) = (i32::try_from(shift[0])?, i32::try_from(shift[1])?);
     for ring in shapes.iter_mut().flatten() {
         for p in ring.iter_mut() {
-            p.x = p.x.checked_add(dx).ok_or("sets: a shifted point overflows")?;
-            p.y = p.y.checked_add(dy).ok_or("sets: a shifted point overflows")?;
+            p.x =
+                p.x.checked_add(dx)
+                    .ok_or("sets: a shifted point overflows")?;
+            p.y =
+                p.y.checked_add(dy)
+                    .ok_or("sets: a shifted point overflows")?;
         }
     }
     Ok(shapes)
 }
 
 /// Drill hits moved by `shift` nm.
-fn shifted_hits(mut hits: Vec<crate::drills::DrillHit>, shift: [i64; 2]) -> Vec<crate::drills::DrillHit> {
+fn shifted_hits(
+    mut hits: Vec<crate::drills::DrillHit>,
+    shift: [i64; 2],
+) -> Vec<crate::drills::DrillHit> {
     let d = [shift[0] as f64 / 1e6, shift[1] as f64 / 1e6];
     let m = |p: &mut crate::Point| {
         p[0] += d[0];
