@@ -15,12 +15,15 @@ use std::sync::Arc;
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 /// A stand-in module: a two-terminal part whose pads sit `length / 2 −
-/// 0.35 mm` from the origin. Its "bytes" choose a variant: `b"v2"` moves
-/// the pads, as a changed module would.
+/// 0.35 mm` from the origin. Its "bytes" choose a variant: `b"v2"` is
+/// version 2 and moves the pads, as a changed module would; `REBUILT` is
+/// version 1 built to other bytes; `OTHER` is another generator.
 struct StandIn;
 
 const MODULE: &[u8] = b"stand-in module";
 const CHANGED: &[u8] = b"v2";
+const REBUILT: &[u8] = b"stand-in module, rebuilt";
+const OTHER: &[u8] = b"another generator";
 /// A module whose model names another part file than the host evaluated.
 const OTHER_PART: &[u8] = b"names another part file";
 /// The stand-in's part file (the core never evaluates it).
@@ -222,11 +225,11 @@ fn generation(length: i64, shift: i64, scope: Scope, part: &[u8]) -> Generation 
 }
 
 impl GeneratorRuntime for StandIn {
-    fn describe(&self, _module: &[u8]) -> std::result::Result<Description, Failure> {
+    fn describe(&self, module: &[u8]) -> std::result::Result<Description, Failure> {
         Ok(Description {
             abi: ABI,
-            id_hint: "stand-in".into(),
-            version: 1,
+            id_hint: if module == OTHER { "other" } else { "stand-in" }.into(),
+            version: if module == CHANGED { 2 } else { 1 },
             name: "Stand-in".into(),
             families: vec!["chip".into()],
             scopes: vec![Scope::Component, Scope::Package],
@@ -597,5 +600,109 @@ fn a_changed_module_makes_the_next_revisions_of_the_same_lineages() -> TestResul
         .ok_or("no component r2")?;
     assert_eq!(component.definition.representations[0].revision.0, 2);
     assert_eq!(component.definition.implementations[0].revision.0, 2);
+    Ok(())
+}
+
+#[test]
+fn a_newer_version_makes_the_next_revisions_and_an_older_one_is_refused() -> TestResult {
+    let mut engine = engine();
+    let first = generate(
+        &mut engine,
+        request(MODULE, GeneratorScope::Component, 1_600_000),
+    )?;
+    assert_eq!(first.replaced, None);
+    // Version 2 with the same parameters: the same lineages, revision 2.
+    let second = generate(
+        &mut engine,
+        request(CHANGED, GeneratorScope::Component, 1_600_000),
+    )?;
+    assert!(second.created);
+    assert_eq!(second.replaced, Some(first.root));
+    for (old, new) in first.revisions.iter().zip(&second.revisions) {
+        assert_eq!((old.kind, old.id), (new.kind, new.id));
+        assert_eq!(new.revision.0, 2);
+    }
+    // Instances still pin revision 1: the update preview moves them.
+    assert_eq!(engine.project().library.components.len(), 2);
+    // Version 2 again: nothing happens.
+    let revision = engine.revision();
+    let mut again = request(CHANGED, GeneratorScope::Component, 1_600_000);
+    again.module.data = None;
+    let third = generate(&mut engine, again)?;
+    assert!(!third.created);
+    assert_eq!(third.root, second.root);
+    assert_eq!(engine.revision(), revision);
+    // Version 1 again, embedded or rebuilt to other bytes: refused, never
+    // a downgrade, and the document is unchanged.
+    let before = engine.to_file();
+    for module in [MODULE, REBUILT] {
+        let mut older = request(module, GeneratorScope::Component, 1_600_000);
+        if module == MODULE {
+            older.module.data = None;
+        }
+        let refused = generate(&mut engine, older);
+        assert!(
+            matches!(&refused, Err(Error::Conflict(m))
+                if m.starts_with("generated.older_version")
+                    && m.contains("version 2")
+                    && m.contains("Nothing was changed")),
+            "{refused:?}"
+        );
+    }
+    // Naming the part to replace does not get round it.
+    let mut named = request(MODULE, GeneratorScope::Component, 1_600_000);
+    named.module.data = None;
+    named.replaces = Some(second.root);
+    assert!(matches!(
+        generate(&mut engine, named),
+        Err(Error::Conflict(m)) if m.starts_with("generated.older_version")
+    ));
+    assert_eq!(engine.to_file(), before);
+    assert_eq!(engine.revision(), revision);
+    verify(&engine.project().library, &mut run)?;
+    Ok(())
+}
+
+#[test]
+fn the_same_version_built_to_other_bytes_changes_nothing() -> TestResult {
+    let mut engine = engine();
+    let first = generate(
+        &mut engine,
+        request(MODULE, GeneratorScope::Component, 1_600_000),
+    )?;
+    let before = engine.to_file();
+    let rebuilt = generate(
+        &mut engine,
+        request(REBUILT, GeneratorScope::Component, 1_600_000),
+    )?;
+    assert!(!rebuilt.created);
+    assert_eq!(rebuilt.root, first.root);
+    assert_eq!(rebuilt.key, first.key);
+    assert_eq!(
+        engine.to_file(),
+        before,
+        "the rebuilt module is not embedded"
+    );
+    Ok(())
+}
+
+#[test]
+fn other_parameters_scopes_or_generators_make_new_lineages() -> TestResult {
+    let mut engine = engine();
+    let first = generate(
+        &mut engine,
+        request(MODULE, GeneratorScope::Component, 1_600_000),
+    )?;
+    for (module, scope, length) in [
+        (CHANGED, GeneratorScope::Component, 2_000_000),
+        (CHANGED, GeneratorScope::Package, 1_600_000),
+        (OTHER, GeneratorScope::Component, 1_600_000),
+    ] {
+        let made = generate(&mut engine, request(module, scope, length))?;
+        assert!(made.created);
+        assert_eq!(made.replaced, None);
+        assert_ne!(made.root.id, first.root.id);
+        assert_eq!(made.root.revision, Revision::FIRST);
+    }
     Ok(())
 }

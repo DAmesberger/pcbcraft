@@ -2,14 +2,13 @@
 //!
 //! `library.generators` lists the shipped modules (`library/generators/`),
 //! the modules this project embeds and its generated parts, each with the
-//! state of its module: `current` (the shipped module of its generator is
-//! the embedded one), `shipped_differs` (a different module of the same
-//! generator ships: the project keeps its copy, and nothing changes until
-//! the person makes the part again with the shipped one) or `not_shipped`
-//! (the project's copy is the only one, which is enough to reopen and
-//! check it). `library.generate_part` reads a module (shipped by name, or
-//! embedded by hash) and applies the one typed command `library.generate`,
-//! so UI, CLI and MCP make a part the same way.
+//! state of its module ([`state`]). Nothing changes until the person makes
+//! the part again: a newer version of its generator then makes the next
+//! revisions of the same lineages, and the reply carries the update
+//! preview that moves the placed instances. `library.generate_part` reads
+//! a module (shipped by name, or embedded by hash) and applies the one
+//! typed command `library.generate`, so UI, CLI and MCP make a part the
+//! same way.
 use super::Session;
 use crate::Result;
 use schemars::JsonSchema;
@@ -17,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sparksmith_core::Operation;
 use sparksmith_core::commands::{Generate, LibraryCommand, ModuleSource};
-use sparksmith_core::ids::{ContentHash, DefinitionRef};
+use sparksmith_core::ids::{ComponentRef, ContentHash, DefinitionKind, DefinitionRef};
 use sparksmith_core::library::bundle::{AssetBytes, asset_hash};
 use sparksmith_core::library::generated::{
     self, GeneratorParams, GeneratorRuntime, GeneratorScope, ParamValue,
@@ -198,13 +197,42 @@ impl Session {
         )?);
         let operation = Operation::Library(LibraryCommand::Generate(Box::new(generate)));
         self.ensure_generators();
-        self.apply(params.expected_revision, operation)
+        let mut reply = self.apply(params.expected_revision, operation)?;
+        // Made again over an older version: preview moving the instances
+        // that pin the old component revision (never applied here).
+        let report = &reply["outcome"]["report"];
+        let new: Option<DefinitionRef> = serde_json::from_value(report["root"].clone()).ok();
+        let old: Option<DefinitionRef> = serde_json::from_value(report["replaced"].clone()).ok();
+        if let (Some(new), Some(_)) = (new, old)
+            && new.kind == DefinitionKind::Component
+        {
+            let instances: Vec<_> = self
+                .engine
+                .project()
+                .instances
+                .iter()
+                .filter(|i| i.component.id == new.id && i.component.revision != new.revision)
+                .map(|i| i.id)
+                .collect();
+            if !instances.is_empty() {
+                let plan = self.engine.preview_update_hosted(
+                    sparksmith_core::updates::Change::ComponentRevision {
+                        instances,
+                        target: ComponentRef::new(new.id, new.revision),
+                        resolutions: Default::default(),
+                    },
+                    super::hosted(),
+                );
+                reply["update"] = serde_json::to_value(plan)?;
+            }
+        }
+        Ok(reply)
     }
 
     pub(super) fn generators(&self) -> Result<Value> {
         let library = &self.engine.project().library;
         // The shipped modules: name, hash and what each offers.
-        let mut shipped_by_lineage: BTreeMap<String, (String, ContentHash)> = BTreeMap::new();
+        let mut shipped_by_lineage: BTreeMap<String, (ContentHash, u32)> = BTreeMap::new();
         let mut shipped = Vec::new();
         let located = self.shipped();
         let names = match &located {
@@ -220,7 +248,7 @@ impl Session {
                 match self.describe(&bytes) {
                     Ok(description) => {
                         shipped_by_lineage
-                            .insert(description.id_hint.clone(), (name.clone(), hash));
+                            .insert(description.id_hint.clone(), (hash, description.version));
                         shipped.push(json!({
                             "name": name,
                             "module": hash,
@@ -239,7 +267,7 @@ impl Session {
             }
         }
         // The embedded modules, each described once.
-        let mut lineage_of: BTreeMap<ContentHash, Option<String>> = BTreeMap::new();
+        let mut lineage_of: BTreeMap<ContentHash, Option<(String, u32)>> = BTreeMap::new();
         let mut embedded = Vec::new();
         for asset in library
             .assets
@@ -247,12 +275,13 @@ impl Session {
             .filter(|a| a.media_type == generated::MODULE_MEDIA_TYPE)
         {
             let description = self.describe(&asset.data).ok();
-            let lineage = description.as_ref().map(|d| d.id_hint.clone());
+            let lineage = description.as_ref().map(|d| (d.id_hint.clone(), d.version));
             lineage_of.insert(asset.hash, lineage.clone());
             embedded.push(json!({
                 "module": asset.hash,
                 "bytes": asset.data.len(),
-                "generator": lineage,
+                "generator": lineage.as_ref().map(|(l, _)| l),
+                "version": lineage.as_ref().map(|(_, v)| v),
                 "name": description.as_ref().map(|d| d.name.clone()),
                 "parts": library.generated.iter().filter(|g| g.from.module == asset.hash).count(),
             }));
@@ -260,12 +289,23 @@ impl Session {
         let mut parts = Vec::new();
         for part in library.generated.iter() {
             let lineage = lineage_of.get(&part.from.module).cloned().flatten();
-            let shipped_now = lineage.as_ref().and_then(|l| shipped_by_lineage.get(l));
-            let (state, shipped_module) = match shipped_now {
-                Some((_, hash)) if *hash == part.from.module => ("current", None),
-                Some((_, hash)) => ("shipped_differs", Some(*hash)),
-                None => ("not_shipped", None),
-            };
+            let shipped_now = lineage
+                .as_ref()
+                .and_then(|(l, _)| shipped_by_lineage.get(l))
+                .copied();
+            let superseded = library
+                .generated
+                .iter()
+                .any(|p| p.root.id == part.root.id && p.root.revision > part.root.revision);
+            let state = state(
+                part.from.module,
+                lineage.as_ref().map(|(_, v)| *v),
+                shipped_now,
+                superseded,
+            );
+            let shipped_module = shipped_now
+                .map(|(hash, _)| hash)
+                .filter(|hash| *hash != part.from.module);
             parts.push(json!({
                 "root": part.root,
                 "name": generated::describe(library, part),
@@ -273,7 +313,8 @@ impl Session {
                 "module": part.from.module,
                 "key": part.from.key()?,
                 "result": part.from.result,
-                "generator": lineage,
+                "generator": lineage.as_ref().map(|(l, _)| l),
+                "version": lineage.as_ref().map(|(_, v)| v),
                 "state": state,
                 "shipped_module": shipped_module,
             }));
@@ -284,6 +325,31 @@ impl Session {
             "embedded": embedded,
             "parts": parts,
         }))
+    }
+}
+
+/// A generated part's state against the shipped module of its generator:
+/// `superseded` (a newer version made the next revision of its lineages),
+/// `not_shipped` (no module of its generator ships), `current` (the shipped
+/// module is its own or the same version), `update_available` (a newer
+/// version ships: making the part again regenerates it over the old
+/// revision) or `shipped_older` (an older version ships, which never
+/// downgrades the part).
+fn state(
+    module: ContentHash,
+    version: Option<u32>,
+    shipped: Option<(ContentHash, u32)>,
+    superseded: bool,
+) -> &'static str {
+    if superseded {
+        return "superseded";
+    }
+    match (shipped, version) {
+        (None, _) => "not_shipped",
+        (Some((hash, _)), _) if hash == module => "current",
+        (Some((_, shipped)), Some(own)) if shipped > own => "update_available",
+        (Some((_, shipped)), Some(own)) if shipped < own => "shipped_older",
+        (Some(_), _) => "current",
     }
 }
 
@@ -317,6 +383,31 @@ fn summary(description: &Description) -> Value {
         "params": params,
         "rules": description.rules.iter().map(|r| r.text.clone()).collect::<Vec<_>>(),
         "presets": presets,
+        "version": description.version,
         "abi": v1::ABI,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::state;
+    use sparksmith_core::ids::ContentHash;
+
+    #[test]
+    fn a_newer_shipped_version_is_an_update_and_an_older_one_never_is() {
+        let own = ContentHash([1; 32]);
+        let other = ContentHash([2; 32]);
+        assert_eq!(state(own, Some(1), Some((own, 1)), false), "current");
+        assert_eq!(state(own, Some(1), Some((other, 1)), false), "current");
+        assert_eq!(
+            state(own, Some(1), Some((other, 2)), false),
+            "update_available"
+        );
+        assert_eq!(
+            state(own, Some(2), Some((other, 1)), false),
+            "shipped_older"
+        );
+        assert_eq!(state(own, Some(1), None, false), "not_shipped");
+        assert_eq!(state(own, Some(1), Some((other, 2)), true), "superseded");
+    }
 }

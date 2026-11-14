@@ -102,6 +102,11 @@ pub struct GenerateReport {
     /// False when the project already held the part with this key: then
     /// nothing changed.
     pub created: bool,
+    /// The part this one is the next revision of, when an earlier version
+    /// of the same generator made it (or `replaces` named it). Instances
+    /// still pin the old revision until `project.apply_update` moves them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replaced: Option<DefinitionRef>,
     /// The module's remarks for the person reviewing the part.
     pub notes: Vec<String>,
 }
@@ -260,20 +265,41 @@ pub(crate) fn generate(
     } = prepare(document, &request, runtime)?;
     let key = generated::key(request.module.hash, &wire)?;
     if let Some(existing) = generated::find(&document.project.library, &key) {
-        return Ok(Outcome::Generated {
-            report: GenerateReport {
-                root: existing.root,
-                revisions: existing.expansion.clone(),
-                key,
-                result: existing.from.result,
-                created: false,
-                notes: Vec::new(),
-            },
-        });
+        // A part a newer version has since made again is not handed back
+        // at its old revision.
+        let newest = document
+            .project
+            .library
+            .generated
+            .iter()
+            .filter(|p| p.root.id == existing.root.id)
+            .max_by_key(|p| p.root.revision);
+        if let Some(newest) = newest
+            && newest.root != existing.root
+        {
+            refuse_older(document, runtime, &description, newest)?;
+        }
+        return Ok(found(existing, key));
     }
     let scope = request.scope;
+    // The part this request makes again: the one named, or the newest part
+    // an earlier version of the same generator made from the same
+    // parameters (the regenerate rule, `docs/generator-plugins.md`).
+    let replaces = match request.replaces {
+        Some(root) => Some(root),
+        None => match predecessor(document, runtime, &description, &request, &wire)? {
+            Some((part, version)) if version == description.version => {
+                // The same version of the generator, built to other bytes:
+                // the part it made stands, and nothing changes.
+                let existing_key = part.from.key()?;
+                return Ok(found(part, existing_key));
+            }
+            Some((part, _)) => Some(part.root),
+            None => None,
+        },
+    };
     // The lineages and their base revisions: the replaced part's, or new.
-    let replaced = match request.replaces {
+    let replaced = match replaces {
         Some(root) => {
             let library = &document.project.library;
             let part = generated::record_of(library, root).ok_or_else(|| {
@@ -288,6 +314,7 @@ pub(crate) fn generate(
                     generated::describe(library, part)
                 )));
             }
+            refuse_older(document, runtime, &description, part)?;
             let mut lineages = Vec::with_capacity(part.expansion.len());
             for r in &part.expansion {
                 let latest = library
@@ -299,7 +326,7 @@ pub(crate) fn generate(
                 lineages.push((r.id, Some(latest)));
             }
             let name = library.definition(root).map(|(meta, _)| meta.name);
-            Some((lineages, name))
+            Some((lineages, name, root))
         }
         None => None,
     };
@@ -375,7 +402,7 @@ pub(crate) fn generate(
         derived: supplied.derived.clone(),
     }));
     let lineages: Vec<(DefinitionId, Option<Revision>)> = match &replaced {
-        Some((lineages, _)) => lineages.clone(),
+        Some((lineages, _, _)) => lineages.clone(),
         None => {
             let mut fresh = Vec::with_capacity(scope.kinds().len());
             for _ in scope.kinds() {
@@ -433,7 +460,7 @@ pub(crate) fn generate(
     let base_name = request
         .name
         .clone()
-        .or_else(|| replaced.as_ref().and_then(|(_, name)| name.clone()))
+        .or_else(|| replaced.as_ref().and_then(|(_, name, _)| name.clone()))
         .unwrap_or_else(|| {
             made.generation
                 .component
@@ -537,9 +564,117 @@ pub(crate) fn generate(
             key,
             result,
             created: true,
+            replaced: replaced.map(|(_, _, root)| root),
             notes: made.generation.notes,
         },
     })
+}
+
+/// The report for a part the project already holds: nothing changed.
+fn found(existing: &GeneratedPart, key: PartKey) -> Outcome {
+    Outcome::Generated {
+        report: GenerateReport {
+            root: existing.root,
+            revisions: existing.expansion.clone(),
+            key,
+            result: existing.from.result,
+            created: false,
+            replaced: None,
+            notes: Vec::new(),
+        },
+    }
+}
+
+/// The description of an embedded module, described at most once per hash.
+fn described<'a>(
+    document: &Document,
+    runtime: &dyn GeneratorRuntime,
+    cache: &'a mut Vec<(ContentHash, v1::Description)>,
+    hash: ContentHash,
+) -> Result<&'a v1::Description> {
+    let at = match cache.iter().position(|(h, _)| *h == hash) {
+        Some(at) => at,
+        None => {
+            let asset = generated::module(&document.project.library, hash).ok_or_else(|| {
+                Error::NotFound(format!(
+                    "generated.module_missing: the generator module sha256 {hash} is not embedded in this project"
+                ))
+            })?;
+            let description = runtime
+                .describe(&asset.data)
+                .map_err(|f| generated::failure(&f))?;
+            cache.push((hash, description));
+            cache.len() - 1
+        }
+    };
+    cache
+        .get(at)
+        .map(|(_, d)| d)
+        .ok_or_else(|| Error::Invalid("generated.module: a description was lost".into()))
+}
+
+/// Whether a part recorded with `old` parameters was made from the same
+/// parameters as `wire`: every recorded value is the same, and a parameter
+/// the newer module adds was not given (it takes the module's default or
+/// the project's setting).
+fn same_params(old: &GeneratorParams, wire: &v1::Request, given: &GeneratorParams) -> bool {
+    old.iter()
+        .all(|(k, v)| wire.params.get(k) == Some(&v.wire()))
+        && wire
+            .params
+            .keys()
+            .all(|k| old.contains_key(k) || !given.contains_key(k))
+}
+
+/// The newest part another module of the same generator (`id_hint`) made
+/// from the same parameters in the same scope, with that module's version.
+fn predecessor<'a>(
+    document: &'a Document,
+    runtime: &dyn GeneratorRuntime,
+    description: &v1::Description,
+    request: &Generate,
+    wire: &v1::Request,
+) -> Result<Option<(&'a GeneratedPart, u32)>> {
+    let mut cache = Vec::new();
+    let mut best: Option<(&GeneratedPart, u32)> = None;
+    for part in document.project.library.generated.iter() {
+        if part.from.scope != request.scope
+            || part.from.module == request.module.hash
+            || !same_params(&part.from.params, wire, &request.params)
+        {
+            continue;
+        }
+        let old = described(document, runtime, &mut cache, part.from.module)?;
+        if old.id_hint != description.id_hint {
+            continue;
+        }
+        let rank = |p: &GeneratedPart, v: u32| (v, p.root.revision, p.root.id);
+        if best.is_none_or(|(p, v)| rank(part, old.version) > rank(p, v)) {
+            best = Some((part, old.version));
+        }
+    }
+    Ok(best)
+}
+
+/// Refuse making `part` again with an older version of its generator.
+fn refuse_older(
+    document: &Document,
+    runtime: &dyn GeneratorRuntime,
+    description: &v1::Description,
+    part: &GeneratedPart,
+) -> Result<()> {
+    let mut cache = Vec::new();
+    let old = described(document, runtime, &mut cache, part.from.module)?;
+    if old.id_hint == description.id_hint && old.version > description.version {
+        return Err(Error::Conflict(format!(
+            "generated.older_version: {} was made by version {} of the generator ‘{}’; this module is version {}, which is older. A generated part is never downgraded. Nothing was changed.",
+            generated::describe(&document.project.library, part),
+            old.version,
+            old.name,
+            description.version
+        )));
+    }
+    Ok(())
 }
 
 /// `name` with `suffix`, within the label bound.

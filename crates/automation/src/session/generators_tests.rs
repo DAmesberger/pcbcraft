@@ -343,6 +343,61 @@ fn a_changed_stored_part_is_refused_naming_both_hashes() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn a_part_made_again_previews_moving_its_placed_instances() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let root = library(temp.path())?;
+    let mut session = session(&root)?;
+    let made = call(
+        &mut session,
+        "library.generate_part",
+        json!({"generator": "chip", "scope": "component", "preset": "resistor-0603"}),
+    );
+    assert_eq!(made["ok"], true, "{made}");
+    let revisions = made["result"]["outcome"]["report"]["revisions"].clone();
+    let component = revisions[0].clone();
+    let placed = call(
+        &mut session,
+        "project.apply",
+        json!({"operation": {"editor": "Instance", "operation": {"command": "component.place",
+            "params": {"component": {"id": component["id"], "revision": component["revision"]},
+                "designator": "R1", "properties": [], "representation": revisions[1]["id"],
+                "unit": 1, "position": [60.0, 0.0],
+                "physical": {"binding": revisions[4]["id"], "footprint": revisions[3]["id"]}}}}}),
+    );
+    assert_eq!(placed["ok"], true, "{placed}");
+    let instance = placed["result"]["outcome"]["instance"].clone();
+    // Made again as the next revision (here with another length, named
+    // explicitly; a newer generator version does the same by itself).
+    let again = call(
+        &mut session,
+        "library.generate_part",
+        json!({"generator": "chip", "scope": "component", "preset": "resistor-0603",
+            "params": {"length": 1_700_000}, "replaces": component}),
+    );
+    assert_eq!(again["ok"], true, "{again}");
+    let report = &again["result"]["outcome"]["report"];
+    assert_eq!(report["replaced"], component, "{report}");
+    assert_eq!(report["root"]["id"], component["id"]);
+    assert_eq!(report["root"]["revision"], 2);
+    // The instance still pins revision 1; the reply previews the move.
+    let pinned = session.engine().project().instances[0].component.revision;
+    assert_eq!(pinned.0, 1);
+    let update = &again["result"]["update"];
+    assert_eq!(update["revision"], session.engine().revision(), "{update}");
+    assert_eq!(update["change"]["params"]["instances"], json!([instance]));
+    assert_eq!(update["blockers"], json!([]), "{update}");
+    let applied = call(
+        &mut session,
+        "project.apply_update",
+        json!({"change": update["change"], "remove_conflicting_tracks": false}),
+    );
+    assert_eq!(applied["ok"], true, "{applied}");
+    let moved = session.engine().project().instances[0].component.revision;
+    assert_eq!(moved.0, 2);
+    Ok(())
+}
+
 fn base64(bytes: &[u8]) -> String {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
