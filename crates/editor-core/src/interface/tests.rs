@@ -468,7 +468,7 @@ fn a_sidecar_out_of_bounds_is_refused() -> Fallible {
 
 #[test]
 fn commands_have_their_wire_names_and_refuse_unknown_fields() -> Fallible {
-    let names: Vec<&str> = InterfaceCommand::CLASSES.iter().map(|(n, _)| *n).collect();
+    let names: Vec<&str> = InterfaceCommand::ENTRIES.iter().map(|e| e.name).collect();
     assert_eq!(
         names,
         [

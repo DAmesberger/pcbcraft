@@ -18,6 +18,7 @@ extern crate alloc;
 pub mod codec;
 pub mod params;
 pub mod runtime;
+pub mod surface;
 pub mod v1;
 
 pub use codec::{CodecError, decode, encode, hex, result_hash, sha256};

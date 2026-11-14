@@ -245,7 +245,7 @@ pub(crate) fn take_action(ctx: &egui::Context) -> Option<String> {
 /// none.
 pub fn titled_action(operation: &Operation) -> Option<String> {
     let name = operation.command();
-    let (_, title) = Operation::titles().find(|(wire, _)| *wire == name)?;
+    let title = Operation::entries().find(|entry| entry.name == name)?.title;
     let mut chars = title.chars();
     let first = chars.next()?;
     // An initialism ("ERC …") keeps its capitals.

@@ -11,7 +11,7 @@
 //! the message says so.
 //!
 //! The classes themselves are chosen beside each command enum
-//! ([`sparksmith_core::declare_classes!`], [`Request`]'s listing in `session`).
+//! ([`sparksmith_core::declare_entries!`], [`Request`]'s listing in `session`).
 //!
 //! The folder limit is a check on requests, not an operating-system sandbox:
 //! a link swapped in between the check and the file access is out of scope.
@@ -222,7 +222,16 @@ fn decide_with(
             instead: concat!("Tell the user what you would like changed and let them do it in ", sparksmith_core::product_name!(), ".").into(),
         });
     }
-    let paths = request.paths();
+    let Ok(paths) = request.paths() else {
+        return Decision::Refuse(Refusal {
+            code: "gate.unreadable",
+            command: command.to_owned(),
+            why:
+                "its parameters could not be read to find the files it names. Nothing was changed."
+                    .into(),
+            instead: "Send the request again with plain JSON values.".into(),
+        });
+    };
     for path in &paths {
         let inside =
             resolve(path).is_some_and(|path| folders.iter().any(|folder| path.starts_with(folder)));
@@ -246,7 +255,7 @@ fn decide_with(
     Decision::Ask(Question {
         command: command.to_owned(),
         class,
-        paths: paths.into_iter().map(str::to_owned).collect(),
+        paths,
         why: why.to_owned(),
     })
 }
@@ -327,7 +336,7 @@ impl Session {
         let request = match (request, self.path()) {
             (Request::Save(SaveParams { path: None }), Some(current)) => {
                 Request::Save(SaveParams {
-                    path: Some(current.display().to_string()),
+                    path: Some(current.display().to_string().into()),
                 })
             }
             (request, _) => request,

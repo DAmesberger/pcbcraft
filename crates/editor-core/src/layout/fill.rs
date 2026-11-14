@@ -96,13 +96,13 @@ pub enum FillCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(FillCommand {
+declare_entries!(FillCommand in layout {
     Add "fill.add" Edit "Add a copper fill",
     Edit "fill.edit" Edit "Edit a copper fill",
     Delete "fill.delete" Edit "Delete a copper fill",
-    Refill "fill.refill" Edit "Refill copper",
+    Refill "fill.refill" Edit "Refill copper" [long],
     Store "fill.store" Edit "Store a fill",
-    StoreAll "fill.store_all" Edit "Store all fills",
+    StoreAll "fill.store_all" Edit "Store all fills" [long],
     AddKeepout "keepout.add" Edit "Add a keep-out",
     EditKeepout "keepout.edit" Edit "Edit a keep-out",
     DeleteKeepout "keepout.delete" Edit "Delete a keep-out",

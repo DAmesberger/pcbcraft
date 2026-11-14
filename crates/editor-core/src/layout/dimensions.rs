@@ -80,7 +80,7 @@ pub enum DimensionCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(DimensionCommand {
+declare_entries!(DimensionCommand in layout {
     Add "layout.dimension_add" Edit "Dimension a part",
     Edit "layout.dimension_edit" Edit "Edit a part dimension",
     Delete "layout.dimension_delete" Edit "Delete a part dimension",

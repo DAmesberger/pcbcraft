@@ -260,7 +260,7 @@ pub fn footprint_lands(engine: &Engine, footprint: FootprintRef) -> Result<Vec<M
 #[serde(deny_unknown_fields)]
 pub struct PlacePartFileParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
+    pub path: Option<sparksmith_core::permission::FilePath>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -310,7 +310,7 @@ impl PlacePartFileParams {
     /// A placement of `source` at `position` with every default.
     pub fn new(source: PartFileSource, position: Point, expected_revision: u64) -> Self {
         let (path, builtin, model) = match source {
-            PartFileSource::Path(p) => (Some(p), None, None),
+            PartFileSource::Path(p) => (Some(p.into()), None, None),
             PartFileSource::Builtin(b) => (None, Some(b), None),
             PartFileSource::Model(m) => (None, None, Some(m)),
         };
@@ -338,7 +338,7 @@ impl PlacePartFileParams {
 
     pub fn source(&self) -> Result<PartFileSource> {
         match (&self.path, &self.builtin, &self.model) {
-            (Some(p), None, None) => Ok(PartFileSource::Path(p.clone())),
+            (Some(p), None, None) => Ok(PartFileSource::Path(p.to_string())),
             (None, Some(b), None) => Ok(PartFileSource::Builtin(b.clone())),
             (None, None, Some(m)) => Ok(PartFileSource::Model(*m)),
             _ => Err(invalid(

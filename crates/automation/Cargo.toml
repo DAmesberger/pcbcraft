@@ -12,6 +12,8 @@ workspace = true
 sparksmith-core.workspace = true
 sparksmith-io.workspace = true
 sparksmith-generators.workspace = true
+# The surface descriptors, `surface.lock` and the hash it records.
+sparksmith-generator-abi.workspace = true
 sparksmith-solidcraft.workspace = true
 sparksmith-firmware.workspace = true
 solidcraft-control.workspace = true

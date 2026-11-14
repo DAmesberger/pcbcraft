@@ -101,6 +101,7 @@ const MAP: &[(&str, &[&str])] = &[
     (
         "interface",
         &[
+            "permission",
             "geometry",
             "ids",
             "diagnostics",

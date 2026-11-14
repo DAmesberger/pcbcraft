@@ -24,12 +24,12 @@ pub struct FirmwareParams {
     /// The output file for `firmware.export`; ignored by the preview. It
     /// must not exist yet.
     #[serde(default)]
-    pub path: Option<String>,
+    pub path: Option<sparksmith_core::permission::FilePath>,
     /// C4: the user template's file (a Rhai script, at most 256 KiB) for
     /// the `user` emitter. Its SHA-256 must equal the emitter's
     /// `template` hash.
     #[serde(default)]
-    pub template_file: Option<String>,
+    pub template_file: Option<sparksmith_core::permission::FilePath>,
 }
 
 impl Session {

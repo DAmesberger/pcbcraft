@@ -1,22 +1,27 @@
-//! What each of the 237 catalog entries (the requests, `project.apply`'s
-//! operations and `project.query`'s queries) is, for the MCP surface
-//! (`docs/mcp-surface.md` §3): a title, a one-line summary, its kind, whether
-//! the person owns a step of it, whether it can run long, whether its result
-//! fits inline, and the MCP tool annotations its class gives.
+//! What each catalog entry (the requests, `project.apply`'s operations and
+//! `project.query`'s queries) is, for the MCP surface (`docs/mcp-surface.md`
+//! §3) and `surface.lock`: a title, a one-line summary, its module, kind,
+//! whether the person owns a step of it, whether it can run long, whether
+//! its result fits inline, its reach and effect, and the MCP tool
+//! annotations its class gives.
 //!
-//! Everything here is derived from the typed catalog: titles from the class
-//! listings beside each enum ([`sparksmith_core::declare_classes!`]), summaries
-//! from the request catalog and the operations' and queries' doc comments,
-//! and the rest from [`Class`], [`super::Request::NAMING_PATHS`] and the short lists
-//! below, each checked against the catalog by `metadata_tests.rs`.
+//! Everything here is derived from the typed catalog: the declarations
+//! beside each enum ([`sparksmith_core::declare_entries!`]), summaries from
+//! the request catalog and the operations' and queries' doc comments, and
+//! whether a request names a path from its parameter types
+//! ([`super::paths`]). No list here names an entry.
 use super::discovery::{self, Entry};
 use serde::Serialize;
 use sparksmith_core::Class;
+use sparksmith_core::permission::{
+    Effect, EntryDecl, HostFeature, Needs, Reach, Reaches, Time, Version,
+};
+pub use sparksmith_core::permission::{Person, ResultSize};
 use std::sync::OnceLock;
 
 /// The longest one-line summary, in bytes: what a `find` hit and a catalog
 /// index row carry.
-pub const MAX_SUMMARY: usize = 140;
+pub const MAX_SUMMARY: usize = sparksmith_core::permission::MAX_SUMMARY;
 /// A result larger than this many bytes is a candidate for a resource link
 /// instead of inline content (`docs/mcp-surface.md` §3.4).
 pub const INLINE_RESULT: usize = 2 * 1024;
@@ -31,28 +36,6 @@ pub enum Kind {
     Query,
     Operation,
     Action,
-}
-
-/// A step the person owns, which a model cannot take for them.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Person {
-    /// Allow or Deny before it runs: every action.
-    Approval,
-    /// The person sees the impact or the imported rows before it applies.
-    Review,
-}
-
-/// Whether a result fits [`INLINE_RESULT`].
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ResultSize {
-    /// Bounded by the request: one object, one calculation, a compact
-    /// mutation reply.
-    Inline,
-    /// Grows with the project, the library or a part: lists, reports,
-    /// schemas, previews.
-    Link,
 }
 
 /// MCP `ToolAnnotations` (`2026-07-28` schema). `destructiveHint` and
@@ -70,112 +53,15 @@ pub struct Annotations {
     pub open_world: bool,
 }
 
-/// Requests that read or write outside the document without naming a path:
-/// the person's library folders and their settings.
-pub const OUTSIDE_DOCUMENT: &[&str] = &[
-    "library.sources",
-    "library.rescan",
-    "library.favourite",
-    "library.bundle",
-    "library.import_from_folder",
-    "library.place_from_folder",
-    "library.publish_to_folder",
-    "library.open_preview",
-];
-
-/// Entries whose impact the person reviews before it applies: an update
-/// that moves instances, wiring or routed copper, and a datasheet import.
-pub const REVIEWED: &[&str] = &["project.apply_update", "update", "library.pinout_apply"];
-
-/// Entries that can run long enough to want progress, cancellation or a
-/// task: production checks and output, 3D export, fills, folder rescans and
-/// previews of large parts (`docs/mcp-surface.md` §3.8).
-pub const LONG: &[&str] = &[
-    "project.export_fabrication",
-    "project.export_native",
-    "fabrication.preflight",
-    "project.issues",
-    "library.rescan",
-    "fill.refill",
-    "fill.store_all",
-    "library.footprint_preview",
-    "library.pinout_preview",
-    "library.package_plan",
-];
-
-/// Entries whose result grows with the project, the library or a part, so
-/// it can pass [`INLINE_RESULT`]. Every other entry answers with a compact
-/// reply bounded by its request.
-pub const LINKED: &[&str] = &[
-    // Requests.
-    "project.inspect",
-    "project.schema",
-    "project.query",
-    "project.preview_update",
-    "project.export_fabrication",
-    "library.sources",
-    "library.rescan",
-    "library.bundle",
-    "library.open_preview",
-    "library.pinout_schema",
-    "firmware.export_preview",
-    "library.inspect_model_file",
-    "library.marking_surfaces",
-    "library.check_part_file",
-    "library.use_part_file",
-    "library.set_part_values",
-    "library.part_files",
-    "layout.place_part_file",
-    "layout.set_part_file_values",
-    // Queries.
-    "component.inspect",
-    "component.check",
-    "component.check_drafts",
-    "library.search",
-    "library.generic_parts",
-    "library.facets",
-    "library.inspect",
-    "project.bom",
-    "library.resolve_groups",
-    "library.footprint_preview",
-    "library.updates_available",
-    "library.promote_preview",
-    "project.issues",
-    "library.templates",
-    "library.standard_fields",
-    "library.package_plan",
-    "library.models",
-    "library.pinout_preview",
-    "functions.suggest",
-    "project.pin_report",
-    "project.pin_config",
-    "rules.effective",
-    "rules.fab_profiles",
-    "rules.preview_fab_profile",
-    "rules.preview_fab_options",
-    "net_class.list",
-    "net_class.preview_patterns",
-    "board.shape",
-    "fill.status",
-    "schematic.sheets",
-    "schematic.net_places",
-    "schematic.copy",
-    "schematic.scene",
-    "impedance.table",
-    "diff_pair.suggest",
-    "layout.length_report",
-    "layout.route_preview",
-    "layout.track_drag_preview",
-    "layout.tune_preview",
-    "fabrication.preflight",
-];
-
 /// One catalog entry's metadata.
 #[derive(Clone, Debug, Serialize)]
 pub struct EntryMeta {
     pub name: String,
     /// `command`, `operation` or `query`: where in today's catalog it is.
     pub family: &'static str,
+    /// The module it is declared in.
+    #[serde(skip)]
+    pub module: &'static str,
     pub title: &'static str,
     pub summary: String,
     pub class: Class,
@@ -185,6 +71,16 @@ pub struct EntryMeta {
     pub person: Option<Person>,
     pub long: bool,
     pub result: ResultSize,
+    /// What it touches outside the document: as declared, and files when
+    /// it names a path.
+    #[serde(skip)]
+    pub reach: Reaches,
+    #[serde(skip)]
+    pub effect: Effect,
+    #[serde(skip)]
+    pub needs: Needs,
+    #[serde(skip)]
+    pub since: Version,
     /// `None` for the Never class.
     pub annotations: Option<Annotations>,
 }
@@ -195,12 +91,25 @@ pub fn entries() -> &'static [EntryMeta] {
     ENTRIES.get_or_init(|| discovery::entries().iter().map(meta).collect())
 }
 
+/// An entry's reach: its declared one, with files when it names a path.
+pub fn reach(decl: Option<&EntryDecl>, takes_path: bool) -> Reaches {
+    let declared = decl.map_or(Reaches::NONE, |d| d.reach);
+    if takes_path {
+        declared.with(Reach::Files)
+    } else {
+        declared
+    }
+}
+
 fn meta(entry: &Entry) -> EntryMeta {
-    let name = entry.name.as_str();
+    let decl = entry.decl;
     let kind = kind(entry.class, entry.takes_path);
+    let reach = reach(decl, entry.takes_path);
+    let needs = decl.map_or(Needs::NONE, |d| d.needs);
     EntryMeta {
         name: entry.name.clone(),
         family: entry.kind,
+        module: decl.map_or("", |d| d.module),
         title: entry.title,
         summary: discovery::summary_of(entry),
         class: entry.class,
@@ -208,19 +117,20 @@ fn meta(entry: &Entry) -> EntryMeta {
         kind,
         person: match kind {
             Some(Kind::Action) => Some(Person::Approval),
-            _ if REVIEWED.contains(&name) => Some(Person::Review),
+            _ if decl.is_some_and(|d| d.person == Person::Review) => Some(Person::Review),
             _ => None,
         },
-        long: LONG.contains(&name),
-        result: if LINKED.contains(&name) {
-            ResultSize::Link
+        long: decl.is_some_and(|d| d.time == Time::Long),
+        result: decl.map_or(ResultSize::Inline, |d| d.result),
+        reach,
+        effect: decl.map_or(Effect::World, |d| d.effective_effect(reach)),
+        needs: if reach.contains(Reach::Files) {
+            needs.with(HostFeature::Files)
         } else {
-            ResultSize::Inline
+            needs
         },
-        annotations: annotations(
-            entry.class,
-            entry.takes_path || OUTSIDE_DOCUMENT.contains(&name),
-        ),
+        since: decl.map_or(sparksmith_core::permission::FIRST, |d| d.since),
+        annotations: annotations(entry.class, !reach.is_empty()),
     }
 }
 
@@ -231,7 +141,9 @@ pub fn kind(class: Class, takes_path: bool) -> Option<Kind> {
         (Class::Never, _) => None,
         (Class::Ask, _) | (_, true) => Some(Kind::Action),
         (Class::Read, false) => Some(Kind::Query),
-        (Class::Edit, false) => Some(Kind::Operation),
+        // No entry steers the window yet; until the `show` verb a window
+        // entry is reached like an edit.
+        (Class::Edit | Class::Show, false) => Some(Kind::Operation),
     }
 }
 
@@ -243,7 +155,7 @@ pub fn kind(class: Class, takes_path: bool) -> Option<Kind> {
 pub fn annotations(class: Class, outside: bool) -> Option<Annotations> {
     let (read_only, destructive) = match class {
         Class::Read => (true, None),
-        Class::Edit => (false, Some(false)),
+        Class::Show | Class::Edit => (false, Some(false)),
         Class::Ask => (false, Some(true)),
         Class::Never => return None,
     };
@@ -258,9 +170,6 @@ pub fn annotations(class: Class, outside: bool) -> Option<Annotations> {
 impl super::CommandInfo {
     /// This command's annotations, as its catalog entry has them.
     pub fn annotations(&self) -> Option<Annotations> {
-        annotations(
-            self.class,
-            self.takes_path || OUTSIDE_DOCUMENT.contains(&self.id),
-        )
+        annotations(self.class, !reach(self.decl, self.takes_path).is_empty())
     }
 }

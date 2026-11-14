@@ -81,7 +81,7 @@ pub enum InterfaceCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(InterfaceCommand {
+declare_entries!(InterfaceCommand in model3d {
     Export "interface.export" Edit "Export to the linked design",
     Unexport "interface.unexport" Edit "Stop exporting a datum",
     Rename "interface.rename" Edit "Rename an exported datum",
@@ -104,12 +104,12 @@ pub struct PublishPreviewParams {
     /// much. Without it, or when it is gone, a changed datum reads only as
     /// changed.
     #[serde(default)]
-    pub path: Option<String>,
+    pub path: Option<crate::permission::FilePath>,
     /// The linked design's file: with it (and `path`, the design it
     /// links), the preview runs the dry run on a scratch copy of it and
     /// names the linked design features that would move or fail (slice B4).
     #[serde(default)]
-    pub assembly_path: Option<String>,
+    pub assembly_path: Option<crate::permission::FilePath>,
 }
 
 /// `interface.publish` (a host request; Ask, because it writes files):
@@ -121,7 +121,7 @@ pub struct PublishPreviewParams {
 pub struct PublishParams {
     /// The `.solidcraft` file to write; the sidecar is written beside it
     /// as `<name>.interface.json`.
-    pub path: String,
+    pub path: crate::permission::FilePath,
     #[serde(default)]
     pub tier: Tier,
     /// The document revision the preview was made at.

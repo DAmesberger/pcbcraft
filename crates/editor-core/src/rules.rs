@@ -1492,7 +1492,7 @@ pub enum RulesCommand {
 }
 
 // A new command chooses its permission class here.
-declare_classes!(RulesCommand {
+declare_entries!(RulesCommand in rules {
     SetProfile "rules.set_fab_profile" Edit "Set the fab profile",
     SetOptions "rules.set_fab_options" Edit "Choose fab profile options",
     SetOverride "rules.set_override" Edit "Override a rule",
@@ -1504,12 +1504,12 @@ declare_classes!(RulesCommand {
     AssignNets "net_class.assign" Edit "Assign nets to a class",
     SetPatterns "net_class.set_patterns" Edit "Set net class patterns",
     SetClassClearance "net_class.set_clearance" Edit "Set a class-to-class clearance",
-    AddDiffPair "diff_pair.add" Edit "Add a differential pair",
-    EditDiffPair "diff_pair.edit" Edit "Edit a differential pair",
-    DeleteDiffPair "diff_pair.delete" Edit "Delete a differential pair",
-    AddLengthGroup "length_group.add" Edit "Add a length group",
-    EditLengthGroup "length_group.edit" Edit "Edit a length group",
-    DeleteLengthGroup "length_group.delete" Edit "Delete a length group",
+    AddDiffPair "diff_pair.add" Edit "Add a differential pair" [in layout],
+    EditDiffPair "diff_pair.edit" Edit "Edit a differential pair" [in layout],
+    DeleteDiffPair "diff_pair.delete" Edit "Delete a differential pair" [in layout],
+    AddLengthGroup "length_group.add" Edit "Add a length group" [in layout],
+    EditLengthGroup "length_group.edit" Edit "Edit a length group" [in layout],
+    DeleteLengthGroup "length_group.delete" Edit "Delete a length group" [in layout],
 });
 
 /// Apply one rules command. On failure `rules` is unchanged. Net
