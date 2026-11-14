@@ -54,6 +54,8 @@ pub fn read_bytes(path: &Path) -> Result<Vec<u8>> {
 }
 
 /// Write to a sibling temporary file, flush it, then rename it over `path`.
+/// On Unix a new file gets the usual permissions (0666 less the umask) and a
+/// replaced file keeps its own.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     write_via_temporary(path, bytes, true)
 }
@@ -70,28 +72,43 @@ fn write_via_temporary(path: &Path, bytes: &[u8], replace: bool) -> Result<()> {
     if bytes.len() > MAX_FILE_BYTES {
         return Err(Error::TooLarge("file exceeds 16 MiB".into()));
     }
-    write_with(path, replace, |file| Ok(file.write_all(bytes)?))
+    write_with(path, replace, Access::Shared, |file| {
+        Ok(file.write_all(bytes)?)
+    })
+}
+
+/// Who may read a file the atomic writers make. Unix only; elsewhere the
+/// platform's defaults apply.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Access {
+    /// A new file gets 0666 less the umask, as any program's file would; a
+    /// replaced file keeps its permissions.
+    Shared,
+    /// Owner only (0600), new or replaced: recovery snapshots.
+    Private,
 }
 
 /// Let `fill` write a sibling temporary file, sync it, then rename it over
 /// `path`. When `fill` fails, the temporary file is removed and `path` is
-/// untouched. `fill` bounds what it writes.
+/// untouched. `fill` bounds what it writes. Permissions as for
+/// [`atomic_write`].
 pub fn atomic_write_with(path: &Path, fill: impl FnOnce(&mut File) -> Result<()>) -> Result<()> {
-    write_with(path, true, fill)
+    write_with(path, true, Access::Shared, fill)
 }
 
 /// [`atomic_write_with`], replacing `path` only when `replace` is set;
 /// otherwise an existing `path` is an `AlreadyExists` error.
-fn write_with(
+pub(crate) fn write_with(
     path: &Path,
     replace: bool,
+    access: Access,
     fill: impl FnOnce(&mut File) -> Result<()>,
 ) -> Result<()> {
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    let mut temporary = temporary_in(parent, path, access)?;
     fill(temporary.as_file_mut())?;
     temporary.as_file().sync_all()?;
     if replace {
@@ -102,6 +119,40 @@ fn write_with(
             .map_err(|e| Error::Io(e.error))?;
     }
     sync_directory(parent)
+}
+
+/// The sibling temporary file for `path`, with the permissions `path` should
+/// end up with; tempfile's own default is owner-only.
+#[cfg(unix)]
+fn temporary_in(parent: &Path, path: &Path, access: Access) -> Result<tempfile::NamedTempFile> {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+    let existing = match std::fs::metadata(path) {
+        Ok(meta) => Some(meta.permissions().mode() & 0o777),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(error.into()),
+    };
+    // A new shared file is created with 0666 and the umask applies, as for
+    // any newly created file. A replaced one is created owner-only and then
+    // set exactly, so the umask cannot narrow what the file had.
+    let mode = match (access, existing) {
+        (Access::Shared, None) => 0o666,
+        _ => 0o600,
+    };
+    let temporary = tempfile::Builder::new()
+        .permissions(Permissions::from_mode(mode))
+        .tempfile_in(parent)?;
+    if let (Access::Shared, Some(existing)) = (access, existing) {
+        temporary
+            .as_file()
+            .set_permissions(Permissions::from_mode(existing))?;
+    }
+    Ok(temporary)
+}
+
+#[cfg(not(unix))]
+fn temporary_in(parent: &Path, _path: &Path, _access: Access) -> Result<tempfile::NamedTempFile> {
+    Ok(tempfile::NamedTempFile::new_in(parent)?)
 }
 
 /// Make a rename in `directory` durable. A failure is [`Error::Unsynced`]:

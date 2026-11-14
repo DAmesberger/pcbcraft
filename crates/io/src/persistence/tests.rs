@@ -168,6 +168,50 @@ fn atomic_create_never_replaces_an_existing_file() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
+fn mode(path: &Path) -> Result<u32> {
+    use std::os::unix::fs::PermissionsExt;
+    Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+}
+
+/// A new file gets the permissions any program's new file gets (0666 less
+/// the umask, as `File::create` in the same folder), not tempfile's 0600.
+#[cfg(unix)]
+#[test]
+fn a_new_file_gets_the_usual_permissions() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let reference = dir.path().join("reference.txt");
+    std::fs::File::create(&reference)?;
+    let written = dir.path().join("written.txt");
+    atomic_write(&written, b"new")?;
+    let created = dir.path().join("created.txt");
+    atomic_create(&created, b"new")?;
+    let project = dir.path().join("board.sparksmith");
+    write_project(&project, &Engine::demo()?.to_file())?;
+    assert_eq!(mode(&written)?, mode(&reference)?);
+    assert_eq!(mode(&created)?, mode(&reference)?);
+    assert_eq!(mode(&project)?, mode(&reference)?);
+    Ok(())
+}
+
+/// Replacing a file keeps its permissions, wider or narrower than usual.
+#[cfg(unix)]
+#[test]
+fn a_replaced_file_keeps_its_permissions() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir()?;
+    for kept in [0o640, 0o664, 0o600] {
+        let path = dir.path().join(format!("board-{kept:o}.sparksmith"));
+        write_project(&path, &Engine::demo()?.to_file())?;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(kept))?;
+        write_project(&path, &Engine::demo()?.to_file())?;
+        assert_eq!(mode(&path)?, kept);
+        atomic_write(&path, b"plain")?;
+        assert_eq!(mode(&path)?, kept);
+    }
+    Ok(())
+}
+
 /// When the file is already in place but its folder cannot be synchronized
 /// (here: a folder that may be written but not opened), the error says so
 /// with its own code; it is not a refusal of the input.

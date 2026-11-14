@@ -200,14 +200,35 @@ fn write_folder(output: &Path, files: &[FabFile]) -> Result<()> {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let staging = tempfile::Builder::new()
-        .prefix(".sparksmith-fab-")
-        .tempdir_in(parent)?;
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".sparksmith-fab-");
+    // tempfile's folders are owner-only. The output folder gets the usual
+    // permissions (0777 less the umask), or keeps those of the empty
+    // folder it replaces.
+    #[cfg(unix)]
+    let existing = {
+        use std::os::unix::fs::PermissionsExt;
+        let existing = match std::fs::metadata(output) {
+            Ok(meta) => Some(meta.permissions().mode() & 0o777),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        builder.permissions(std::fs::Permissions::from_mode(
+            existing.map_or(0o777, |_| 0o700),
+        ));
+        existing
+    };
+    let staging = builder.tempdir_in(parent)?;
     for file in files {
         let path = staging.path().join(&file.name);
         let mut f = std::fs::File::create(&path)?;
         f.write_all(&file.bytes)?;
         f.sync_all()?;
+    }
+    #[cfg(unix)]
+    if let Some(existing) = existing {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(staging.path(), std::fs::Permissions::from_mode(existing))?;
     }
     let staged = staging.keep();
     if let Err(error) = move_into_place(&staged, output) {
@@ -284,6 +305,30 @@ mod tests {
         move_into_place(&staged, &output)?;
         assert_eq!(std::fs::read_to_string(output.join("board.gbr"))?, "G04*");
         assert!(!staged.exists());
+        Ok(())
+    }
+
+    /// A new output folder gets the usual permissions, like one made by
+    /// `create_dir` (not tempfile's owner-only 0700); a chosen empty folder
+    /// keeps its own.
+    #[cfg(unix)]
+    #[test]
+    fn output_folders_get_usual_or_kept_permissions() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let mode =
+            |p: &Path| -> Result<u32> { Ok(std::fs::metadata(p)?.permissions().mode() & 0o777) };
+        let dir = tempfile::tempdir()?;
+        let reference = dir.path().join("reference");
+        std::fs::create_dir(&reference)?;
+        let output = dir.path().join("fab");
+        write_folder(&output, &[])?;
+        assert_eq!(mode(&output)?, mode(&reference)?);
+
+        let chosen = dir.path().join("chosen");
+        std::fs::create_dir(&chosen)?;
+        std::fs::set_permissions(&chosen, std::fs::Permissions::from_mode(0o750))?;
+        write_folder(&chosen, &[])?;
+        assert_eq!(mode(&chosen)?, 0o750);
         Ok(())
     }
 }
