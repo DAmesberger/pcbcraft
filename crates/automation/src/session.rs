@@ -1695,6 +1695,7 @@ pub fn schemas() -> Value {
 mod assembly_link;
 pub mod discovery;
 mod firmware;
+mod generated_models;
 mod generators;
 mod interface;
 mod marking;

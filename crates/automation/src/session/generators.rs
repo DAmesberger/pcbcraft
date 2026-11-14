@@ -23,6 +23,7 @@ use sparksmith_core::library::generated::{
     self, GeneratorParams, GeneratorRuntime, GeneratorScope, ParamValue,
 };
 use sparksmith_generators::abi::v1::{self, Description};
+use sparksmith_io::generator_bundle::GeneratorBundle;
 use sparksmith_io::shipped::ShippedLibrary;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -64,10 +65,12 @@ fn invalid(message: String) -> crate::Error {
     crate::Error::Document(sparksmith_core::Error::Invalid(message))
 }
 
-/// A generator module's bytes with where they came from.
+/// A generator module's bytes with where they came from: a shipped
+/// bundle (with its part files) or the project.
 struct ModuleBytes {
     hash: ContentHash,
     bytes: Vec<u8>,
+    bundle: Option<GeneratorBundle>,
 }
 
 impl Session {
@@ -106,10 +109,11 @@ impl Session {
     ) -> Result<ModuleBytes> {
         match (generator, module) {
             (Some(name), None) => {
-                let bytes = self.shipped()?.generator(name)?;
+                let bundle = self.shipped()?.generator(name)?;
                 Ok(ModuleBytes {
-                    hash: asset_hash(&bytes),
-                    bytes,
+                    hash: asset_hash(&bundle.module),
+                    bytes: bundle.module.clone(),
+                    bundle: Some(bundle),
                 })
             }
             (None, Some(hash)) => {
@@ -123,6 +127,7 @@ impl Session {
                 Ok(ModuleBytes {
                     hash,
                     bytes: asset.data.as_slice().to_vec(),
+                    bundle: None,
                 })
             }
             _ => Err(invalid(
@@ -164,7 +169,7 @@ impl Session {
         }
         values.extend(params.params);
         let embedded = generated::module(&self.engine.project().library, module.hash).is_some();
-        let operation = Operation::Library(LibraryCommand::Generate(Box::new(Generate {
+        let mut generate = Generate {
             module: ModuleSource {
                 hash: module.hash,
                 data: (!embedded).then(|| AssetBytes::new(module.bytes)),
@@ -173,7 +178,25 @@ impl Session {
             params: values,
             name: params.name,
             replaces: params.replaces,
-        })));
+            model: None,
+        };
+        // The model first (GP2): the module's part file, evaluated here at
+        // the values of the request the engine will run.
+        let runtime = self.runtime();
+        let (bytes, wire) = sparksmith_core::commands::generator_request(
+            self.engine.document(),
+            &generate,
+            &runtime,
+        )?;
+        let made = runtime
+            .generate(&bytes, &wire)
+            .map_err(|f| crate::Error::Document(generated::failure(&f)))?;
+        generate.model = Some(super::generated_models::generated_model(
+            &self.engine,
+            &made.generation,
+            module.bundle.as_ref(),
+        )?);
+        let operation = Operation::Library(LibraryCommand::Generate(Box::new(generate)));
         self.ensure_generators();
         self.apply(params.expected_revision, operation)
     }
@@ -190,7 +213,9 @@ impl Session {
         };
         if let Ok(found) = &located {
             for name in names {
-                let bytes = found.generator(&name)?;
+                let bundle = found.generator(&name)?;
+                let bundle_hash = bundle.hash;
+                let bytes = bundle.module;
                 let hash = asset_hash(&bytes);
                 match self.describe(&bytes) {
                     Ok(description) => {
@@ -199,6 +224,7 @@ impl Session {
                         shipped.push(json!({
                             "name": name,
                             "module": hash,
+                            "bundle": bundle_hash,
                             "bytes": bytes.len(),
                             "description": summary(&description),
                         }));
@@ -206,6 +232,7 @@ impl Session {
                     Err(error) => shipped.push(json!({
                         "name": name,
                         "module": hash,
+                        "bundle": bundle_hash,
                         "refused": error.to_string(),
                     })),
                 }

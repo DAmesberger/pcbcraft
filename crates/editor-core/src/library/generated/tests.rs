@@ -21,6 +21,64 @@ struct StandIn;
 
 const MODULE: &[u8] = b"stand-in module";
 const CHANGED: &[u8] = b"v2";
+/// A module whose model names another part file than the host evaluated.
+const OTHER_PART: &[u8] = b"names another part file";
+/// The stand-in's part file (the core never evaluates it).
+const PART: &[u8] = b"stand-in part file";
+
+/// The stand-in's model: its part file at the body length.
+fn model(length: i64, part: &[u8]) -> Model {
+    Model::PartFile {
+        asset: asset_hash(part).to_string(),
+        values: [("length".to_string(), ParamValue::Int(length))]
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// What the host gives `library.generate` for the stand-in's part file
+/// at `length`: the Model it becomes, its bytes, the values in mm and
+/// what it evaluated to.
+fn evaluated(length: i64) -> crate::commands::GeneratedModel {
+    use crate::library::model3d::{AssetRef, ModelDefinition, ModelFormat, ModelProvenance};
+    use crate::library::package_model::{PartDerived, PartValue};
+    use crate::units::Nm;
+    let nm = |v: i64| Nm::new(v).unwrap_or_default();
+    let bounds = [
+        [nm(-length / 2), nm(-400_000), nm(0)],
+        [nm(length / 2), nm(400_000), nm(450_000)],
+    ];
+    crate::commands::GeneratedModel {
+        definition: ModelDefinition {
+            asset: AssetRef {
+                hash: asset_hash(PART),
+                bytes: PART.len() as u64,
+                media_type: ModelFormat::Solidcraft.media_type().into(),
+                file_name: "stand-in.solidcraft".into(),
+            },
+            format: ModelFormat::Solidcraft,
+            bounds_nm: bounds,
+            provenance: ModelProvenance {
+                record: crate::library::part::Provenance {
+                    licence: Some("MIT OR Apache-2.0".into()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..ModelDefinition::default()
+        },
+        name: "Stand-in part".into(),
+        data: Some(AssetBytes::new(PART.to_vec())),
+        values: [("length".to_string(), PartValue::Mm(length as f64 / 1e6))]
+            .into_iter()
+            .collect(),
+        derived: PartDerived {
+            bounds_nm: bounds,
+            bodies: 1,
+            ..PartDerived::default()
+        },
+    }
+}
 
 fn length_param() -> Param {
     Param {
@@ -46,7 +104,7 @@ fn graphic(shape: Primitive) -> Graphic {
     }
 }
 
-fn generation(length: i64, shift: i64, scope: Scope) -> Generation {
+fn generation(length: i64, shift: i64, scope: Scope, part: &[u8]) -> Generation {
     let x = length / 2 - 350_000 + shift;
     let pad = |key: &str, at: Point| Pad {
         key: key.into(),
@@ -157,7 +215,7 @@ fn generation(length: i64, shift: i64, scope: Scope) -> Generation {
         } else {
             Vec::new()
         },
-        model: None,
+        model: Some(model(length, part)),
         fields: Vec::new(),
         notes: vec!["A stand-in.".into()],
     }
@@ -168,6 +226,7 @@ impl GeneratorRuntime for StandIn {
         Ok(Description {
             abi: ABI,
             id_hint: "stand-in".into(),
+            version: 1,
             name: "Stand-in".into(),
             families: vec!["chip".into()],
             scopes: vec![Scope::Component, Scope::Package],
@@ -189,7 +248,8 @@ impl GeneratorRuntime for StandIn {
             _ => return Err(Failure::one("param.missing", "length".into())),
         };
         let shift = if module == CHANGED { 10_000 } else { 0 };
-        let generation = generation(length, shift, request.scope);
+        let part = if module == OTHER_PART { CHANGED } else { PART };
+        let generation = generation(length, shift, request.scope, part);
         let canonical = sparksmith_generator_abi::encode(&generation)
             .map_err(|e| Failure::one("generator.invalid_output", e.to_string()))?;
         Ok(Generated {
@@ -219,6 +279,7 @@ fn request(module: &[u8], scope: GeneratorScope, length: i64) -> Generate {
         params,
         name: None,
         replaces: None,
+        model: Some(evaluated(length)),
     }
 }
 
@@ -272,6 +333,36 @@ fn a_part_is_published_embedded_and_recorded_in_one_step() -> TestResult {
     verify(&reread.project.library, &mut run)?;
     // The expansion is exact: symbol arcs at quarter turns, pins along the
     // axes, pads where the generation put them.
+    // The package's model is the module's part file, published as a Model
+    // of the project, at the module's values.
+    let package = library.packages.first().ok_or("no package")?;
+    let crate::library::PackageModel::PartFile(part) = &package.definition.model else {
+        return Err("the package has no part file".into());
+    };
+    let model = library
+        .model(part.model)
+        .ok_or("the part file is not a Model")?;
+    assert_eq!(model.definition.asset.hash, asset_hash(PART));
+    assert_eq!(
+        part.values.get("length"),
+        Some(&crate::library::package_model::PartValue::Mm(1.6))
+    );
+    // The stored package's values edited behind the record: refused on
+    // load.
+    let mut edited = engine.to_file();
+    let packages = &mut edited.project.library.packages;
+    if let Some(crate::library::PackageModel::PartFile(part)) =
+        packages.first_mut().map(|p| &mut p.definition.model)
+    {
+        part.values.insert(
+            "length".into(),
+            crate::library::package_model::PartValue::Mm(1.7),
+        );
+    }
+    let error = verify(&edited.project.library, &mut run)
+        .err()
+        .ok_or("accepted")?;
+    assert_eq!(error.rule(), Some("generated.expansion_changed"), "{error}");
     let footprint = library.footprints.first().ok_or("no footprint")?;
     assert_eq!(footprint.definition.pads[0].position.x_nm.get(), -450_000);
     assert_eq!(footprint.definition.pads[1].number, "2");
@@ -303,7 +394,9 @@ fn the_same_key_finds_the_part_and_changes_nothing() -> TestResult {
     assert_eq!(other.revisions.len(), 2);
     assert_ne!(other.key, first.key);
     let library = &engine.project().library;
-    assert_eq!(library.assets.len(), 1);
+    // The module and the part file, each packed once; one Model of it.
+    assert_eq!(library.assets.len(), 2);
+    assert_eq!(library.models.len(), 1);
     assert_eq!(library.generated.len(), 2);
     Ok(())
 }
@@ -334,6 +427,37 @@ fn refusals_leave_the_document_unchanged() -> TestResult {
         generate(&mut engine, missing),
         Err(Error::NotFound(m)) if m.starts_with("generated.module_missing")
     ));
+    // A model the host did not evaluate: refused, a part never exists
+    // without its model.
+    let mut unevaluated = request(MODULE, GeneratorScope::Component, 1_600_000);
+    unevaluated.model = None;
+    let refused = generate(&mut engine, unevaluated);
+    assert!(
+        matches!(&refused, Err(Error::Invalid(m)) if m.starts_with("generated.model_unevaluated")),
+        "{refused:?}"
+    );
+    // The host evaluated another part file than the module names.
+    let other = generate(
+        &mut engine,
+        request(OTHER_PART, GeneratorScope::Component, 1_600_000),
+    );
+    assert!(
+        matches!(&other, Err(Error::Invalid(m)) if m.starts_with("generated.model:")),
+        "{other:?}"
+    );
+    // Other values than the module's.
+    let mut values = request(MODULE, GeneratorScope::Component, 1_600_000);
+    if let Some(model) = &mut values.model {
+        model.values.insert(
+            "length".into(),
+            crate::library::package_model::PartValue::Mm(1.7),
+        );
+    }
+    let refused = generate(&mut engine, values);
+    assert!(
+        matches!(&refused, Err(Error::Invalid(m)) if m.contains("value \"length\" is not the generator's")),
+        "{refused:?}"
+    );
     // A parameter out of the module's range.
     let small = generate(&mut engine, request(MODULE, GeneratorScope::Component, 1));
     assert!(
@@ -410,7 +534,11 @@ fn records_need_their_module_and_revisions() -> TestResult {
     )?;
     let file = engine.to_file();
     let mut no_module = file.clone();
-    no_module.project.library.assets.clear();
+    no_module
+        .project
+        .library
+        .assets
+        .retain(|a| a.media_type != generated::MODULE_MEDIA_TYPE);
     let error = no_module.validate().err().ok_or("accepted")?;
     assert_eq!(error.rule(), Some("generated.module_missing"), "{error}");
     let mut twice = file.clone();
@@ -451,7 +579,12 @@ fn a_changed_module_makes_the_next_revisions_of_the_same_lineages() -> TestResul
         2,
         "both revisions keep their record"
     );
-    assert_eq!(library.assets.len(), 2, "both modules are embedded");
+    let modules = library
+        .assets
+        .iter()
+        .filter(|a| a.media_type == generated::MODULE_MEDIA_TYPE)
+        .count();
+    assert_eq!(modules, 2, "both modules are embedded");
     verify(library, &mut |module: &PackedAsset, request: &Request| {
         StandIn.generate(&module.data, request)
     })?;
