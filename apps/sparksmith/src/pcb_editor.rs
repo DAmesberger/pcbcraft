@@ -431,10 +431,11 @@ pub struct PcbEditor {
     /// PCB 3D's layer toggles; its outer copper and silkscreen entries are
     /// `layers`' ([`PcbEditor::layer_view`]).
     view_layers: crate::layer_view::LayerView,
-    /// PCB 3D's Board interface entry: the interface's datums drawn
-    /// over the model at rest. Off by default; editing the interface shows
-    /// them anyway ([`PcbEditor::paint_datums`]).
-    interface_3d: bool,
+    /// The Board interface entry of the Layers menus, one setting for
+    /// PCB 2D and 3D: the interface's datums drawn over the view at rest.
+    /// Off by default; editing the interface shows them anyway
+    /// ([`PcbEditor::paint_datums`]).
+    interface_shown: bool,
     from_bottom: bool,
     /// The staged width of the selected track, committed on focus loss.
     track_width: f64,
@@ -594,7 +595,7 @@ impl Default for PcbEditor {
             labelled: BTreeSet::new(),
             layers: Layers::default(),
             view_layers: Default::default(),
-            interface_3d: false,
+            interface_shown: false,
             from_bottom: false,
             track_width: 0.0,
             editing: None,
@@ -680,15 +681,15 @@ impl PcbEditor {
         self.view_layers = view;
     }
 
-    /// Whether PCB 3D's Board interface entry is on.
-    pub fn shows_interface_3d(&self) -> bool {
-        self.interface_3d
+    /// Whether the Board interface entry (PCB 2D and 3D) is on.
+    pub fn shows_interface(&self) -> bool {
+        self.interface_shown
     }
 
-    /// Turn PCB 3D's Board interface entry on or off: display only,
-    /// the model is neither rebuilt nor packed again.
-    pub fn set_shows_interface_3d(&mut self, shown: bool) {
-        self.interface_3d = shown;
+    /// Turn the Board interface entry on or off in PCB 2D and 3D: display
+    /// only, the model is neither rebuilt nor packed again.
+    pub fn set_shows_interface(&mut self, shown: bool) {
+        self.interface_shown = shown;
     }
 
     /// The toggles PCB 2D and 3D share: every copper layer, the vias and

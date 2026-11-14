@@ -274,6 +274,8 @@ impl PcbEditor {
                 kit::check_row(ui, "Courtyard", &mut l.courtyard);
                 kit::check_row(ui, "Assembly", &mut l.assembly);
                 kit::check_row(ui, "Holes", &mut l.holes);
+                // One setting with PCB 3D's entry: display only.
+                kit::check_row(ui, "Board interface", &mut self.interface_shown);
                 kit::hint(ui, "Hidden layers are not picked", "");
             });
             kit::section(ui, "pcb-view-display", "View", true, None, |ui| {

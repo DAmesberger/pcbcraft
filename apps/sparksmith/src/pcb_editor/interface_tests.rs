@@ -972,8 +972,8 @@ fn painted(
     painted_at(editor, engine, ctx, view, true)
 }
 
-/// [`painted`], with the interface shown at rest or not (PCB 3D's
-/// Board interface entry).
+/// [`painted`], with the interface shown at rest or not (the Layers
+/// menus' Board interface entry).
 fn painted_at(
     editor: &mut PcbEditor,
     engine: &Engine,
@@ -1069,13 +1069,14 @@ fn datums_are_drawn_in_layout_and_3d_by_one_painter() -> TestResult {
     Ok(())
 }
 
-/// PCB 3D hides the interface by default (finding 18 of the fourth E2E
-/// run): the Board card or a selected part draws nothing over the model
-/// until the Layers popover's Board interface entry is on. Editing the
+/// PCB 2D and 3D hide the interface by default (finding 18 of the fourth
+/// E2E run, finding 6 of the fifth): the Board card or a selected part
+/// draws nothing over the board until the Layers menus' one Board
+/// interface entry is on. Editing the
 /// interface shows it anyway: the selected datum, and every datum while a
 /// publish preview is docked.
 #[test]
-fn pcb_3d_shows_the_interface_only_when_asked_or_edited() -> TestResult {
+fn the_pcb_shows_the_interface_only_when_asked_or_edited() -> TestResult {
     let mut engine = demo()?;
     let ctx = context();
     let mut editor = PcbEditor::default();
@@ -1083,12 +1084,12 @@ fn pcb_3d_shows_the_interface_only_when_asked_or_edited() -> TestResult {
     let opening = format!("{part} opening");
     let view = View { oblique: true };
     let in_3d = |editor: &mut PcbEditor, engine: &Engine| {
-        let at_rest = editor.shows_interface_3d();
+        let at_rest = editor.shows_interface();
         painted_at(editor, engine, &ctx, &view, at_rest)
     };
 
     // By default: nothing over the board, with the Board card or the part.
-    assert!(!editor.shows_interface_3d());
+    assert!(!editor.shows_interface());
     let (words, colours, points) = in_3d(&mut editor, &engine);
     assert!(words.is_empty() && colours.is_empty() && points.is_empty());
     editor.instance = Some(instance);
@@ -1096,10 +1097,10 @@ fn pcb_3d_shows_the_interface_only_when_asked_or_edited() -> TestResult {
     assert!(words.is_empty() && points.is_empty(), "{words:?}");
 
     // The entry on: what Layout shows.
-    editor.set_shows_interface_3d(true);
+    editor.set_shows_interface(true);
     let (words, _, _) = in_3d(&mut editor, &engine);
     assert!(words.contains(&opening), "{words:?}");
-    editor.set_shows_interface_3d(false);
+    editor.set_shows_interface(false);
     editor.instance = None;
 
     // A datum selected in the Interface section: that datum, lit.
