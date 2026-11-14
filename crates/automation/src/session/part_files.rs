@@ -23,7 +23,7 @@ use sparksmith_core::library::model3d::{
     AssetRef, AssignModel, AssignPart, ImportModel, ModelDefinition, ModelFormat, ModelProvenance,
     Redistribution,
 };
-use sparksmith_core::library::package_model::{PackageEdit, PartFileModel};
+use sparksmith_core::library::package_model::{PackageEdit, PartFileModel, PartValue};
 use sparksmith_core::library::{Basis, Provenance};
 use sparksmith_core::library::{Definition, PackageDefinition, PackageModel};
 use sparksmith_core::{Engine, Operation};
@@ -37,6 +37,58 @@ const MAX_PATH: usize = 4095;
 /// The media type of a part file asset.
 const MEDIA_TYPE: &str = "application/x-solidcraft";
 
+/// A part-file value as the command wire takes it: the stored integer forms
+/// (`{"nm": 2465000}`, `{"mdeg": 45000}`, `{"count": 25}`,
+/// `{"milli": 500}`) or a number in the parameter's own unit
+/// (`{"mm": 2.465}`, `{"deg": 45}`, `{"number": 0.5}`), which is
+/// rounded once to the integer the project stores.
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum WireValue {
+    Nm(i64),
+    Mdeg(i64),
+    Count(u32),
+    Milli(i64),
+    Mm(f64),
+    Deg(f64),
+    Number(f64),
+}
+
+impl WireValue {
+    fn value(self) -> Option<PartValue> {
+        match self {
+            Self::Nm(v) => Some(PartValue::Nm(v)),
+            Self::Mdeg(v) => Some(PartValue::Mdeg(v)),
+            Self::Count(n) => Some(PartValue::Count(n)),
+            Self::Milli(v) => Some(PartValue::Milli(v)),
+            Self::Mm(v) => PartValue::from_mm(v),
+            Self::Deg(v) => PartValue::from_deg(v),
+            Self::Number(v) => PartValue::from_number(v),
+        }
+    }
+}
+
+/// Reads a command's `values` ([`WireValue`] each) as stored values.
+pub(crate) fn wire_values<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<PartValues, D::Error> {
+    let wire: std::collections::BTreeMap<String, WireValue> =
+        Deserialize::deserialize(deserializer)?;
+    wire.into_iter()
+        .map(|(name, value)| {
+            let stored = value.value().ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "the value of {name} must be finite and within ±10000"
+                ))
+            })?;
+            Ok((name, stored))
+        })
+        .collect()
+}
+
+/// The schema of a command's `values`.
+pub(crate) type WireValues = std::collections::BTreeMap<String, WireValue>;
+
 /// `library.check_part_file`: a file (`path`) or a built-in part file
 /// (`builtin`), and values for some of its parameters.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -48,7 +100,8 @@ pub struct CheckPartFileParams {
     pub builtin: Option<String>,
     /// Literal values by the part's own parameter names:
     /// `{"can_height": {"mm": 2.465}, "rows": {"count": 25}}`.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "wire_values")]
+    #[schemars(with = "WireValues")]
     pub values: PartValues,
 }
 
@@ -62,7 +115,8 @@ pub struct UsePartFileParams {
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub builtin: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "wire_values")]
+    #[schemars(with = "WireValues")]
     pub values: PartValues,
     /// The new model's name (the file or built-in name when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -82,6 +136,8 @@ pub struct UsePartFileParams {
 #[serde(deny_unknown_fields)]
 pub struct SetPartValuesParams {
     pub package: DefinitionId,
+    #[serde(deserialize_with = "wire_values")]
+    #[schemars(with = "WireValues")]
     pub values: PartValues,
     pub expected_revision: u64,
 }

@@ -71,7 +71,7 @@ fn part_file_timings() {
         let mut values = part_file::PartValues::new();
         values.insert(
             "can_round".into(),
-            PartValue::Mm(0.25 + f64::from(round) * 0.01),
+            PartValue::Nm(250_000 + i64::from(round) * 10_000),
         );
         let t = Instant::now();
         let part = part_file::evaluate(bytes, &values).unwrap();

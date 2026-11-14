@@ -54,7 +54,7 @@ fn generated(key: &str) -> Result<(Vec<u8>, PartValues, [i64; 4], String)> {
     let runtime = WasmiRuntime::new(Limits::DEFAULT);
     let description = runtime.describe(CHIP).map_err(fail)?;
     let preset = description
-        .presets
+        .presets()
         .iter()
         .find(|p| p.key == key)
         .ok_or_else(|| Error::Verification(format!("no preset {key}")))?;
@@ -68,7 +68,7 @@ fn generated(key: &str) -> Result<(Vec<u8>, PartValues, [i64; 4], String)> {
         let ParamValue::Int(v) = value else {
             return Err(Error::Verification(format!("{name} is not an integer")));
         };
-        converted.insert(name.clone(), PartValue::Mm(n(*v)?.to_mm_f64()));
+        converted.insert(name.clone(), PartValue::Nm(n(*v)?.get()));
     }
     let int = |k: &str| match request.params.get(k) {
         Some(ParamValue::Int(v)) => *v,

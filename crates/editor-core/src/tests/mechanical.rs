@@ -58,7 +58,10 @@ fn nut(height: f64, pads: PadUse) -> PartSpec {
         designator_prefix: "H".into(),
         source: "smd-nut".into(),
         model: file_source(),
-        values: BTreeMap::from([("height".to_owned(), PartValue::Mm(height))]),
+        values: BTreeMap::from([(
+            "height".to_owned(),
+            PartValue::from_mm(height).unwrap_or(PartValue::Nm(0)),
+        )]),
         derived: PartDerived {
             bounds_nm: crate::tests::support::nm_bounds([[-2.5, -2.5, 0.0], [2.5, 2.5, height]]),
             bodies: 1,
@@ -306,7 +309,7 @@ fn editing_values_moves_the_instance_to_the_variant_and_keeps_its_identity() -> 
     let PackageModel::PartFile(file) = &package.definition.model else {
         return Err(missing("a part file package"));
     };
-    assert_eq!(file.values.get("height"), Some(&PartValue::Mm(5.0)));
+    assert_eq!(file.values.get("height"), Some(&PartValue::Nm(5_000_000)));
     // Back to the first values: the existing variant, nothing made.
     let outcome = apply(
         &mut engine,

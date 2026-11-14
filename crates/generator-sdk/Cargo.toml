@@ -6,15 +6,25 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
-[lints]
-workspace = true
+# The workspace lints, except unsafe_code: denied, not forbidden, so the
+# host-function import block (`host`) can allow it; an import has no safe
+# spelling. No other unsafe code.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
 
 # no_std + alloc: compiled into every generator module. Nothing here may
 # embed host paths, time or other build-machine state (reproducible modules).
 [dependencies]
 sparksmith-generator-abi.workspace = true
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
 # The request and response buffers between calls (MIT; already in the tree
 # through wasmi).
 spin = { version = "0.9", default-features = false, features = ["mutex", "spin_mutex"] }

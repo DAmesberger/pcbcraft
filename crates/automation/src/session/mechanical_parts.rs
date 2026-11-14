@@ -266,7 +266,8 @@ pub struct PlacePartFileParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<ModelRef>,
     /// Literal values by the part's own parameter names.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::part_files::wire_values")]
+    #[schemars(with = "super::part_files::WireValues")]
     pub values: PartValues,
     /// Board position of the part origin, mm.
     pub position: Point,
@@ -353,7 +354,8 @@ impl PlacePartFileParams {
 pub struct SetPartFileValuesParams {
     pub instance: Id,
     /// The new values (they replace the previous ones).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "super::part_files::wire_values")]
+    #[schemars(with = "super::part_files::WireValues")]
     pub values: PartValues,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pads: Option<PadUse>,

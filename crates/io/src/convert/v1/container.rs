@@ -19,6 +19,8 @@ pub struct Converted {
     /// Stored values rewritten.
     pub values: usize,
     pub identity: identity::Refreshed,
+    /// What a step says beyond counts, one line each.
+    pub notes: Vec<String>,
     /// Where the original was kept.
     pub backup: Option<PathBuf>,
 }
@@ -61,6 +63,10 @@ pub fn convert(path: &Path, options: &Options) -> Result<Converted> {
         return Err(format!("{CONTAINER_DOCUMENT} exceeds {MAX_FILE_BYTES} bytes").into());
     }
     let mut file: Value = serde_json::from_slice(&document)?;
+    let notes = match file.get("version").and_then(Value::as_u64) {
+        Some(version) if version < 3 => crate::convert::v2::notes(&file),
+        _ => Vec::new(),
+    };
     let Upgraded { from, values } = upgrade(&mut file, options)?;
     if from == FILE_VERSION {
         return Ok(Converted {
@@ -101,6 +107,7 @@ pub fn convert(path: &Path, options: &Options) -> Result<Converted> {
         from,
         values,
         identity,
+        notes,
         backup: Some(backup),
     })
 }

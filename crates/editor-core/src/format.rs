@@ -24,7 +24,7 @@ use std::sync::Arc;
 pub const MAX_FILE_BYTES: usize = 16 * 1024 * 1024;
 /// Raised on every incompatible change to a stored type, with a converter
 /// step from the previous version (`sparksmith_io::convert::STEPS`).
-pub const FILE_VERSION: u32 = 2;
+pub const FILE_VERSION: u32 = 3;
 /// The optional capabilities this build reads, by the name a file lists
 /// them under. None are defined yet; a feature is added here together with
 /// its test in [`features_used`].

@@ -346,32 +346,26 @@ impl Evaluator {
 /// whole number (a count).
 fn value_kind(parameter: &PartParameter, given: Option<PartValue>) -> PartValue {
     match (parameter.unit.as_str(), given) {
-        ("mm", _) => PartValue::Mm(0.0),
-        ("deg", _) => PartValue::Deg(0.0),
+        ("mm", _) => PartValue::Nm(0),
+        ("deg", _) => PartValue::Mdeg(0),
         (_, Some(PartValue::Count(_))) => PartValue::Count(0),
-        (_, Some(PartValue::Number(_))) => PartValue::Number(0.0),
+        (_, Some(PartValue::Milli(_))) => PartValue::Milli(0),
         _ => match parameter.value {
             Some(v) if v >= 0.0 && v.fract() == 0.0 && v <= *COUNT_RANGE.end() => {
                 PartValue::Count(0)
             }
-            _ => PartValue::Number(0.0),
+            _ => PartValue::Milli(0),
         },
     }
 }
 
-fn number(value: PartValue) -> f64 {
-    match value {
-        PartValue::Mm(v) | PartValue::Deg(v) | PartValue::Number(v) => v,
-        PartValue::Count(n) => f64::from(n),
-    }
-}
-
-/// `v` typed as `kind`, or `None` for a count that is not whole.
+/// `v` typed as `kind` (rounded to its integer unit), or `None` for a
+/// count that is not whole.
 fn typed(kind: PartValue, v: f64) -> Option<PartValue> {
     match kind {
-        PartValue::Mm(_) => Some(PartValue::Mm(v)),
-        PartValue::Deg(_) => Some(PartValue::Deg(v)),
-        PartValue::Number(_) => Some(PartValue::Number(v)),
+        PartValue::Nm(_) => PartValue::from_mm(v),
+        PartValue::Mdeg(_) => PartValue::from_deg(v),
+        PartValue::Milli(_) => PartValue::from_number(v),
         PartValue::Count(_) => (v.fract() == 0.0 && COUNT_RANGE.contains(&v))
             // Bounded and whole by the check above.
             .then_some(PartValue::Count(v as u32)),
@@ -381,9 +375,9 @@ fn typed(kind: PartValue, v: f64) -> Option<PartValue> {
 /// The unit a field shows for `kind`.
 fn unit(kind: PartValue) -> &'static str {
     match kind {
-        PartValue::Mm(_) => "mm",
-        PartValue::Deg(_) => "°",
-        PartValue::Count(_) | PartValue::Number(_) => "",
+        PartValue::Nm(_) => "mm",
+        PartValue::Mdeg(_) => "°",
+        PartValue::Count(_) | PartValue::Milli(_) => "",
     }
 }
 
@@ -403,7 +397,10 @@ pub fn values_form(
         for parameter in parameters {
             let given = editing.get(&parameter.name).copied();
             let kind = value_kind(parameter, given);
-            let mut v = given.map(number).or(parameter.value).unwrap_or(0.0);
+            let mut v = given
+                .map(PartValue::amount)
+                .or(parameter.value)
+                .unwrap_or(0.0);
             let range = match kind {
                 PartValue::Count(_) => COUNT_RANGE,
                 _ => VALUE_RANGE,

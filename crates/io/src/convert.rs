@@ -21,6 +21,7 @@ use sparksmith_core::format::FILE_VERSION;
 use std::path::Path;
 
 pub mod v1;
+pub mod v2;
 
 pub type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -44,11 +45,18 @@ pub struct Step {
 
 /// The chain, oldest first: one step from every version before
 /// [`FILE_VERSION`].
-pub const STEPS: &[Step] = &[Step {
-    from: 1,
-    summary: "lengths in integer nanometres and turns in millidegrees (schematic and library), fab profiles as files",
-    apply: v1::container::step,
-}];
+pub const STEPS: &[Step] = &[
+    Step {
+        from: 1,
+        summary: "lengths in integer nanometres and turns in millidegrees (schematic and library), fab profiles as files",
+        apply: v1::container::step,
+    },
+    Step {
+        from: 2,
+        summary: "part-file values in integers; generated parts of the old generator ABI detached into ordinary parts",
+        apply: v2::step,
+    },
+];
 
 /// What [`upgrade`] did.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

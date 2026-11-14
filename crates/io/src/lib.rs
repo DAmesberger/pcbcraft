@@ -17,6 +17,7 @@ pub mod materials;
 pub mod new_project;
 pub mod pdf;
 pub mod persistence;
+pub mod plugin_approvals;
 pub mod recovery;
 pub mod rule_profiles;
 pub mod schematic_pdf;

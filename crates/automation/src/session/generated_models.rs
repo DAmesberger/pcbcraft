@@ -92,9 +92,9 @@ fn find(
     }
 }
 
-/// `values` (the generation's integers) in the part file's own units:
-/// nanometres to mm for a length parameter, millidegrees to degrees for an
-/// angle, the count for a unitless one.
+/// `values` (the generation's integers) typed by the part file's own
+/// units: nanometres for a length parameter, millidegrees for an angle,
+/// the count for a unitless one.
 fn part_values(as_is: &part_file::EvaluatedPart, values: &v1::Params) -> Result<PartValues> {
     let mut out = PartValues::new();
     for (name, value) in values {
@@ -113,12 +113,12 @@ fn part_values(as_is: &part_file::EvaluatedPart, values: &v1::Params) -> Result<
                 ))
             })?;
         let value = match parameter.unit.as_str() {
-            "mm" => PartValue::Mm(
+            "mm" => PartValue::Nm(
                 Nm::new(*int)
                     .map_err(|e| refused(format!("\"{name}\": {e}")))?
-                    .to_mm_f64(),
+                    .get(),
             ),
-            "deg" => PartValue::Deg(*int as f64 / 1000.0),
+            "deg" => PartValue::Mdeg(*int),
             "" => PartValue::Count(
                 u32::try_from(*int)
                     .map_err(|_| refused(format!("\"{name}\" is a count; {int} is not one")))?,

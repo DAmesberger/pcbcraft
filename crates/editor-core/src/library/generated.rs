@@ -3,10 +3,15 @@
 //! complete parameters, and the checks that keep a project's copy equal to
 //! what the module makes.
 //!
-//! **Identity.** A part's key is its module's SHA-256 with the SHA-256 of
-//! the canonical request (ABI, scope and complete parameters). Its result
-//! hash is the SHA-256 of the canonical generation. All three are
-//! recorded in [`GeneratedFrom`].
+//! **Identity (slice B4).** A part's key is its generator's id with the
+//! SHA-256 of the canonical request (ABI, scope and complete parameters as
+//! recorded): nothing in it depends on the module's bytes, so the same
+//! source built on any host makes the same part. The generator's version
+//! tells revisions of one lineage apart (the regenerate rule, G15). The
+//! result hash (SHA-256 of the canonical generation) is the integrity
+//! check; the module hash names the embedded bytes that check runs; the
+//! bundle hash is provenance, what a person approves. All are recorded in
+//! [`GeneratedFrom`].
 //!
 //! **Embedding.** The module's bytes are a packed asset of media type
 //! [`MODULE_MEDIA_TYPE`] (`Library::assets`, one container entry per hash),
@@ -133,18 +138,18 @@ pub fn complete(
     scope: v1::Scope,
     given: &v1::Params,
 ) -> std::result::Result<v1::Request, Failure> {
-    if !description.scopes.contains(&scope) {
+    if !description.scopes().contains(&scope) {
         let what = match scope {
             v1::Scope::Component => "complete parts",
             v1::Scope::Package => "packages on their own",
         };
         return Err(Failure::one(
             "param.scope",
-            format!("The {} generator does not make {what}.", description.name),
+            format!("The {} generator does not make {what}.", description.title),
         ));
     }
     let mut params = given.clone();
-    for param in &description.params {
+    for param in description.params() {
         params
             .entry(param.key.clone())
             .or_insert_with(|| param.default.clone());
@@ -169,12 +174,22 @@ pub fn wire_params(params: &GeneratorParams) -> v1::Params {
         .collect()
 }
 
-/// Which module made a part from which parameters, and what it made.
+/// Which generator made a part from which parameters, and what it made.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct GeneratedFrom {
-    /// SHA-256 of the module's bytes, packed in `Library::assets`.
+    /// The generator's id (its description's `id`).
+    pub generator: String,
+    /// The generator's version that made this revision of the part.
+    pub version: u32,
+    /// SHA-256 of the module's bytes, packed in `Library::assets`: what the
+    /// check on open runs.
     pub module: ContentHash,
+    /// SHA-256 of the bundle's manifest the module came from (manifest,
+    /// module and part files): provenance, and what a person approves.
+    /// Absent for a module given by its bytes alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<ContentHash>,
     /// The ABI the module speaks (1).
     pub abi: u32,
     pub scope: GeneratorScope,
@@ -183,16 +198,19 @@ pub struct GeneratedFrom {
     pub params: GeneratorParams,
     /// SHA-256 of the canonical generation the module returned.
     pub result: ContentHash,
+    /// The generation keys and the local ids they were given (slice B1).
+    pub ids: expand::KeyIds,
 }
 
-/// A part's key: module hash and params hash. Equal keys ask the same
-/// module for the same part.
+/// A part's key: the generator's id and the params hash. Equal keys ask
+/// the same generator for the same part; its version tells revisions
+/// apart.
 #[derive(
-    Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
+    Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
 #[serde(deny_unknown_fields)]
 pub struct PartKey {
-    pub module: ContentHash,
+    pub generator: String,
     pub params: ContentHash,
 }
 
@@ -207,13 +225,13 @@ impl GeneratedFrom {
     }
 
     pub fn key(&self) -> Result<PartKey> {
-        key(self.module, &self.request())
+        key(&self.generator, &self.request())
     }
 }
 
-/// The key of `request` to `module`: the params hash is the SHA-256 of the
-/// request's canonical bytes (ABI, scope and complete parameters).
-pub fn key(module: ContentHash, request: &v1::Request) -> Result<PartKey> {
+/// The key of `request` to generator `id`: the params hash is the SHA-256
+/// of the request's canonical bytes (ABI, scope and complete parameters).
+pub fn key(id: &str, request: &v1::Request) -> Result<PartKey> {
     let bytes = sparksmith_generator_abi::encode(request).map_err(|e| {
         Error::Invalid(format!(
             "generated.params: the parameters cannot be written canonically ({e})"
@@ -221,7 +239,7 @@ pub fn key(module: ContentHash, request: &v1::Request) -> Result<PartKey> {
     })?;
     let params = sparksmith_generator_abi::sha256(&bytes);
     Ok(PartKey {
-        module,
+        generator: id.to_string(),
         params: ContentHash(params),
     })
 }
@@ -284,12 +302,14 @@ pub fn record_of(library: &Library, root: DefinitionRef) -> Option<&GeneratedPar
     library.generated.iter().find(|g| g.root == root)
 }
 
-/// The record with `key`, if the project holds that part.
+/// The newest record with `key` (highest version, then revision), if the
+/// project holds that part.
 pub fn find<'a>(library: &'a Library, key: &PartKey) -> Option<&'a GeneratedPart> {
     library
         .generated
         .iter()
-        .find(|g| g.from.key().is_ok_and(|k| k == *key))
+        .filter(|g| g.from.key().is_ok_and(|k| k == *key))
+        .max_by_key(|g| (g.from.version, g.root.revision, g.root.id))
 }
 
 /// The embedded module `hash`, if the project packs it as a module.
@@ -370,9 +390,18 @@ pub fn validate(library: &Library) -> Result<()> {
                 v1::limits::REQUEST_BYTES
             )));
         }
-        if !keys.insert(part.from.key()?) {
+        if part.from.version == 0
+            || part.from.generator.is_empty()
+            || part.from.generator.len() > 1024
+        {
             return Err(Error::Invalid(format!(
-                "generated.record: {name} is recorded twice with one module and the same parameters"
+                "generated.record: {name} names no generator or version"
+            )));
+        }
+        part.from.ids.validate()?;
+        if !keys.insert((part.from.key()?, part.from.version)) {
+            return Err(Error::Invalid(format!(
+                "generated.record: {name} is recorded twice by one version of a generator with the same parameters"
             )));
         }
         let Some(asset) = library.assets.iter().find(|a| a.hash == part.from.module) else {
@@ -415,24 +444,27 @@ pub fn expansion_hash(definitions: &[(DefinitionRef, Definition)]) -> Result<Con
 }
 
 /// The definitions `generation` expands to at the revisions `expansion`,
-/// its package holding `model`.
+/// its package holding `model`, with local ids from `ids`; and the map
+/// with every new key added.
 pub fn expand_at(
     generation: &v1::Generation,
     refs: expand::Refs,
     expansion: &[DefinitionRef],
     model: PackageModel,
-) -> Result<Vec<(DefinitionRef, Definition)>> {
-    let made = expand::definitions(generation, refs, model)?;
+    ids: &expand::KeyIds,
+) -> Result<(Vec<(DefinitionRef, Definition)>, expand::KeyIds)> {
+    let (made, ids) = expand::definitions(generation, refs, model, ids)?;
     if made.len() != expansion.len() {
         return Err(Error::Invalid(
             "generated.expansion: the generation makes a different set of definitions".into(),
         ));
     }
-    Ok(expansion
+    let definitions = expansion
         .iter()
         .copied()
         .zip(made.into_iter().map(|(_, d)| d))
-        .collect())
+        .collect();
+    Ok((definitions, ids))
 }
 
 /// One check the host runs on load: the part, its module's bytes and the
@@ -516,7 +548,18 @@ pub fn compare(library: &Library, check: &Check<'_>, generated: &Generated) -> R
             "generated.expansion_changed: {name} stored in this project differs from what its generator makes from the recorded parameters: {e}. The project was not opened."
         ))
     })?;
-    let expected = expand_at(&generated.generation, refs, &part.expansion, model)?;
+    let (expected, ids) = expand_at(
+        &generated.generation,
+        refs,
+        &part.expansion,
+        model,
+        &part.from.ids,
+    )?;
+    if ids != part.from.ids {
+        return Err(Error::Invalid(format!(
+            "generated.expansion_changed: {name} stored in this project differs from what its generator makes from the recorded parameters: the generator makes objects the recorded key map does not name. The project was not opened."
+        )));
+    }
     let stored: Vec<(DefinitionRef, Definition)> = part
         .expansion
         .iter()

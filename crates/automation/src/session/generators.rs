@@ -147,15 +147,18 @@ impl Session {
         if let Some(preset) = &params.preset {
             let description = self.describe(&module.bytes)?;
             let found = description
-                .presets
+                .presets()
                 .iter()
                 .find(|p| &p.key == preset)
                 .ok_or_else(|| {
-                    let keys: Vec<&str> =
-                        description.presets.iter().map(|p| p.key.as_str()).collect();
+                    let keys: Vec<&str> = description
+                        .presets()
+                        .iter()
+                        .map(|p| p.key.as_str())
+                        .collect();
                     invalid(format!(
                         "generated.preset: the generator ‘{}’ has no preset {preset}; presets: {}",
-                        description.name,
+                        description.title,
                         keys.join(", ")
                     ))
                 })?;
@@ -178,6 +181,7 @@ impl Session {
             name: params.name,
             replaces: params.replaces,
             model: None,
+            bundle: module.bundle.as_ref().map(|b| b.hash),
         };
         // The model first (GP2): the module's part file, evaluated here at
         // the values of the request the engine will run.
@@ -248,7 +252,7 @@ impl Session {
                 match self.describe(&bytes) {
                     Ok(description) => {
                         shipped_by_lineage
-                            .insert(description.id_hint.clone(), (hash, description.version));
+                            .insert(description.id.clone(), (hash, description.version));
                         shipped.push(json!({
                             "name": name,
                             "module": hash,
@@ -267,7 +271,6 @@ impl Session {
             }
         }
         // The embedded modules, each described once.
-        let mut lineage_of: BTreeMap<ContentHash, Option<(String, u32)>> = BTreeMap::new();
         let mut embedded = Vec::new();
         for asset in library
             .assets
@@ -275,31 +278,26 @@ impl Session {
             .filter(|a| a.media_type == generated::MODULE_MEDIA_TYPE)
         {
             let description = self.describe(&asset.data).ok();
-            let lineage = description.as_ref().map(|d| (d.id_hint.clone(), d.version));
-            lineage_of.insert(asset.hash, lineage.clone());
             embedded.push(json!({
                 "module": asset.hash,
                 "bytes": asset.data.len(),
-                "generator": lineage.as_ref().map(|(l, _)| l),
-                "version": lineage.as_ref().map(|(_, v)| v),
-                "name": description.as_ref().map(|d| d.name.clone()),
+                "generator": description.as_ref().map(|d| d.id.clone()),
+                "version": description.as_ref().map(|d| d.version),
+                "name": description.as_ref().map(|d| d.title.clone()),
                 "parts": library.generated.iter().filter(|g| g.from.module == asset.hash).count(),
             }));
         }
+        // Each part names its generator and version itself (slice B4).
         let mut parts = Vec::new();
         for part in library.generated.iter() {
-            let lineage = lineage_of.get(&part.from.module).cloned().flatten();
-            let shipped_now = lineage
-                .as_ref()
-                .and_then(|(l, _)| shipped_by_lineage.get(l))
-                .copied();
+            let shipped_now = shipped_by_lineage.get(&part.from.generator).copied();
             let superseded = library
                 .generated
                 .iter()
                 .any(|p| p.root.id == part.root.id && p.root.revision > part.root.revision);
             let state = state(
                 part.from.module,
-                lineage.as_ref().map(|(_, v)| *v),
+                Some(part.from.version),
                 shipped_now,
                 superseded,
             );
@@ -311,10 +309,11 @@ impl Session {
                 "name": generated::describe(library, part),
                 "scope": part.from.scope,
                 "module": part.from.module,
+                "bundle": part.from.bundle,
                 "key": part.from.key()?,
                 "result": part.from.result,
-                "generator": lineage.as_ref().map(|(l, _)| l),
-                "version": lineage.as_ref().map(|(_, v)| v),
+                "generator": part.from.generator,
+                "version": part.from.version,
                 "state": state,
                 "shipped_module": shipped_module,
             }));
@@ -356,7 +355,7 @@ fn state(
 /// What a module offers, for people and models choosing parameters.
 fn summary(description: &Description) -> Value {
     let params: Vec<Value> = description
-        .params
+        .params()
         .iter()
         .map(|p| {
             json!({
@@ -371,17 +370,18 @@ fn summary(description: &Description) -> Value {
         })
         .collect();
     let presets: Vec<Value> = description
-        .presets
+        .presets()
         .iter()
         .map(|p| json!({"key": p.key, "name": p.name, "aliases": p.aliases}))
         .collect();
     json!({
-        "generator": description.id_hint,
-        "name": description.name,
-        "families": description.families,
-        "scopes": description.scopes,
+        "generator": description.id,
+        "name": description.title,
+        "licence": description.licence,
+        "families": description.offer().map(|o| o.families.clone()).unwrap_or_default(),
+        "scopes": description.scopes(),
         "params": params,
-        "rules": description.rules.iter().map(|r| r.text.clone()).collect::<Vec<_>>(),
+        "rules": description.rules().iter().map(|r| r.text.clone()).collect::<Vec<_>>(),
         "presets": presets,
         "version": description.version,
         "abi": v1::ABI,

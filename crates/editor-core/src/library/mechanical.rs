@@ -298,15 +298,30 @@ pub fn variant_key(spec: &PartSpec, asset: ContentHash) -> Result<ContentHash> {
     #[derive(Serialize)]
     struct Canonical<'a> {
         asset: String,
-        values: &'a BTreeMap<String, PartValue>,
+        values: BTreeMap<&'a str, serde_json::Value>,
         lands: &'a [MechanicalLand],
         pads: PadUse,
         bom: bool,
         pick_and_place: bool,
     }
+    // Values in their form before they were integers (file version 3), so
+    // a stored key still finds its variant.
+    let values = spec
+        .values
+        .iter()
+        .map(|(name, value)| {
+            let legacy = match *value {
+                PartValue::Nm(v) => serde_json::json!({"mm": v as f64 / 1_000_000.0}),
+                PartValue::Mdeg(v) => serde_json::json!({"deg": v as f64 / 1000.0}),
+                PartValue::Count(n) => serde_json::json!({"count": n}),
+                PartValue::Milli(v) => serde_json::json!({"number": v as f64 / 1000.0}),
+            };
+            (name.as_str(), legacy)
+        })
+        .collect();
     let text = serde_json::to_vec(&Canonical {
         asset: asset.to_string(),
-        values: &spec.values,
+        values,
         lands: &spec.lands,
         pads: spec.pads,
         bom: spec.bom,
@@ -580,12 +595,7 @@ pub fn make_variant(
 pub fn variant_name(spec: &PartSpec) -> String {
     let mut name = spec.name.trim().to_owned();
     for (param, value) in &spec.values {
-        let text = match value {
-            PartValue::Mm(v) => format!("{param} {} mm", trim(*v)),
-            PartValue::Deg(v) => format!("{param} {}°", trim(*v)),
-            PartValue::Count(n) => format!("{param} {n}"),
-            PartValue::Number(v) => format!("{param} {}", trim(*v)),
-        };
+        let text = format!("{param} {}", value.text());
         if name.len() + text.len() + 1 > MAX_LABEL {
             break;
         }
@@ -593,16 +603,6 @@ pub fn variant_name(spec: &PartSpec) -> String {
         name.push_str(&text);
     }
     name
-}
-
-fn trim(v: f64) -> String {
-    let text = format!("{v:.4}");
-    let text = text.trim_end_matches('0').trim_end_matches('.');
-    if text == "-0" {
-        "0".into()
-    } else {
-        text.into()
-    }
 }
 
 fn package_definition(

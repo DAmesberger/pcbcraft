@@ -5088,6 +5088,7 @@ dependencies = [
  "sparksmith-assist",
  "sparksmith-automation",
  "sparksmith-core",
+ "sparksmith-generators",
  "sparksmith-io",
  "sparksmith-kicad",
  "tempfile",
@@ -5138,11 +5139,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sparksmith-gen-fixture"
+version = "0.1.0"
+dependencies = [
+ "sparksmith-generator-sdk",
+]
+
+[[package]]
 name = "sparksmith-generator-abi"
 version = "0.1.0"
 dependencies = [
  "serde",
- "serde_json",
  "sha2 0.10.9",
  "unicode-normalization",
 ]
@@ -5153,7 +5160,6 @@ version = "0.1.0"
 dependencies = [
  "dlmalloc",
  "serde",
- "serde_json",
  "sparksmith-generator-abi",
  "spin 0.9.9",
 ]

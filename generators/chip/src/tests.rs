@@ -4,8 +4,9 @@ use sparksmith_generator_sdk::golden;
 
 fn request(scope: Scope, overrides: &[(String, ParamValue)]) -> Request {
     let mut params = v1::Params::new();
-    for param in description().params {
-        params.insert(param.key, param.default);
+    let description = description();
+    for param in description.params() {
+        params.insert(param.key.clone(), param.default.clone());
     }
     for (key, value) in overrides {
         params.insert(key.clone(), value.clone());
@@ -19,7 +20,7 @@ fn request(scope: Scope, overrides: &[(String, ParamValue)]) -> Request {
 
 fn preset(key: &str) -> Vec<(String, ParamValue)> {
     let description = description();
-    let found = description.presets.iter().find(|p| p.key == key);
+    let found = description.presets().iter().find(|p| p.key == key);
     found
         .map(|p| p.params.clone())
         .unwrap_or_default()
@@ -49,8 +50,8 @@ fn golden_hashes_match_natively() -> Result<(), String> {
 #[test]
 fn presets_are_the_starter_rows_and_all_generate() -> Result<(), Vec<Problem>> {
     let description = description();
-    assert_eq!(description.presets.len(), 24);
-    for p in &description.presets {
+    assert_eq!(description.presets().len(), 24);
+    for p in description.presets() {
         let overrides = preset(&p.key);
         for scope in [Scope::Component, Scope::Package] {
             Chip::generate(&request(scope, &overrides))?;
@@ -215,7 +216,8 @@ fn part_file(g: &Generation) -> Result<(&str, &v1::Params), String> {
 
 #[test]
 fn every_preset_names_its_part_file_with_every_value() -> Result<(), String> {
-    for p in &description().presets {
+    let description = description();
+    for p in description.presets() {
         for scope in [Scope::Component, Scope::Package] {
             let g =
                 Chip::generate(&request(scope, &preset(&p.key))).map_err(|e| format!("{e:?}"))?;

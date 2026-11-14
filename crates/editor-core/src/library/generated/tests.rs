@@ -24,6 +24,9 @@ const MODULE: &[u8] = b"stand-in module";
 const CHANGED: &[u8] = b"v2";
 const REBUILT: &[u8] = b"stand-in module, rebuilt";
 const OTHER: &[u8] = b"another generator";
+/// Version 2 of the stand-in that inserts a pad, `3` (landing terminal
+/// 1), between pads 1 and 2.
+const INSERTED: &[u8] = b"v2 with a pad inserted";
 /// A module whose model names another part file than the host evaluated.
 const OTHER_PART: &[u8] = b"names another part file";
 /// The stand-in's part file (the core never evaluates it).
@@ -72,7 +75,7 @@ fn evaluated(length: i64) -> crate::commands::GeneratedModel {
         },
         name: "Stand-in part".into(),
         data: Some(AssetBytes::new(PART.to_vec())),
-        values: [("length".to_string(), PartValue::Mm(length as f64 / 1e6))]
+        values: [("length".to_string(), PartValue::Nm(length))]
             .into_iter()
             .collect(),
         derived: PartDerived {
@@ -99,15 +102,22 @@ fn length_param() -> Param {
     }
 }
 
-fn graphic(shape: Primitive) -> Graphic {
+fn graphic(key: &str, shape: Primitive) -> Graphic {
     Graphic {
+        key: key.into(),
         shape,
         stroke_nm: 150_000,
         fill: Fill::None,
     }
 }
 
-fn generation(length: i64, shift: i64, scope: Scope, part: &[u8]) -> Generation {
+fn generation_with(
+    length: i64,
+    shift: i64,
+    scope: Scope,
+    part: &[u8],
+    inserted: bool,
+) -> Generation {
     let x = length / 2 - 350_000 + shift;
     let pad = |key: &str, at: Point| Pad {
         key: key.into(),
@@ -161,6 +171,7 @@ fn generation(length: i64, shift: i64, scope: Scope, part: &[u8]) -> Generation 
                 ],
                 graphics: vec![
                     Graphic {
+                        key: "body".into(),
                         shape: Primitive::Rect {
                             min: [-2_540_000, -1_000_000],
                             max: [2_540_000, 1_000_000],
@@ -168,19 +179,25 @@ fn generation(length: i64, shift: i64, scope: Scope, part: &[u8]) -> Generation 
                         stroke_nm: 250_000,
                         fill: Fill::Body,
                     },
-                    graphic(Primitive::Text {
-                        at: [0, 1_500_000],
-                        height_nm: 1_270_000,
-                        content: TextContent::Designator,
-                        h_align: HAlign::Center,
-                        v_align: VAlign::Bottom,
-                    }),
-                    graphic(Primitive::Arc {
-                        center: [0, 0],
-                        radius_nm: 500_000,
-                        start_mdeg: 180_000,
-                        sweep_mdeg: -180_000,
-                    }),
+                    graphic(
+                        "designator",
+                        Primitive::Text {
+                            at: [0, 1_500_000],
+                            height_nm: 1_270_000,
+                            content: TextContent::Designator,
+                            h_align: HAlign::Center,
+                            v_align: VAlign::Bottom,
+                        },
+                    ),
+                    graphic(
+                        "arc",
+                        Primitive::Arc {
+                            center: [0, 0],
+                            start: [-500_000, 0],
+                            end: [500_000, 0],
+                            clockwise: true,
+                        },
+                    ),
                 ],
             }],
         }),
@@ -194,18 +211,30 @@ fn generation(length: i64, shift: i64, scope: Scope, part: &[u8]) -> Generation 
             },
         },
         footprint: Footprint {
-            pads: vec![pad("1", [-x, 0]), pad("2", [x, 0])],
+            pads: if inserted {
+                let mut third = pad("1", [0, 1_200_000]);
+                third.key = "3".into();
+                third.shape = PadShape::Rect {
+                    size: [200_000, 200_000],
+                };
+                vec![pad("1", [-x, 0]), third, pad("2", [x, 0])]
+            } else {
+                vec![pad("1", [-x, 0]), pad("2", [x, 0])]
+            },
             courtyard: vec![
-                [-edge, -750_000],
-                [edge, -750_000],
-                [edge, 750_000],
-                [-edge, 750_000],
+                [-edge, -1_500_000],
+                [edge, -1_500_000],
+                [edge, 1_500_000],
+                [-edge, 1_500_000],
             ],
             silk: Vec::new(),
-            assembly: vec![graphic(Primitive::Rect {
-                min: [-length / 2, -400_000],
-                max: [length / 2, 400_000],
-            })],
+            assembly: vec![graphic(
+                "assembly",
+                Primitive::Rect {
+                    min: [-length / 2, -400_000],
+                    max: [length / 2, 400_000],
+                },
+            )],
         },
         binding: if component {
             ["1", "2"]
@@ -228,16 +257,30 @@ impl GeneratorRuntime for StandIn {
     fn describe(&self, module: &[u8]) -> std::result::Result<Description, Failure> {
         Ok(Description {
             abi: ABI,
-            id_hint: if module == OTHER { "other" } else { "stand-in" }.into(),
-            version: if module == CHANGED { 2 } else { 1 },
-            name: "Stand-in".into(),
-            families: vec!["chip".into()],
-            scopes: vec![Scope::Component, Scope::Package],
-            params: vec![length_param()],
-            rules: Vec::new(),
-            presets: Vec::new(),
-            grammar: Vec::new(),
-            instance_fields: Vec::new(),
+            id: if module == OTHER { "other" } else { "stand-in" }.into(),
+            version: if module == CHANGED || module == INSERTED {
+                2
+            } else {
+                1
+            },
+            title: "Stand-in".into(),
+            licence: "MIT OR Apache-2.0".into(),
+            deterministic: true,
+            capabilities: vec![Capability {
+                name: GENERATE_PART.into(),
+                effect: Effect::None,
+                title: None,
+                params: vec![length_param()],
+                rules: Vec::new(),
+                presets: Vec::new(),
+                part: Some(PartOffer {
+                    families: vec!["chip".into()],
+                    scopes: vec![Scope::Component, Scope::Package],
+                    grammar: Vec::new(),
+                    instance_fields: Vec::new(),
+                }),
+            }],
+            needs: Vec::new(),
         })
     }
 
@@ -252,7 +295,7 @@ impl GeneratorRuntime for StandIn {
         };
         let shift = if module == CHANGED { 10_000 } else { 0 };
         let part = if module == OTHER_PART { CHANGED } else { PART };
-        let generation = generation(length, shift, request.scope, part);
+        let generation = generation_with(length, shift, request.scope, part, module == INSERTED);
         let canonical = sparksmith_generator_abi::encode(&generation)
             .map_err(|e| Failure::one("generator.invalid_output", e.to_string()))?;
         Ok(Generated {
@@ -283,6 +326,7 @@ fn request(module: &[u8], scope: GeneratorScope, length: i64) -> Generate {
         name: None,
         replaces: None,
         model: Some(evaluated(length)),
+        bundle: None,
     }
 }
 
@@ -311,7 +355,7 @@ fn a_part_is_published_embedded_and_recorded_in_one_step() -> TestResult {
     assert!(report.created);
     assert_eq!(report.revisions.len(), 5);
     assert_eq!(report.notes, vec!["A stand-in.".to_string()]);
-    assert_eq!(report.key.module, asset_hash(MODULE));
+    assert_eq!(report.key.generator, "stand-in");
     let library = &engine.project().library;
     assert_eq!(library.generated.len(), 1);
     assert_eq!(library.components.len(), 1);
@@ -348,7 +392,7 @@ fn a_part_is_published_embedded_and_recorded_in_one_step() -> TestResult {
     assert_eq!(model.definition.asset.hash, asset_hash(PART));
     assert_eq!(
         part.values.get("length"),
-        Some(&crate::library::package_model::PartValue::Mm(1.6))
+        Some(&crate::library::package_model::PartValue::Nm(1_600_000))
     );
     // The stored package's values edited behind the record: refused on
     // load.
@@ -359,7 +403,7 @@ fn a_part_is_published_embedded_and_recorded_in_one_step() -> TestResult {
     {
         part.values.insert(
             "length".into(),
-            crate::library::package_model::PartValue::Mm(1.7),
+            crate::library::package_model::PartValue::Nm(1_700_000),
         );
     }
     let error = verify(&edited.project.library, &mut run)
@@ -453,7 +497,7 @@ fn refusals_leave_the_document_unchanged() -> TestResult {
     if let Some(model) = &mut values.model {
         model.values.insert(
             "length".into(),
-            crate::library::package_model::PartValue::Mm(1.7),
+            crate::library::package_model::PartValue::Nm(1_700_000),
         );
     }
     let refused = generate(&mut engine, values);
@@ -704,5 +748,143 @@ fn other_parameters_scopes_or_generators_make_new_lineages() -> TestResult {
         assert_ne!(made.root.id, first.root.id);
         assert_eq!(made.root.revision, Revision::FIRST);
     }
+    Ok(())
+}
+
+/// Slice B1: ids come from generation keys. A newer module that inserts a
+/// pad between pads 1 and 2 leaves both their ids (and every other local
+/// id) as they were, the new pad takes a new id, and a track routed to pad
+/// 2 stays attached through the update: nothing conflicts.
+#[test]
+fn regenerating_with_an_inserted_pad_keeps_every_other_id_and_the_tracks() -> TestResult {
+    use crate::ids::ComponentRef;
+    use crate::instances::NewInstance;
+    use crate::layout::{LayoutCommand, RouteRequest};
+    use crate::model::CopperLayer;
+    use crate::model::PhysicalChoice;
+    use crate::tests::support::{apply, connect, ep, net_of, sync_onto_board};
+    use crate::{InstanceCommand, Outcome as Placed, ids::UnitId, updates::Change};
+    let mut engine = engine();
+    let first = generate(
+        &mut engine,
+        request(MODULE, GeneratorScope::Component, 1_600_000),
+    )?;
+    let [component, symbol, _, footprint, binding] = first.revisions[..] else {
+        return Err("five revisions".into());
+    };
+    let place = |engine: &mut Engine, designator: &str, x: f64| -> TestResult<crate::ids::Id> {
+        match apply(
+            engine,
+            Operation::Instance(InstanceCommand::Place(NewInstance {
+                sheet: None,
+                component: ComponentRef::new(component.id, component.revision),
+                designator: Some(designator.into()),
+                properties: vec![],
+                representation: symbol.id,
+                unit: UnitId(1),
+                position: crate::tests::support::pt([x, 0.0]),
+                physical: Some(PhysicalChoice {
+                    binding: binding.id,
+                    footprint: footprint.id,
+                }),
+            })),
+        )? {
+            Placed::InstancePlaced { instance, .. } => Ok(instance),
+            other => Err(format!("unexpected outcome {other:?}").into()),
+        }
+    };
+    let r1 = place(&mut engine, "R1", 0.0)?;
+    let r2 = place(&mut engine, "R2", 20.0)?;
+    connect(&mut engine, ep(r1, 2), ep(r2, 1))?;
+    sync_onto_board(&mut engine)?;
+    let net = net_of(&engine, ep(r1, 2))?;
+    let at = |instance| {
+        engine
+            .project()
+            .placements
+            .iter()
+            .find(|p| p.instance == instance)
+            .map(|p| p.position)
+            .ok_or("not placed")
+    };
+    let (a, b) = (at(r1)?, at(r2)?);
+    apply(
+        &mut engine,
+        Operation::Layout(LayoutCommand::Route {
+            request: RouteRequest {
+                net,
+                start: [a[0] + 0.45, a[1]],
+                end: [b[0] - 0.45, b[1]],
+                width: 0.25,
+                layer: CopperLayer::Top,
+            },
+        }),
+    )?;
+    assert_eq!(engine.project().tracks.len(), 1);
+    let pads = |engine: &Engine, revision: Revision| -> TestResult<Vec<(String, u32)>> {
+        let footprint = engine
+            .project()
+            .library
+            .footprints
+            .iter()
+            .find(|f| f.id == footprint.id && f.revision == revision)
+            .ok_or("no footprint")?;
+        Ok(footprint
+            .definition
+            .pads
+            .iter()
+            .map(|p| (p.number.clone(), p.id.0))
+            .collect())
+    };
+    assert_eq!(
+        pads(&engine, Revision::FIRST)?,
+        [("1".to_string(), 1), ("2".to_string(), 2)]
+    );
+    let old_ids = engine.project().library.generated[0].from.ids.clone();
+    // Version 2 inserts pad 3 between them.
+    let second = generate(
+        &mut engine,
+        request(INSERTED, GeneratorScope::Component, 1_600_000),
+    )?;
+    assert_eq!(second.replaced, Some(first.root));
+    let two = Revision::FIRST.next().ok_or("revision")?;
+    assert_eq!(
+        pads(&engine, two)?,
+        [
+            ("1".to_string(), 1),
+            ("3".to_string(), 5),
+            ("2".to_string(), 2)
+        ],
+        "pads 1 and 2 keep their ids; pad 3 takes the next one after the drawings"
+    );
+    let library = &engine.project().library;
+    let record = library
+        .generated
+        .iter()
+        .find(|g| g.root == second.root)
+        .ok_or("no record")?;
+    for (key, id) in &old_ids.footprint {
+        assert_eq!(record.from.ids.footprint.get(key), Some(id), "{key}");
+    }
+    assert_eq!(record.from.ids.component, old_ids.component);
+    assert_eq!(record.from.ids.symbol, old_ids.symbol);
+    verify(library, &mut run)?;
+    // The update moves both instances to revision 2; the track on pad 2
+    // conflicts with nothing and stays.
+    let change = Change::ComponentRevision {
+        instances: vec![r1, r2],
+        target: ComponentRef::new(second.root.id, second.root.revision),
+        resolutions: Default::default(),
+    };
+    let plan = engine.preview_update(change.clone());
+    assert!(plan.blockers.is_empty(), "{:?}", plan.blockers);
+    assert!(
+        plan.conflicting_tracks.is_empty(),
+        "{:?}",
+        plan.conflicting_tracks
+    );
+    engine.apply_update(engine.revision(), change, false)?;
+    assert_eq!(engine.project().tracks.len(), 1);
+    assert_eq!(net_of(&engine, ep(r1, 2))?, net);
     Ok(())
 }

@@ -22,6 +22,13 @@ use std::process::{Command, ExitCode};
 pub(crate) type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 fn main() -> ExitCode {
+    if std::env::var_os(generators::WRAP_ENV).is_some() {
+        let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+        return generators::wrap_rustc(&args).unwrap_or_else(|error| {
+            eprintln!("xtask rustc wrapper: {error}");
+            ExitCode::FAILURE
+        });
+    }
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

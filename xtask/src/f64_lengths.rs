@@ -401,12 +401,6 @@ const NOT_LENGTHS: &[(&str, &str)] = &[
         "library/pad_table.rs PadTableReport.envelope_moved_to",
         COMPUTED,
     ),
-    ("library/package_model.rs PartValue::Deg.0", SOLIDCRAFT),
-    ("library/package_model.rs PartValue::Mm.0", SOLIDCRAFT),
-    (
-        "library/package_model.rs PartValue::Number.0",
-        "a dimensionless parameter value",
-    ),
     ("model/stackup.rs Dielectric.dk", "a relative permittivity"),
 ];
 

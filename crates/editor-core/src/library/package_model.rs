@@ -46,53 +46,111 @@ pub const MAX_PART_NAME: usize = 64;
 pub const MAX_PART_SURFACES: usize = 16;
 /// Bodies one part file may have (as a library model maps).
 pub const MAX_PART_BODIES: u32 = 1024;
-/// Largest literal a part value may be (mm, degrees or a number).
-const MAX_PART_LITERAL: f64 = 10_000.0;
+/// Largest literal a part value may be, in its own unit (mm, degrees or a
+/// plain number).
+const MAX_PART_LITERAL: i64 = 10_000;
 
 /// A literal value of one part-file parameter: never an expression, so a
-/// value cannot name another parameter and hashes canonically. JSON
-/// `{"mm": 3.1}`, `{"deg": 45}`, `{"count": 25}` or `{"number": 0.5}`.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+/// value cannot name another parameter, and an integer, so it hashes
+/// canonically on every platform. JSON `{"nm": 3100000}` (a length in
+/// nanometres), `{"mdeg": 45000}` (an angle in millidegrees),
+/// `{"count": 25}` or `{"milli": 500}` (a plain number in thousandths).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum PartValue {
-    Mm(f64),
-    Deg(f64),
+    Nm(i64),
+    Mdeg(i64),
     Count(u32),
-    Number(f64),
+    Milli(i64),
+}
+
+/// `v` / `scale` as an exact decimal, without trailing zeros: `3.1`, `-0.05`, `25`.
+fn decimal(v: i64, scale: u64) -> String {
+    let sign = if v < 0 { "-" } else { "" };
+    let abs = v.unsigned_abs();
+    let whole = abs / scale;
+    let frac = abs % scale;
+    if frac == 0 {
+        return format!("{sign}{whole}");
+    }
+    let width = scale.ilog10() as usize;
+    let digits = format!("{frac:0width$}");
+    format!("{sign}{whole}.{}", digits.trim_end_matches('0'))
 }
 
 impl PartValue {
+    /// A length of `mm`, rounded to the nanometre (input from a person or
+    /// a command in millimetres); `None` when not finite or out of range.
+    pub fn from_mm(mm: f64) -> Option<Self> {
+        Nm::from_mm_f64_rounded(mm).ok().map(|n| Self::Nm(n.get()))
+    }
+
+    /// An angle of `deg` degrees, rounded to the millidegree.
+    pub fn from_deg(deg: f64) -> Option<Self> {
+        thousandths(deg).map(Self::Mdeg)
+    }
+
+    /// A plain number, rounded to the thousandth.
+    pub fn from_number(v: f64) -> Option<Self> {
+        thousandths(v).map(Self::Milli)
+    }
+
+    /// The value in its own unit (mm, degrees, the count or the number),
+    /// for display and for comparing with a measured value.
+    pub fn amount(self) -> f64 {
+        match self {
+            Self::Nm(v) => v as f64 / 1_000_000.0,
+            Self::Mdeg(v) | Self::Milli(v) => v as f64 / 1000.0,
+            Self::Count(n) => f64::from(n),
+        }
+    }
+
     /// The Solidcraft parameter unit the value needs: `mm`, `deg` or none.
     pub fn unit(self) -> &'static str {
         match self {
-            Self::Mm(_) => "mm",
-            Self::Deg(_) => "deg",
-            Self::Count(_) | Self::Number(_) => "",
+            Self::Nm(_) => "mm",
+            Self::Mdeg(_) => "deg",
+            Self::Count(_) | Self::Milli(_) => "",
         }
     }
 
     /// The value as a Solidcraft literal expression (`3.1 mm`, `45 deg`,
-    /// `25`). Rust's float display is shortest round-trip and never uses
-    /// an exponent, so the literal reads back exactly. A negative zero is
-    /// written as `0`, so an unchanged value never reads as changed.
+    /// `25`, `0.5`): an exact decimal of the integer, so it reads back
+    /// to the same value on every platform.
     pub fn expression(self) -> String {
         match self {
-            Self::Mm(v) => format!("{} mm", v + 0.0),
-            Self::Deg(v) => format!("{} deg", v + 0.0),
+            Self::Nm(v) => format!("{} mm", decimal(v, 1_000_000)),
+            Self::Mdeg(v) => format!("{} deg", decimal(v, 1000)),
             Self::Count(n) => n.to_string(),
-            Self::Number(v) => (v + 0.0).to_string(),
+            Self::Milli(v) => decimal(v, 1000),
         }
     }
 
-    /// Finite and within ±10000 (the document's geometry range).
-    pub fn finite(self) -> bool {
+    /// The value for people: `4 mm`, `45°`, `25`, `0.5`.
+    pub fn text(self) -> String {
         match self {
-            Self::Mm(v) | Self::Deg(v) | Self::Number(v) => {
-                v.is_finite() && v.abs() <= MAX_PART_LITERAL
-            }
-            Self::Count(n) => f64::from(n) <= MAX_PART_LITERAL,
+            Self::Mdeg(v) => format!("{}°", decimal(v, 1000)),
+            other => other.expression(),
         }
     }
+
+    /// Within ±10000 in its own unit (the document's geometry range).
+    pub fn finite(self) -> bool {
+        match self {
+            Self::Nm(v) => v.unsigned_abs() <= MAX_PART_LITERAL.unsigned_abs() * 1_000_000,
+            Self::Mdeg(v) | Self::Milli(v) => {
+                v.unsigned_abs() <= MAX_PART_LITERAL.unsigned_abs() * 1000
+            }
+            Self::Count(n) => i64::from(n) <= MAX_PART_LITERAL,
+        }
+    }
+}
+
+/// `v` × 1000 rounded to an integer, within the literal range.
+fn thousandths(v: f64) -> Option<i64> {
+    let scaled = (v * 1000.0).round();
+    let limit = (MAX_PART_LITERAL * 1000) as f64;
+    (scaled.is_finite() && scaled.abs() <= limit).then_some(scaled as i64)
 }
 
 /// What a part file evaluated to when a package was given it: derived by
@@ -162,9 +220,7 @@ impl PartFileModel {
                     name.chars().take(80).collect::<String>()
                 ));
             } else if !value.finite() {
-                out.push(format!(
-                    "the value of {name} must be finite and within ±10000"
-                ));
+                out.push(format!("the value of {name} must be within ±10000"));
             }
         }
         let d = &self.derived;

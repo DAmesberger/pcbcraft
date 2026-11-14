@@ -862,7 +862,7 @@ fn a_committed_part_value_is_one_operation_and_one_undo_step() -> TestResult {
     assert!(h.sent.is_empty(), "showing the form sends nothing");
     // A committed field (what Enter or focus loss hands over).
     let mut values = sparksmith_solidcraft::models::part_file::PartValues::new();
-    values.insert("can_height".into(), PartValue::Mm(2.8));
+    values.insert("can_height".into(), PartValue::Nm(2_800_000));
     h.editor.part_file.pending = Some(values.clone());
     // The part evaluates in about 10 s on the SMLib kernel.
     for _ in 0..6000 {

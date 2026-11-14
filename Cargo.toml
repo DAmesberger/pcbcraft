@@ -12,6 +12,7 @@ members = [
     "crates/generator-sdk",
     "crates/generators",
     "crates/generators-probe",
+    "crates/generators-fixture",
     "crates/fabcheck",
     "crates/kicad",
     "generators/chip",

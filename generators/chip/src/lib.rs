@@ -22,10 +22,10 @@ use sparksmith_generator_sdk::draw::{self, Drawing, LEFT, RIGHT};
 use sparksmith_generator_sdk::land::{self, Box2};
 use sparksmith_generator_sdk::units::{DEG, MM, div_round, mm_text};
 use sparksmith_generator_sdk::v1::{
-    self, BindingEntry, Choice, Component, Description, Direction, Fill, Footprint, Generation,
-    Grammar, InstanceField, Lead, Opening, Package, PackageGeometry, Pad, PadShape, Param,
-    ParamType, ParamValue, Preset, Primitive, Problem, Request, Rule, Scope, Side, Symbol,
-    Terminal,
+    self, BindingEntry, Capability, Choice, Component, Description, Direction, Effect, Fill,
+    Footprint, Generation, Grammar, InstanceField, Lead, Opening, Package, PackageGeometry, Pad,
+    PadShape, Param, ParamType, ParamValue, PartOffer, Preset, Primitive, Problem, Request, Rule,
+    Scope, Side, Symbol, Terminal,
 };
 use sparksmith_generator_sdk::{Generator, export_generator};
 
@@ -176,65 +176,60 @@ fn description_with(presets: Vec<Preset>) -> Description {
         m.insert("part".into(), ParamValue::Text(part.into()));
         m
     };
-    Description {
-        abi: v1::ABI,
-        id_hint: "chip".into(),
-        version: VERSION,
-        name: "Chip passives and LEDs".into(),
+    let params = vec![
+        enumeration("part", "Part", &parts, "resistor", "part"),
+        length("length", "Body length", 200_000, 8 * MM, 1_600_000, "body"),
+        length("width", "Body width", 100_000, 6 * MM, 800_000, "body"),
+        length("height", "Body height", 50_000, 3 * MM, 450_000, "body"),
+        length(
+            "termination",
+            "Termination length",
+            50_000,
+            2 * MM,
+            300_000,
+            "body",
+        ),
+        land_mode,
+        length(
+            "land_length",
+            "Land length",
+            50_000,
+            5 * MM,
+            900_000,
+            "lands",
+        ),
+        length(
+            "land_width",
+            "Land width",
+            50_000,
+            6 * MM,
+            1_000_000,
+            "lands",
+        ),
+        length(
+            "land_pitch",
+            "Land pitch",
+            100_000,
+            10 * MM,
+            1_300_000,
+            "lands",
+        ),
+        gap,
+        style,
+    ];
+    let rules = vec![
+        Rule {
+            text: "2 × termination < body length".into(),
+            fields: vec!["termination".into(), "length".into()],
+        },
+        Rule {
+            text: "Given lands: land length < land pitch, so the lands do not touch".into(),
+            fields: vec!["lands".into(), "land_length".into(), "land_pitch".into()],
+        },
+    ];
+    let offer = PartOffer {
         families: vec!["chip".into()],
         scopes: vec![Scope::Component, Scope::Package],
-        params: vec![
-            enumeration("part", "Part", &parts, "resistor", "part"),
-            length("length", "Body length", 200_000, 8 * MM, 1_600_000, "body"),
-            length("width", "Body width", 100_000, 6 * MM, 800_000, "body"),
-            length("height", "Body height", 50_000, 3 * MM, 450_000, "body"),
-            length(
-                "termination",
-                "Termination length",
-                50_000,
-                2 * MM,
-                300_000,
-                "body",
-            ),
-            land_mode,
-            length(
-                "land_length",
-                "Land length",
-                50_000,
-                5 * MM,
-                900_000,
-                "lands",
-            ),
-            length(
-                "land_width",
-                "Land width",
-                50_000,
-                6 * MM,
-                1_000_000,
-                "lands",
-            ),
-            length(
-                "land_pitch",
-                "Land pitch",
-                100_000,
-                10 * MM,
-                1_300_000,
-                "lands",
-            ),
-            gap,
-            style,
-        ],
-        rules: vec![
-            Rule {
-                text: "2 × termination < body length".into(),
-                fields: vec!["termination".into(), "length".into()],
-            },
-            Rule {
-                text: "Given lands: land length < land pitch, so the lands do not touch".into(),
-                fields: vec!["lands".into(), "land_length".into(), "land_pitch".into()],
-            },
-        ],
-        presets,
         grammar: vec![Grammar {
             scope: Scope::Component,
             patterns: vec!["{part} {size:code}".into(), "{value} {size:code}".into()],
@@ -250,6 +245,24 @@ fn description_with(presets: Vec<Preset>) -> Description {
                 when: when("led"),
             },
         ],
+    };
+    Description {
+        abi: v1::ABI,
+        id: "chip".into(),
+        version: VERSION,
+        title: "Chip passives and LEDs".into(),
+        licence: "MIT OR Apache-2.0".into(),
+        deterministic: true,
+        capabilities: vec![Capability {
+            name: v1::GENERATE_PART.into(),
+            effect: Effect::None,
+            title: Some("Make a chip part".into()),
+            params,
+            rules,
+            presets,
+            part: Some(offer),
+        }],
+        needs: Vec::new(),
     }
 }
 
@@ -392,12 +405,11 @@ fn symbol(part: Part, resistor_style: &str) -> Symbol {
         Part::Inductor => {
             d.two_pins("1", "2", m(2500), m(2500));
             for k in 0..4i64 {
-                d.open(Primitive::Arc {
-                    center: [m(-1875) + k * m(1250), 0],
-                    radius_nm: m(625),
-                    start_mdeg: 180 * DEG,
-                    sweep_mdeg: -180 * DEG,
-                });
+                if let Some(arc) =
+                    draw::arc([m(-1875) + k * m(1250), 0], m(625), 180 * DEG, -180 * DEG)
+                {
+                    d.open(arc);
+                }
             }
             d.labels(m(625), m(-500));
         }

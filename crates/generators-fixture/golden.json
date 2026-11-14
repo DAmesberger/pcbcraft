@@ -1,0 +1,9 @@
+{
+ "cases": [
+  {
+   "name": "one pad, a 45° arc, a refused call",
+   "request": {"abi": 1, "params": {}, "scope": "package"},
+   "result": "15839d40dedf46f69b529b82a856eea96cc1351b7125bef80a2d648611fc8dfd"
+  }
+ ]
+}

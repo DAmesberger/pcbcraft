@@ -302,7 +302,7 @@ fn a_left_field_commits_once() -> TestResult {
         &mut out,
     );
     assert!(out.is_empty(), "typing does not commit");
-    assert_eq!(editing.get("height"), Some(&PartValue::Mm(4.5)));
+    assert_eq!(editing.get("height"), Some(&PartValue::Nm(4_500_000)));
     run(
         &mut frames,
         vec![key(egui::Key::Enter)],
@@ -313,7 +313,7 @@ fn a_left_field_commits_once() -> TestResult {
         run(&mut frames, vec![], &mut editing, &mut out);
     }
     assert_eq!(out.len(), 1, "one commit: {out:?}");
-    assert_eq!(out[0].get("height"), Some(&PartValue::Mm(4.5)));
+    assert_eq!(out[0].get("height"), Some(&PartValue::Nm(4_500_000)));
     assert_eq!(
         out[0].get("fins"),
         None,
@@ -331,19 +331,16 @@ fn counts_and_numbers_are_typed_by_their_value() {
         value: Some(value),
         given: false,
     };
-    assert!(matches!(value_kind(&p("mm", 3.0), None), PartValue::Mm(_)));
+    assert!(matches!(value_kind(&p("mm", 3.0), None), PartValue::Nm(_)));
     assert!(matches!(
         value_kind(&p("deg", 3.0), None),
-        PartValue::Deg(_)
+        PartValue::Mdeg(_)
     ));
     assert!(matches!(value_kind(&p("", 6.0), None), PartValue::Count(_)));
+    assert!(matches!(value_kind(&p("", 0.5), None), PartValue::Milli(_)));
     assert!(matches!(
-        value_kind(&p("", 0.5), None),
-        PartValue::Number(_)
-    ));
-    assert!(matches!(
-        value_kind(&p("", 6.0), Some(PartValue::Number(6.0))),
-        PartValue::Number(_)
+        value_kind(&p("", 6.0), Some(PartValue::Milli(6000))),
+        PartValue::Milli(_)
     ));
     assert_eq!(typed(PartValue::Count(0), 2.5), None);
     assert_eq!(typed(PartValue::Count(0), 7.0), Some(PartValue::Count(7)));
@@ -423,7 +420,7 @@ fn enter_in_the_sheet_commits_the_field_and_checks_again() -> TestResult {
     let evaluation = chooser.evaluation().ok_or("evaluated")?;
     assert_eq!(
         evaluation.values.get("can_height"),
-        Some(&PartValue::Mm(3.0)),
+        Some(&PartValue::Nm(3_000_000)),
         "Enter committed the field and the check ran at it"
     );
     Ok(())
