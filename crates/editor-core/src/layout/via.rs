@@ -11,8 +11,8 @@ use super::copper::check_reach;
 use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
 use super::{
-    BoardCopper, CopperRing, EPS, Error, Result, RouteEditSet, RouteRequest,
-    WorldPad, check_pair_budget, distance, invalid,
+    BoardCopper, CopperRing, EPS, Error, Result, RouteEditSet, RouteRequest, WorldPad,
+    check_pair_budget, distance, invalid,
 };
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::{Point, point_valid};

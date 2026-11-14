@@ -271,11 +271,10 @@ fn report_in(
             &b.group.key,
         ))
     });
-    let (rows, rest): (Vec<IssueRow>, Vec<IssueRow>) =
-        all.into_iter().partition({
-            let selected = Selected::of(scope);
-            move |r| in_scope(r, scope, &selected)
-        });
+    let (rows, rest): (Vec<IssueRow>, Vec<IssueRow>) = all.into_iter().partition({
+        let selected = Selected::of(scope);
+        move |r| in_scope(r, scope, &selected)
+    });
     let mut elsewhere = Vec::new();
     if matches!(scope, IssueScope::Area { .. }) {
         for area in [IssueArea::Component, IssueArea::Schematic, IssueArea::Board] {

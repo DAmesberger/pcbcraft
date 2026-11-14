@@ -51,11 +51,7 @@ pub struct Legend<'a> {
 /// inputs `memo` (the last call's) holds are taken from it instead of made
 /// again; the memo of this call is returned with the films, so an edit
 /// remakes only the legend it changed.
-pub fn films(
-    project: &Project,
-    legend: &Legend<'_>,
-    memo: &Memo,
-) -> Result<(Vec<Geometry>, Memo)> {
+pub fn films(project: &Project, legend: &Legend<'_>, memo: &Memo) -> Result<(Vec<Geometry>, Memo)> {
     let mut next = Memo::default();
     let stackup = &project.stackup;
     let mut strokes: BTreeMap<(Id, Layer), Vec<Vec<Point>>> = BTreeMap::new();
@@ -113,10 +109,7 @@ pub fn films(
         };
         let ink = board.stack.ink_mm();
         let sink = INK_SINK_SHARE * ink;
-        let flat = Region {
-            fills: loops,
-            cuts,
-        };
+        let flat = Region { fills: loops, cuts };
         let (c0, c1) = board.span(side, crown - sink, crown + ink);
         let covers = near.covers(&reach);
         let inputs = (board, item, layer, [z0, z1, c0, c1], &flat, &covers);

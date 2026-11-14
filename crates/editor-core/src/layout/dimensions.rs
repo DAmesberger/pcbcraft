@@ -30,8 +30,8 @@ use crate::model::Project;
 use crate::model::board::{BoardShape, BoardSketch, ConstraintTarget};
 pub use crate::model::dimension::FeatureGeometry;
 use crate::model::dimension::{
-    BoardRef, FeatureRef, MAX_DIMENSION_REFS, PartAxis, PartDimension,
-    PartDimensionSpec, PartRelation, ReferenceStatus,
+    BoardRef, FeatureRef, MAX_DIMENSION_REFS, PartAxis, PartDimension, PartDimensionSpec,
+    PartRelation, ReferenceStatus,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -178,7 +178,10 @@ fn reorder(project: &mut Project, ids: &[Id]) -> Result<()> {
         project.part_dimensions.iter().map(|d| (d.id, d)).collect();
     let mut ordered = Vec::with_capacity(ids.len());
     for id in ids {
-        let d = by_id.get(id).map(|d| (*d).clone()).ok_or_else(|| missing(*id))?;
+        let d = by_id
+            .get(id)
+            .map(|d| (*d).clone())
+            .ok_or_else(|| missing(*id))?;
         ordered.push(d);
     }
     for (slot, d) in slots.into_iter().zip(ordered) {

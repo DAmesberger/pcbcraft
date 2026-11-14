@@ -7,8 +7,8 @@ use crate::geometry::{
     Bounds, Point, polygon_contains, segment_distance, segments_cross, segments_gap,
 };
 use crate::ids::Id;
-use crate::layout::check_pair_budget;
 use crate::layout::WorldPad;
+use crate::layout::check_pair_budget;
 use crate::layout::copper::{CURVE_SLACK_MM, CopperRing};
 use crate::layout::fill::{self, RegionIndex};
 use crate::layout::grid::BoundsGrid;

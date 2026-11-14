@@ -144,7 +144,8 @@ fn large_board_timings() -> Fallible {
             .and_then(|o| String::from_utf8(o.stdout).ok())
     });
     eprintln!("load average: {}", load.unwrap_or_default().trim());
-    let materials = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
+    let materials =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
     sparksmith_solidcraft::looks::ensure(|| {
         sparksmith_core::materials::MaterialLibrary::load(|name| {
             std::fs::read_to_string(materials.join(name))
@@ -329,6 +330,9 @@ fn large_board_timings() -> Fallible {
     )?;
     let start = Instant::now();
     let (_, rebuilt) = project::update(model, engine.project(), &sources, None)?;
-    eprintln!("3D update after a via edit: {:.0} ms ({rebuilt:?})", ms(start));
+    eprintln!(
+        "3D update after a via edit: {:.0} ms ({rebuilt:?})",
+        ms(start)
+    );
     Ok(())
 }

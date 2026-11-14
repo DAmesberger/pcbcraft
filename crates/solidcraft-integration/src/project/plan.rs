@@ -14,9 +14,7 @@
 //! builds for the web as the rest of this crate does.
 use super::fill::{self, MODEL_CHORD_MM, TILE_MM, Tile};
 use super::fit;
-use super::{
-    PlacedPad, mm_slug, other, placed_pads, polygon, track_outline, without_nested,
-};
+use super::{PlacedPad, mm_slug, other, placed_pads, polygon, track_outline, without_nested};
 use crate::material::{self, BodyKind, Material};
 use crate::pad_outline::{self, Contour, FLATTEN_TOLERANCE_MM};
 use crate::{Error, Result};

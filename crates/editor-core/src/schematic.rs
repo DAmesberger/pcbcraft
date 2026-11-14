@@ -50,9 +50,8 @@ pub use annotate::{AnnotateMode, AnnotateOrder, Numbering, Renumbered};
 pub use arrange::Arrangement;
 pub use clipboard::{ClipObject, ClipSymbol, Pasted, PastedSymbol, SheetClip};
 pub use wiring::{
-    JUNCTION_TOLERANCE_MM, MAX_CORNER_RADIUS_MM, WirePoint, WireTarget,
-    end_position, end_sheet, junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path,
-    wire_vertices,
+    JUNCTION_TOLERANCE_MM, MAX_CORNER_RADIUS_MM, WirePoint, WireTarget, end_position, end_sheet,
+    junction_dots, nearest_on_wire, tidy, wire_ends, wire_net, wire_path, wire_vertices,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]

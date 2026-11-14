@@ -36,8 +36,8 @@ pub use profile::{
 };
 
 pub use netclass::{
-    ClassClearance, NetClass, NetClassAssignment, NetClassId, NetClassPattern,
-    NetClassSpec, glob_matches,
+    ClassClearance, NetClass, NetClassAssignment, NetClassId, NetClassPattern, NetClassSpec,
+    glob_matches,
 };
 
 /// Largest length rule, in mm.

@@ -188,7 +188,6 @@ impl PreflightReport {
     }
 }
 
-
 /// Characters of a legend text a finding quotes, so its title stays one line.
 const MAX_LEGEND_NAME: usize = 16;
 

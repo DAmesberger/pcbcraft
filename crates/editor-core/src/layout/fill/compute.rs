@@ -27,8 +27,8 @@
 //! Fills rank by priority (higher first), then by id (lower first). A fill
 //! reads the copper of higher-ranking fills, so one pass computes them in
 //! rank order; fresh stored copper is reused.
-use super::geom::{self, Region, RegionIndex, Ring};
 use super::FILL_CHORD_MM;
+use super::geom::{self, Region, RegionIndex, Ring};
 use crate::diagnostics::{Error, Result};
 use crate::geometry::Point;
 use crate::ids::Id;

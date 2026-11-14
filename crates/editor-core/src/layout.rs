@@ -60,9 +60,8 @@ pub use copper::{BoardCopper, CURVE_SLACK_MM, CopperRing};
 pub(crate) use courtyard::limit_finding as courtyard_limit_finding;
 pub use courtyard::{PlacedCourtyard, placed_courtyards};
 pub use placed::{
-    BoardDrawing, PlacedGraphic, PlacedHole, PlacedItem,
-    PlacedKeepout, PlacedPad, pick_graphic, pick_pad, placed_graphics, placed_keepouts,
-    placed_pads, placement_transform,
+    BoardDrawing, PlacedGraphic, PlacedHole, PlacedItem, PlacedKeepout, PlacedPad, pick_graphic,
+    pick_pad, placed_graphics, placed_keepouts, placed_pads, placement_transform,
 };
 pub use via::{LayerChangeRequest, ViaRequest, via_pad_clearance_conflict};
 /// Nearby copper pairs one check may compare per shape on average, and

@@ -10,9 +10,7 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::point_valid;
 use crate::ids::Id;
 use crate::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
-use crate::model::fill::{
-    FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec,
-};
+use crate::model::fill::{FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec};
 use crate::model::{Fill, Keepout, Project};
 use crate::rules::MAX_RULE_MM;
 use schemars::JsonSchema;

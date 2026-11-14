@@ -40,8 +40,7 @@ use crate::model::Placement;
 use crate::model::Project;
 use crate::model::board::ConstraintTarget;
 use crate::model::dimension::{
-    BoardRef, FeatureRef, MAX_TRACE_NOTE, ModelEdgeRef, ModelFaceRef, ModelTrace,
-    ReferenceStatus,
+    BoardRef, FeatureRef, MAX_TRACE_NOTE, ModelEdgeRef, ModelFaceRef, ModelTrace, ReferenceStatus,
 };
 use crate::{CopperLayer, Layer};
 use std::collections::BTreeSet;

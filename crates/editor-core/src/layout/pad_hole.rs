@@ -23,9 +23,7 @@ use super::connectivity::CopperGraph;
 use super::copper::{check_reach, limit_finding};
 use super::grid::BoundsGrid;
 use super::limits::{BoardRules, mm};
-use super::{
-    BoardCopper, CopperRing, EPS, PlacedPad, check_pair_budget, pad_labels, placed_pads,
-};
+use super::{BoardCopper, CopperRing, EPS, PlacedPad, check_pair_budget, pad_labels, placed_pads};
 use crate::diagnostics::{Finding, ObjectRef};
 use crate::geometry::Shape;
 use crate::ids::{Id, PadId};
