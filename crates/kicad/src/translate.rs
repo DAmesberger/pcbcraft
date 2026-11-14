@@ -116,9 +116,6 @@ pub struct DefPad {
     /// with the radii of their mask and paste openings: where KiCad's
     /// chords may differ from ours.
     pub arcs: Vec<(Point, f64)>,
-    /// Sharp corners of the land on the board, with how far a mask or
-    /// paste opening grows or shrinks there (mm).
-    pub corners: Vec<(Point, f64)>,
 }
 
 /// How a pad maps: into a definition pad, or refused with its case.
@@ -262,7 +259,7 @@ fn pad_or_refusal(
         None => None,
     };
     let mask = mask_rule(board, fp, kpad, copper_side, report)?;
-    let paste = paste_rule(board, fp, kpad, copper_side, size, report)?;
+    let paste = paste_rule(board, fp, kpad, copper_side, size, &shape, report)?;
     if matches!(&shape, PadShape::Custom { .. })
         && (matches!(mask, MaskRule::Expansion(e) if e != Nm::ZERO)
             || matches!(paste, PasteRule::Reduction(r) if r != Nm::ZERO))
@@ -295,10 +292,7 @@ fn pad_or_refusal(
     if pad.fold_rotation().is_err() {
         return Err(Case::CustomPadNotOneOutline);
     }
-    let mut class = class_of(kpad, fp);
-    if paste_ratio_approximate(board, fp, kpad, size) {
-        class.push_str(" paste-ratio");
-    }
+    let class = class_of(kpad, fp);
     let ring = pad.shape.flatten(0.001);
     let t = Transform2 {
         translate: pad.position(),
@@ -315,29 +309,19 @@ fn pad_or_refusal(
         PasteRule::Reduction(r) => r.to_mm_f64(),
         _ => 0.0,
     };
-    // Sharp corners of the land, where a grown or shrunk opening may be
-    // rounded (a true offset) or not.
-    let vertices: Vec<Point> = match &pad.shape {
-        PadShape::Rect { size } => {
-            let size = size.to_mm_f64();
-            let (x, y) = (size[0] / 2.0, size[1] / 2.0);
-            vec![[-x, -y], [x, -y], [x, y], [-x, y]]
-        }
-        PadShape::Custom { outline } => std::iter::once(outline.start)
-            .chain(outline.segments.iter().map(Segment::to))
-            .collect(),
-        _ => Vec::new(),
-    };
-    let mut corners = Vec::new();
-    for v in vertices {
-        let at = t.apply(v);
-        for reach in [grow.abs(), shrink.abs()] {
-            if reach > 0.0 {
-                corners.push((at, reach));
+    let mut arcs = Vec::new();
+    if let PadShape::Custom { outline } = &pad.shape {
+        // A custom pad's grown or shrunk opening is rounded at its
+        // vertices (a true offset); KiCad draws those joins as chords.
+        for v in std::iter::once(outline.start).chain(outline.segments.iter().map(Segment::to)) {
+            let at = t.apply(v);
+            for reach in [grow.abs(), shrink.abs()] {
+                if reach > 0.0 {
+                    arcs.push((at, reach));
+                }
             }
         }
     }
-    let mut arcs = Vec::new();
     if kpad.chamfer_ratio > 0.0 && kpad.shape == PadShapeK::RoundRect && kpad.rratio > 0.0 {
         // A chamfered round rect's rounded corners: KiCad draws them as
         // chords.
@@ -397,7 +381,6 @@ fn pad_or_refusal(
         class,
         world: world_box,
         arcs,
-        corners,
     });
     Ok(if kpad.kind == PadType::Smd && !front && !back {
         Mapped::PasteOnly(def)
@@ -483,23 +466,13 @@ fn mask_rule(
     })
 }
 
-/// Whether a relative paste margin applies to a pad that is not square.
-fn paste_ratio_approximate(board: &Board, fp: &Footprint, kpad: &KPad, size: Point) -> bool {
-    let ratio = kpad
-        .margins
-        .paste_ratio
-        .filter(|v| *v != 0.0)
-        .or(fp.margins.paste_ratio.filter(|v| *v != 0.0))
-        .unwrap_or(board.setup.paste_ratio);
-    ratio != 0.0 && (size[0] - size[1]).abs() > 1e-9
-}
-
 fn paste_rule(
     board: &Board,
     fp: &Footprint,
     kpad: &KPad,
     copper_side: &str,
     size: Point,
+    shape: &PadShape,
     report: &mut Report,
 ) -> Result<PasteRule, Case> {
     if !kpad.on(&format!("{copper_side}.Paste")) {
@@ -519,9 +492,51 @@ fn paste_rule(
         .unwrap_or(board.setup.paste_ratio);
     let short = size[0].min(size[1]);
     if ratio != 0.0 && (size[0] - size[1]).abs() > 1e-9 {
+        // KiCad takes a relative margin per axis (oracle): on a pad that is
+        // not square the opening is no offset of the land, so it is a paste
+        // window of the land's shape at the opening's size.
+        let grow = [
+            mm(margin) + ratio * size[0],
+            mm(margin) + ratio * size[1],
+        ];
+        if let Some(window) = ratio_window(shape, size, grow)? {
+            report.add(Case::PasteRatioWindow);
+            return Ok(PasteRule::Windows(vec![window]));
+        }
         report.add_detail(Case::PasteRatio, &fp.reference, &kpad.number, "");
     }
     Ok(PasteRule::Reduction(nm(-(mm(margin) + ratio * short))?))
+}
+
+/// The paste window of a box-like land (`size`, centred on the pad
+/// origin) grown by `grow` per axis: a rectangle, a round rect whose
+/// radius KiCad rebuilds from the pad's ratio on the new size, or a
+/// stadium. `None` for other shapes; an opening that vanishes is refused.
+fn ratio_window(shape: &PadShape, size: Point, grow: Point) -> Result<Option<PasteWindow>, Case> {
+    let (w, h) = (size[0] + 2.0 * grow[0], size[1] + 2.0 * grow[1]);
+    if !(w > 0.0 && h > 0.0) {
+        return Err(Case::PadOutOfRange);
+    }
+    let radius = match shape {
+        PadShape::Rect { .. } => 0.0,
+        PadShape::RoundRect {
+            radius_ratio,
+            corners,
+            max_radius_nm: None,
+            ..
+        } if *corners == CornerMask::ALL => radius_ratio * w.min(h),
+        PadShape::Oblong { .. } => w.min(h) / 2.0,
+        _ => return Ok(None),
+    };
+    let (x, y) = (w / 2.0, h / 2.0);
+    Ok(Some(PasteWindow {
+        id: ApertureId(1),
+        shape: ShapeNm::Rect {
+            a: nm_point([-x, -y])?,
+            b: nm_point([x, y])?,
+            radius_nm: nm(radius)?,
+        },
+    }))
 }
 
 /// The copper outline in the definition pad frame.

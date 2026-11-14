@@ -45,12 +45,17 @@ pub enum Case {
     PadShapeUnsupported,
     /// Custom pads whose round primitives became chords.
     CustomPadChords,
-    /// Mask or paste openings of custom pads grown or shrunk as polygons.
+    /// Mask or paste openings of custom pads grown or shrunk with round
+    /// joins that KiCad draws as chords.
     CustomPadOffset,
     /// A through-hole pad with a mask opening on one side only.
     OneSidedThroughMask,
-    /// Paste with a relative margin on a pad that is not square.
+    /// Paste with a relative margin on a pad that is not square, of a
+    /// shape no window draws (custom): shrunk by the short side.
     PasteRatio,
+    /// Paste with a relative margin on a pad that is not square, imported
+    /// as a paste window of the opening KiCad draws.
+    PasteRatioWindow,
     /// G4: footprint text and drawings (silkscreen, courtyard, fab).
     FootprintDrawings,
     /// G5: net-tie footprints: pads imported, tie behaviour missing.
@@ -116,7 +121,7 @@ impl Case {
             Self::CustomPadOffset => (
                 "-",
                 Approximate,
-                "custom-pad mask or paste openings offset as polygons",
+                "custom-pad mask or paste openings offset with round joins (KiCad's are chords)",
             ),
             Self::OneSidedThroughMask => (
                 "-",
@@ -126,7 +131,12 @@ impl Case {
             Self::PasteRatio => (
                 "-",
                 Approximate,
-                "relative paste margins on pads that are not square, by the short side",
+                "relative paste margins on custom pads that are not square, by the short side",
+            ),
+            Self::PasteRatioWindow => (
+                "-",
+                Exact,
+                "relative paste margins on pads that are not square, imported as paste windows",
             ),
             Self::FootprintDrawings => (
                 "G4",

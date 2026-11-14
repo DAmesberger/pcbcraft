@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use sparksmith_core::fabrication::{self, FabricationOptions};
 use sparksmith_fabcheck::reference;
 use sparksmith_fabcheck::sets::{
-    Arc, Corner, File, Judge, PadBox, PieceKind, Scope, SetDiff, attribute, compare_sets,
+    Arc, File, Judge, PadBox, PieceKind, Scope, SetDiff, attribute, compare_sets,
 };
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -100,13 +100,7 @@ pub fn compare_design(design: &Path) -> Result<(String, bool)> {
         std::fs::create_dir_all(&dir)?;
         match compare_board(board, &dir) {
             Ok((text, ok)) => {
-                let status = if !ok {
-                    "FAIL"
-                } else if text.contains(" pass* ") {
-                    "pass*"
-                } else {
-                    "pass"
-                };
+                let status = if ok { "pass" } else { "FAIL" };
                 let _ = writeln!(summary, "board {}: {status}", k + 1);
                 summary.push_str(&text);
                 passed &= ok;
@@ -120,7 +114,7 @@ pub fn compare_design(design: &Path) -> Result<(String, bool)> {
     }
     let _ = writeln!(
         summary,
-        "pass*: within tolerance except mask or paste openings at sharp land corners (KiCad offsets round; ours keeps corners sharp)\noutputs under target/kicad-compare/ (local only)"
+        "outputs under target/kicad-compare/ (local only)"
     );
     Ok((summary, passed))
 }
@@ -172,15 +166,6 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
                 radius: *radius,
             })
             .collect(),
-        corners: imported
-            .pads
-            .iter()
-            .flat_map(|p| p.corners.iter())
-            .map(|(at, reach)| Corner {
-                at: *at,
-                reach: *reach,
-            })
-            .collect(),
     };
     let pads: Vec<PadBox> = imported
         .pads
@@ -219,17 +204,10 @@ pub fn summarize(
     let mut ok = true;
     let mut rows = Vec::new();
     for layer in &diff.layers {
-        let status = match (layer.passes, layer.corner_pieces) {
-            (false, _) => "FAIL",
-            (true, 0) => "pass",
-            // Within tolerance except openings at sharp land corners,
-            // which KiCad offsets round and our writer keeps sharp (an
-            // open decision; never counted as a pass silently).
-            (true, _) => "pass*",
-        };
+        let status = if layer.passes { "pass" } else { "FAIL" };
         let _ = writeln!(
             out,
-            "  {:<16} {status} | kept {}/{} reference objects | ours {:.4} mm², kicad {:.4} mm², xor {:.6} mm² | worst {:.3} µm | arcs {} to {:.3} µm | corners {} to {:.3} µm",
+            "  {:<16} {status} | kept {}/{} reference objects | ours {:.4} mm², kicad {:.4} mm², xor {:.6} mm² | worst {:.3} µm | arcs {} to {:.3} µm",
             layer.function,
             layer.kept_objects,
             layer.reference_objects,
@@ -238,9 +216,7 @@ pub fn summarize(
             layer.diff.difference_mm2,
             layer.worst_um,
             layer.arc_pieces,
-            layer.arc_worst_um,
-            layer.corner_pieces,
-            layer.corner_worst_um
+            layer.arc_worst_um
         );
         ok &= layer.passes;
         for row in attribute(layer, judge, pads) {

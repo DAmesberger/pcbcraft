@@ -63,9 +63,6 @@ pub struct PadRecord {
     pub world: Bounds,
     /// Round custom-pad primitives on the board (centre, radius, mm).
     pub arcs: Vec<([f64; 2], f64)>,
-    /// Sharp land corners on the board, with the mask or paste offset
-    /// there (mm).
-    pub corners: Vec<([f64; 2], f64)>,
 }
 
 /// The new project, its report and the import map of pads.
@@ -277,7 +274,6 @@ fn footprint_pads(
             class,
             world,
             arcs,
-            corners,
         } = match translate::pad(board, fp, kpad, report) {
             Mapped::Pad(p) => *p,
             Mapped::PasteOnly(p) => {
@@ -316,7 +312,6 @@ fn footprint_pads(
             class,
             world,
             arcs,
-            corners,
         });
         pads.push(pad);
     }

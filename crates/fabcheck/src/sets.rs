@@ -48,18 +48,6 @@ pub struct Judge {
     pub tolerance_nm: i32,
     pub arc_tolerance_nm: i32,
     pub arcs: Vec<Arc>,
-    /// Sharp corners of the design where a mask or paste opening is grown
-    /// or shrunk by `reach` mm: a piece wholly within `reach · √2` of one
-    /// is labelled a corner piece (sharp against rounded offsets), and
-    /// counted apart, never silent.
-    pub corners: Vec<Corner>,
-}
-
-/// A sharp land corner and the offset there, mm.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Corner {
-    pub at: [f64; 2],
-    pub reach: f64,
 }
 
 impl Judge {
@@ -68,19 +56,7 @@ impl Judge {
             tolerance_nm,
             arc_tolerance_nm: tolerance_nm,
             arcs: Vec::new(),
-            corners: Vec::new(),
         }
-    }
-
-    /// Whether every point of `outline` lies within reach of one corner.
-    pub fn on_corner(&self, outline: &[[f64; 2]]) -> bool {
-        let slack = f64::from(self.tolerance_nm) / 1e6;
-        self.corners.iter().any(|c| {
-            let limit = c.reach * std::f64::consts::SQRT_2 + slack;
-            outline
-                .iter()
-                .all(|p| (p[0] - c.at[0]).hypot(p[1] - c.at[1]) <= limit)
-        })
     }
 
     /// Whether every point of `outline` lies within the arc tolerance of
@@ -104,11 +80,7 @@ pub struct LayerResult {
     /// Pieces over the tolerance lying on an arc, and the widest of them, µm.
     pub arc_pieces: usize,
     pub arc_worst_um: f64,
-    /// Pieces over the tolerance at a sharp corner of a grown or shrunk
-    /// opening, and the widest of them, µm.
-    pub corner_pieces: usize,
-    pub corner_worst_um: f64,
-    /// The widest piece neither on an arc nor at a corner, µm.
+    /// The widest piece not on an arc, µm.
     pub worst_um: f64,
     /// Whether the layer is within the judge's tolerances.
     pub passes: bool,
@@ -229,8 +201,6 @@ pub fn compare_sets(
         let diff = compare(&a, &b, tolerance_nm)?;
         let mut arc_pieces = 0;
         let mut arc_worst_um: f64 = 0.0;
-        let mut corner_pieces = 0;
-        let mut corner_worst_um: f64 = 0.0;
         let mut worst_um: f64 = if diff.pieces.is_empty() {
             diff.worst_width_um
         } else {
@@ -240,9 +210,6 @@ pub fn compare_sets(
             if judge.on_arc(&piece.outline) {
                 arc_pieces += 1;
                 arc_worst_um = arc_worst_um.max(piece.width_um);
-            } else if judge.on_corner(&piece.outline) {
-                corner_pieces += 1;
-                corner_worst_um = corner_worst_um.max(piece.width_um);
             } else {
                 worst_um = worst_um.max(piece.width_um);
             }
@@ -254,8 +221,6 @@ pub fn compare_sets(
             diff,
             arc_pieces,
             arc_worst_um,
-            corner_pieces,
-            corner_worst_um,
             worst_um,
             passes,
             reference_objects: total,
@@ -308,8 +273,6 @@ pub struct PadBox {
 pub enum PieceKind {
     /// On a round primitive the reference draws as chords.
     Arc,
-    /// At a sharp corner of a grown or shrunk opening.
-    Corner,
     /// Anything else.
     Other,
 }
@@ -332,8 +295,6 @@ pub fn attribute(layer: &LayerResult, judge: &Judge, pads: &[PadBox]) -> Vec<Cla
     for piece in &layer.diff.pieces {
         let kind = if judge.on_arc(&piece.outline) {
             PieceKind::Arc
-        } else if judge.on_corner(&piece.outline) {
-            PieceKind::Corner
         } else {
             PieceKind::Other
         };
