@@ -86,6 +86,8 @@ fn large_board() -> Fallible<Project> {
             rotation_deg: 0.0,
             layer: Layer::Top,
             locked: false,
+            fill_override: Default::default(),
+            pad_fill_overrides: Vec::new(),
         });
     }
     // Each new part's terminals start on nets of their own, as placing a
