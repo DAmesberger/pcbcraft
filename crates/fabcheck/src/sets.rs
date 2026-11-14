@@ -7,7 +7,10 @@
 //! with a pad aperture function (not a via's), on mask and
 //! paste the flashes carrying a component (`.C`) attribute, in the drill
 //! files every tool but via drills. That is how a footprint-only import is
-//! held to a full board's output.
+//! held to a full board's output. [`Scope::Routed`] adds tracks and vias:
+//! on copper every object but zone fills (regions without a pad
+//! attribute) and non-conductor graphics, on mask and paste every flash,
+//! and every drill. [`Scope::Filled`] adds the zone fills on copper.
 use crate::compare::{LayerDiff, compare};
 use crate::drills::{DrillDiff, hits, pair};
 use crate::gerber::{GerberFile, Kind, Object};
@@ -29,6 +32,10 @@ pub enum Scope {
     All,
     /// Pad objects and component drills only.
     Pads,
+    /// Pads, tracks and vias: everything but zone fills and drawings.
+    Routed,
+    /// Pads, tracks, vias and zone fills: everything but drawings.
+    Filled,
 }
 
 /// A circle of the design whose copper the reference may approximate by
@@ -48,18 +55,14 @@ pub struct Judge {
     pub tolerance_nm: i32,
     pub arc_tolerance_nm: i32,
     pub arcs: Vec<Arc>,
-    /// Sharp corners of the design where a mask or paste opening is grown
-    /// or shrunk by `reach` mm: a piece wholly within `reach · √2` of one
-    /// is labelled a corner piece (sharp against rounded offsets), and
-    /// counted apart, never silent.
-    pub corners: Vec<Corner>,
-}
-
-/// A sharp land corner and the offset there, mm.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Corner {
-    pub at: [f64; 2],
-    pub reach: f64,
+    /// Added to every reference coordinate before comparing, nm (when the
+    /// two sets use different origins).
+    pub shift_nm: [i64; 2],
+    /// How far two drill files written to a coarser resolution may round
+    /// one hit apart, nm, added to the tolerance for drill hits: files at
+    /// 1 µm per axis that round a half micrometre differently differ by up
+    /// to √2 µm.
+    pub drill_resolution_nm: i32,
 }
 
 impl Judge {
@@ -68,19 +71,9 @@ impl Judge {
             tolerance_nm,
             arc_tolerance_nm: tolerance_nm,
             arcs: Vec::new(),
-            corners: Vec::new(),
+            shift_nm: [0, 0],
+            drill_resolution_nm: 0,
         }
-    }
-
-    /// Whether every point of `outline` lies within reach of one corner.
-    pub fn on_corner(&self, outline: &[[f64; 2]]) -> bool {
-        let slack = f64::from(self.tolerance_nm) / 1e6;
-        self.corners.iter().any(|c| {
-            let limit = c.reach * std::f64::consts::SQRT_2 + slack;
-            outline
-                .iter()
-                .all(|p| (p[0] - c.at[0]).hypot(p[1] - c.at[1]) <= limit)
-        })
     }
 
     /// Whether every point of `outline` lies within the arc tolerance of
@@ -104,11 +97,7 @@ pub struct LayerResult {
     /// Pieces over the tolerance lying on an arc, and the widest of them, µm.
     pub arc_pieces: usize,
     pub arc_worst_um: f64,
-    /// Pieces over the tolerance at a sharp corner of a grown or shrunk
-    /// opening, and the widest of them, µm.
-    pub corner_pieces: usize,
-    pub corner_worst_um: f64,
-    /// The widest piece neither on an arc nor at a corner, µm.
+    /// The widest piece not on an arc, µm.
     pub worst_um: f64,
     /// Whether the layer is within the judge's tolerances.
     pub passes: bool,
@@ -199,6 +188,81 @@ fn pad_object(function: &str, object: &Object) -> bool {
     }
 }
 
+/// Whether a reference object is a pad, track or via of a layer of
+/// `function` ([`Scope::Routed`]).
+fn routed_object(function: &str, object: &Object) -> bool {
+    if function.starts_with("Copper,") {
+        let aperture = object
+            .aperture_attributes
+            .get(".AperFunction")
+            .and_then(|v| v.first())
+            .map(String::as_str);
+        if object.object_attributes.contains_key(".P") {
+            return true;
+        }
+        !matches!(object.kind, Kind::Region { .. }) && aperture != Some("NonConductor")
+    } else {
+        matches!(object.kind, Kind::Flash { .. })
+    }
+}
+
+/// `shapes` moved by `shift` nm.
+fn shifted(mut shapes: Shapes, shift: [i64; 2]) -> Fallible<Shapes> {
+    if shift == [0, 0] {
+        return Ok(shapes);
+    }
+    let (dx, dy) = (i32::try_from(shift[0])?, i32::try_from(shift[1])?);
+    for ring in shapes.iter_mut().flatten() {
+        for p in ring.iter_mut() {
+            p.x =
+                p.x.checked_add(dx)
+                    .ok_or("sets: a shifted point overflows")?;
+            p.y =
+                p.y.checked_add(dy)
+                    .ok_or("sets: a shifted point overflows")?;
+        }
+    }
+    Ok(shapes)
+}
+
+/// Drill hits moved by `shift` nm.
+fn shifted_hits(
+    mut hits: Vec<crate::drills::DrillHit>,
+    shift: [i64; 2],
+) -> Vec<crate::drills::DrillHit> {
+    let d = [shift[0] as f64 / 1e6, shift[1] as f64 / 1e6];
+    let m = |p: &mut crate::Point| {
+        p[0] += d[0];
+        p[1] += d[1];
+    };
+    for hit in &mut hits {
+        match &mut hit.feature {
+            crate::drills::Feature::Round { at } => m(at),
+            crate::drills::Feature::Slot { from, to } => {
+                m(from);
+                m(to);
+            }
+        }
+    }
+    hits
+}
+
+/// Whether a reference object is a pad, track, via or zone fill of a
+/// layer of `function` ([`Scope::Filled`]): on copper anything but
+/// non-conductor drawings.
+fn filled_object(function: &str, object: &Object) -> bool {
+    if function.starts_with("Copper,") {
+        object
+            .aperture_attributes
+            .get(".AperFunction")
+            .and_then(|v| v.first())
+            .map(String::as_str)
+            != Some("NonConductor")
+    } else {
+        routed_object(function, object)
+    }
+}
+
 /// Compare `ours` with `reference` under `judge`.
 pub fn compare_sets(
     ours: &[File],
@@ -220,17 +284,21 @@ pub fn compare_sets(
         };
         let (b, total, kept) = match theirs.get(function) {
             Some(file) => {
-                let keep = |o: &Object| scope == Scope::All || pad_object(function, o);
+                let keep = |o: &Object| match scope {
+                    Scope::All => true,
+                    Scope::Pads => pad_object(function, o),
+                    Scope::Routed => routed_object(function, o),
+                    Scope::Filled => filled_object(function, o),
+                };
                 let kept = file.objects.iter().filter(|o| keep(o)).count();
-                (polygons::render(file, keep)?, file.objects.len(), kept)
+                let shapes = shifted(polygons::render(file, keep)?, judge.shift_nm)?;
+                (shapes, file.objects.len(), kept)
             }
             None => (Vec::new(), 0, 0),
         };
         let diff = compare(&a, &b, tolerance_nm)?;
         let mut arc_pieces = 0;
         let mut arc_worst_um: f64 = 0.0;
-        let mut corner_pieces = 0;
-        let mut corner_worst_um: f64 = 0.0;
         let mut worst_um: f64 = if diff.pieces.is_empty() {
             diff.worst_width_um
         } else {
@@ -240,9 +308,6 @@ pub fn compare_sets(
             if judge.on_arc(&piece.outline) {
                 arc_pieces += 1;
                 arc_worst_um = arc_worst_um.max(piece.width_um);
-            } else if judge.on_corner(&piece.outline) {
-                corner_pieces += 1;
-                corner_worst_um = corner_worst_um.max(piece.width_um);
             } else {
                 worst_um = worst_um.max(piece.width_um);
             }
@@ -254,8 +319,6 @@ pub fn compare_sets(
             diff,
             arc_pieces,
             arc_worst_um,
-            corner_pieces,
-            corner_worst_um,
             worst_um,
             passes,
             reference_objects: total,
@@ -269,7 +332,7 @@ pub fn compare_sets(
     let mut kinds: Vec<&String> = mine.keys().chain(theirs.keys()).collect();
     kinds.sort();
     kinds.dedup();
-    let tolerance_mm = f64::from(tolerance_nm) / 1e6;
+    let tolerance_mm = f64::from(tolerance_nm + judge.drill_resolution_nm) / 1e6;
     for kind in kinds {
         let a = match mine.get(kind) {
             Some(file) => hits(file, |_| true)?,
@@ -279,9 +342,10 @@ pub fn compare_sets(
             Some(file) => {
                 let all = hits(file, |_| true)?;
                 let kept = hits(file, |f| {
-                    scope == Scope::All || !f.iter().any(|v| v == "ViaDrill")
+                    scope != Scope::Pads || !f.iter().any(|v| v == "ViaDrill")
                 })?;
-                (kept.clone(), all.len() - kept.len())
+                let excluded = all.len() - kept.len();
+                (shifted_hits(kept, judge.shift_nm), excluded)
             }
             None => (Vec::new(), 0),
         };
@@ -308,8 +372,6 @@ pub struct PadBox {
 pub enum PieceKind {
     /// On a round primitive the reference draws as chords.
     Arc,
-    /// At a sharp corner of a grown or shrunk opening.
-    Corner,
     /// Anything else.
     Other,
 }
@@ -319,6 +381,8 @@ pub enum PieceKind {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ClassRow {
     pub kind: PieceKind,
+    /// The pieces are ours only (else the reference's only).
+    pub ours: bool,
     pub class: String,
     pub pieces: usize,
     pub widest_um: f64,
@@ -328,12 +392,10 @@ pub struct ClassRow {
 
 /// Group a layer's pieces by kind and pad class.
 pub fn attribute(layer: &LayerResult, judge: &Judge, pads: &[PadBox]) -> Vec<ClassRow> {
-    let mut rows: BTreeMap<(PieceKind, String), ClassRow> = BTreeMap::new();
+    let mut rows: BTreeMap<(PieceKind, bool, String), ClassRow> = BTreeMap::new();
     for piece in &layer.diff.pieces {
         let kind = if judge.on_arc(&piece.outline) {
             PieceKind::Arc
-        } else if judge.on_corner(&piece.outline) {
-            PieceKind::Corner
         } else {
             PieceKind::Other
         };
@@ -347,8 +409,10 @@ pub fn attribute(layer: &LayerResult, judge: &Judge, pads: &[PadBox]) -> Vec<Cla
                     && c[1] <= p.max[1] + 0.2
             })
             .map_or_else(|| "no pad".to_owned(), |p| p.class.clone());
-        let row = rows.entry((kind, class.clone())).or_insert(ClassRow {
+        let ours = piece.only_in_a;
+        let row = rows.entry((kind, ours, class.clone())).or_insert(ClassRow {
             kind,
+            ours,
             class,
             pieces: 0,
             widest_um: 0.0,

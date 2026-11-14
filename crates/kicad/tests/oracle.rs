@@ -7,7 +7,7 @@ mod support;
 use sparksmith_core::fabrication::{self, FabricationOptions};
 use sparksmith_fabcheck::reference;
 use sparksmith_fabcheck::sets::{
-    Arc, Corner, File, Judge, PadBox, PieceKind, Scope, attribute, compare_sets,
+    Arc, File, Judge, PadBox, PieceKind, Scope, attribute, compare_sets,
 };
 use std::path::PathBuf;
 
@@ -51,6 +51,9 @@ fn synthetic_footprints_match_kicad_within_a_micron() -> Fallible<()> {
     // KiCad approximates round custom-pad primitives within its default
     // maximum error of 5 µm: pieces on those arcs may be 6 µm wide.
     let judge = Judge {
+        shift_nm: imported.plot_shift_nm(),
+        // Both drill files are written to 1 µm.
+        drill_resolution_nm: 1415,
         tolerance_nm: 1000,
         arc_tolerance_nm: 6000,
         arcs: imported
@@ -60,15 +63,6 @@ fn synthetic_footprints_match_kicad_within_a_micron() -> Fallible<()> {
             .map(|(center, radius)| Arc {
                 center: *center,
                 radius: *radius,
-            })
-            .collect(),
-        corners: imported
-            .pads
-            .iter()
-            .flat_map(|p| p.corners.iter())
-            .map(|(at, reach)| Corner {
-                at: *at,
-                reach: *reach,
             })
             .collect(),
     };
@@ -85,34 +79,27 @@ fn synthetic_footprints_match_kicad_within_a_micron() -> Fallible<()> {
     let mut failures = Vec::new();
     for layer in &diff.layers {
         eprintln!(
-            "{:<16} ours {:>9.4} mm², kicad {:>9.4} mm², diff {:.6} mm², worst {:>8.3} µm; {} arc pieces to {:.3} µm; {} corner pieces to {:.3} µm",
+            "{:<16} ours {:>9.4} mm², kicad {:>9.4} mm², diff {:.6} mm², worst {:>8.3} µm; {} arc pieces to {:.3} µm",
             layer.function,
             layer.diff.area_a_mm2,
             layer.diff.area_b_mm2,
             layer.diff.difference_mm2,
             layer.worst_um,
             layer.arc_pieces,
-            layer.arc_worst_um,
-            layer.corner_pieces,
-            layer.corner_worst_um
+            layer.arc_worst_um
         );
-        // Pieces off arcs and corners by the class of their pad. Two
-        // approximations the import reports are allowed on paste: a
-        // chamfered round rect's paste (KiCad rebuilds the shrunk pad from
-        // its ratios rather than offsetting it) and a relative paste margin
-        // on a pad that is not square (KiCad takes it per axis).
+        // Pieces off arcs by the class of their pad. One approximation
+        // the import reports is allowed on paste: a chamfered round rect's
+        // paste (KiCad rebuilds the shrunk pad from its ratios rather than
+        // offsetting it).
         for row in attribute(layer, &judge, &pads) {
             eprintln!(
                 "    {:?} {:>4} pieces, widest {:.3} µm at {:?}: {}",
                 row.kind, row.pieces, row.widest_um, row.at, row.class
             );
-            let allowed = layer.function.starts_with("Paste,")
-                && (row.class.contains("chamfer") || row.class.contains("paste-ratio"));
+            let allowed = layer.function.starts_with("Paste,") && row.class.contains("chamfer");
             let limit = match row.kind {
                 PieceKind::Arc => 6.0,
-                // Mask and paste openings at sharp corners: KiCad offsets
-                // round, our writer keeps corners sharp (decision pending).
-                PieceKind::Corner => f64::INFINITY,
                 PieceKind::Other => 1.0,
             };
             if !allowed && row.widest_um > limit {

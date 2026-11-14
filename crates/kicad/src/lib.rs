@@ -9,9 +9,14 @@
 //! Tests build their boards in Rust (no `.kicad_*` fixture files).
 pub mod board;
 pub mod import;
+pub mod items;
+pub mod project;
 pub mod report;
+mod routing;
 pub mod sexpr;
+pub mod shape;
 pub mod translate;
+mod zones;
 
-pub use import::{ImportError, Imported, PadRecord, import};
+pub use import::{ImportError, Imported, PadRecord, Setup, import};
 pub use report::Report;

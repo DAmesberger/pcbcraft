@@ -13,6 +13,9 @@ pub struct LayerDiff {
     pub area_b_mm2: f64,
     /// Area dark in exactly one of them, mm².
     pub difference_mm2: f64,
+    /// Area dark in A only, and in B only, mm².
+    pub only_a_mm2: f64,
+    pub only_b_mm2: f64,
     /// Width of the widest piece of the difference, µm (0 when equal).
     pub worst_width_um: f64,
     /// The tolerance compared against, µm.
@@ -41,6 +44,8 @@ pub struct Piece {
     pub width_um: f64,
     /// The shrunk piece's outer ring, mm.
     pub outline: Vec<Point>,
+    /// Dark in A only (else in B only).
+    pub only_in_a: bool,
 }
 
 impl Piece {
@@ -87,10 +92,17 @@ pub fn worst_width_nm(d: &Shapes) -> Fallible<i64> {
 /// A against B with pieces wider than `tolerance_nm` listed.
 pub fn compare(a: &Shapes, b: &Shapes, tolerance_nm: i32) -> Fallible<LayerDiff> {
     let d = polygons::boolean(a, b, OverlayRule::Xor);
+    let only_a = polygons::boolean(a, b, OverlayRule::Difference);
+    let only_b = polygons::boolean(b, a, OverlayRule::Difference);
     let worst = worst_width_nm(&d)?;
     let mut pieces = Vec::new();
-    if worst > i64::from(tolerance_nm) {
-        for shape in polygons::offset(&d, -(tolerance_nm / 2))? {
+    // The two sides of the difference touch only along edges, so their
+    // pieces are the difference's pieces.
+    for (side, only_in_a) in [(&only_a, true), (&only_b, false)] {
+        if worst <= i64::from(tolerance_nm) {
+            break;
+        }
+        for shape in polygons::offset(side, -(tolerance_nm / 2))? {
             let area: i128 = shape.iter().map(|r| polygons::area2(r)).sum();
             if area <= 0 {
                 continue;
@@ -117,6 +129,7 @@ pub fn compare(a: &Shapes, b: &Shapes, tolerance_nm: i32) -> Fallible<LayerDiff>
                 area_mm2: area as f64 / 2.0 / 1e12,
                 width_um: (inner + i64::from(tolerance_nm / 2) * 2) as f64 / 1e3,
                 outline,
+                only_in_a,
             });
         }
     }
@@ -124,6 +137,8 @@ pub fn compare(a: &Shapes, b: &Shapes, tolerance_nm: i32) -> Fallible<LayerDiff>
         area_a_mm2: polygons::area_mm2(a),
         area_b_mm2: polygons::area_mm2(b),
         difference_mm2: polygons::area_mm2(&d),
+        only_a_mm2: polygons::area_mm2(&only_a),
+        only_b_mm2: polygons::area_mm2(&only_b),
         worst_width_um: worst as f64 / 1e3,
         tolerance_um: f64::from(tolerance_nm) / 1e3,
         pieces,

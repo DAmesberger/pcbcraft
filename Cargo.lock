@@ -5089,6 +5089,7 @@ dependencies = [
  "sparksmith-automation",
  "sparksmith-core",
  "sparksmith-io",
+ "sparksmith-kicad",
  "tempfile",
 ]
 

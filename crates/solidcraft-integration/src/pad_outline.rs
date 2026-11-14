@@ -6,9 +6,7 @@
 use crate::{Error, Result};
 use sparksmith_core::Point;
 use sparksmith_core::geometry::Shape;
-use sparksmith_core::library::{
-    Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment, offset_polygon,
-};
+use sparksmith_core::library::{Hole, HoleShape, Outline, Pad, PadDefaults, PadShape, Segment};
 
 /// Plated barrel wall: copper plated onto a drilled hole's wall, 25 µm,
 /// IPC-6012's least average hole-wall copper for class 3 (class 2 asks
@@ -265,10 +263,11 @@ pub fn shape_contour(shape: &PadShape, grow: f64) -> Option<Contour> {
             if grow.abs() < EPS {
                 return Some(Contour::Outline(outline.clone()));
             }
-            let points = Contour::Outline(outline.clone())
-                .flatten(FLATTEN_TOLERANCE_MM)
-                .ok()?;
-            let grown = offset_polygon(&points, grow)?;
+            // The core's true offset, so the native opening is the one
+            // checks, 2D and fabrication output use.
+            let grown = shape
+                .grown(grow, FLATTEN_TOLERANCE_MM)?
+                .flatten(FLATTEN_TOLERANCE_MM);
             let (first, rest) = grown.split_first()?;
             let mut segments: Vec<Segment> =
                 rest.iter().map(|p| Segment::Line { to: *p }).collect();
@@ -283,8 +282,10 @@ pub fn shape_contour(shape: &PadShape, grow: f64) -> Option<Contour> {
 
 /// A `size` rectangle grown by `grow`, its corners (bottom right, top right,
 /// top left, bottom left) rounded by `radii` (each grown with the side,
-/// capped at half the short side). A rectangle whose ends are wholly round
-/// is a stadium; a square one a circle.
+/// capped at half the short side). Growing is a true offset, as in the
+/// core's `PadShape::grown`: a sharp corner grows round with radius `grow`.
+/// A rectangle whose ends are wholly round is a stadium; a square one a
+/// circle.
 fn rounded(size: Point, grow: f64, radii: [f64; 4]) -> Option<Contour> {
     let (w, h) = (size[0] + 2.0 * grow, size[1] + 2.0 * grow);
     if w <= EPS || h <= EPS {
@@ -295,7 +296,7 @@ fn rounded(size: Point, grow: f64, radii: [f64; 4]) -> Option<Contour> {
         if r > EPS {
             (r + grow).clamp(0.0, cap)
         } else {
-            0.0
+            grow.clamp(0.0, cap)
         }
     });
     if r.iter().all(|r| (r - cap).abs() < EPS) && (w - h).abs() < EPS {
@@ -616,10 +617,12 @@ mod tests {
             },
             0.05,
         );
+        // A true offset: the sides move out and the corners round by the
+        // growth (A + P·g + π·g²).
         close(
             flat_area(&rect.ok_or_else(|| Error::Verification("none".into()))?),
-            2.1 * 1.1,
-            1e-9,
+            2.0 + 6.0 * 0.05 + std::f64::consts::PI * 0.05 * 0.05,
+            1e-4,
         );
         let circle = shape_contour(
             &PadShape::Circle {
@@ -655,7 +658,11 @@ mod tests {
         // Clockwise as authored, still grown outward.
         let grown =
             shape_contour(&square, 0.1).ok_or_else(|| Error::Verification("none".into()))?;
-        close(flat_area(&grown).abs(), 2.2 * 2.2, 1e-9);
+        close(
+            flat_area(&grown).abs(),
+            4.0 + 8.0 * 0.1 + std::f64::consts::PI * 0.01,
+            1e-3,
+        );
         Ok(())
     }
 

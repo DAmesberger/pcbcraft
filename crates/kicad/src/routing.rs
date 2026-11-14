@@ -1,0 +1,348 @@
+//! Nets, tracks and vias, through the one command engine.
+//!
+//! **Nets.** Sparksmith's nets come from the schematic (wires and labels;
+//! `sparksmith_core::nets`). A board file names each pad's net, so every
+//! pad terminal with a net gets a local label of that net's name on its
+//! pin: the labels join the terminals by name on the one sheet, and the
+//! net takes the name. Names compare case-insensitively and must be 1–64
+//! bytes without spaces, so a name that is not one is spelled anew (and
+//! listed); the copper graph then carries the board's connectivity.
+//!
+//! **Copper.** Tracks and vias are added with `layout.route_apply` in
+//! batches, checked by the engine like routed copper. A batch the checks
+//! refuse is split until the refused items are found; those are listed
+//! and the rest is imported. Arc tracks become chords within
+//! [`ARC_CHORD_MM`].
+use crate::board::{Board, Nm, PointNm};
+use crate::import::{ImportError, Session};
+use crate::items::KTrack;
+use crate::report::{Case, Report};
+use crate::translate::board_point;
+use sparksmith_core::geometry::Point;
+use sparksmith_core::layout::{LayoutCommand, RouteEditSet, RouteRequest, ViaRequest};
+use sparksmith_core::model::LabelKind;
+use sparksmith_core::schematic::SchematicCommand;
+use sparksmith_core::{
+    CopperLayer, Endpoint, Id, Operation, PackageTerminalId, TerminalId, ViaSpan,
+};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// Largest distance of an arc track's chords from the arc, mm.
+pub const ARC_CHORD_MM: f64 = 0.000_25;
+/// Most chords one arc track becomes.
+const MAX_ARC_CHORDS: usize = 512;
+/// Tracks or vias one `layout.route_apply` adds.
+const ROUTE_BATCH: usize = 128;
+
+fn mm(nm: Nm) -> f64 {
+    nm as f64 / 1e6
+}
+
+/// A label name for a KiCad net name: whitespace and control characters
+/// become `_`, cut to 64 bytes on a character boundary.
+fn label_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for c in name.chars() {
+        let c = if c.is_whitespace() || c.is_control() {
+            '_'
+        } else {
+            c
+        };
+        if out.len() + c.len_utf8() > 64 {
+            break;
+        }
+        out.push(c);
+    }
+    if out.trim().is_empty() {
+        "NET".to_owned()
+    } else {
+        out
+    }
+}
+
+/// Unique label names for the nets that have pads, by KiCad net number;
+/// names that had to change are counted with their detail.
+fn names(board: &Board, numbers: &BTreeSet<u32>, report: &mut Report) -> BTreeMap<u32, String> {
+    let mut taken = BTreeSet::new();
+    let mut out = BTreeMap::new();
+    for n in numbers {
+        let original = board.items.nets.get(n).cloned().unwrap_or_default();
+        let base = label_name(&original);
+        let mut name = base.clone();
+        let mut k = 2usize;
+        while !taken.insert(name.to_ascii_lowercase()) {
+            let suffix = format!("~{k}");
+            let keep = base
+                .char_indices()
+                .map(|(i, c)| i + c.len_utf8())
+                .take_while(|end| end + suffix.len() <= 64)
+                .last()
+                .unwrap_or(0);
+            name = format!("{}{suffix}", &base[..keep]);
+            k += 1;
+        }
+        if name != original {
+            report.add_detail(Case::NetRenamed, "", "", &original);
+        }
+        out.insert(*n, name);
+    }
+    out
+}
+
+/// Join the placed footprints' terminals into the board's nets with a
+/// label per terminal; the net of each KiCad net number that has a pad.
+/// `nets[k]` lists the package terminals of placed footprint `k` with
+/// their KiCad net numbers; `instances[k]` is its instance.
+pub(crate) fn connect(
+    session: &mut Session<'_>,
+    board: &Board,
+    nets: &[Vec<(PackageTerminalId, u32)>],
+    instances: &[Id],
+    report: &mut Report,
+) -> Result<BTreeMap<u32, Id>, ImportError> {
+    // One net per terminal: pads sharing a number share their terminal.
+    let mut terminal_net: BTreeMap<Endpoint, u32> = BTreeMap::new();
+    for (pads, instance) in nets.iter().zip(instances) {
+        for (terminal, net) in pads {
+            let end = Endpoint {
+                instance: *instance,
+                terminal: TerminalId(terminal.0),
+            };
+            match terminal_net.get(&end) {
+                Some(other) if other != net => {
+                    report.add(Case::TerminalOnTwoNets);
+                }
+                Some(_) => {}
+                None => {
+                    terminal_net.insert(end, *net);
+                }
+            }
+        }
+    }
+    let numbers: BTreeSet<u32> = terminal_net.values().copied().collect();
+    let names = names(board, &numbers, report);
+    let mut labels = Vec::with_capacity(terminal_net.len());
+    for (end, net) in &terminal_net {
+        let Some(name) = names.get(net) else { continue };
+        let at = sparksmith_core::schematic::pin_position(session.engine.project(), *end)
+            .ok_or_else(|| ImportError::Refused {
+                step: "label.place",
+                reason: "a terminal without a pin on the sheet".into(),
+            })?;
+        let position = sparksmith_core::units::PointNm::from_mm_f64_rounded(at).map_err(|e| {
+            ImportError::Refused {
+                step: "label.place",
+                reason: e.to_string(),
+            }
+        })?;
+        labels.push(Operation::Schematic(SchematicCommand::PlaceLabel {
+            sheet: None,
+            name: name.clone(),
+            kind: LabelKind::Local,
+            position,
+            rotation: Default::default(),
+            attach: Some((*end).into()),
+        }));
+    }
+    session.batches("label.place", labels)?;
+    let project = session.engine.project();
+    let mut out = BTreeMap::new();
+    for (end, net) in &terminal_net {
+        if let Some(id) = project.net_of(*end).map(|n| n.id) {
+            out.entry(*net).or_insert(id);
+        }
+    }
+    report.counts.nets = out.len();
+    Ok(out)
+}
+
+/// The copper layer a KiCad layer name is, by its place in the board's
+/// layer list (top, inner layers, bottom).
+fn copper_layer(board: &Board, name: &str) -> Option<CopperLayer> {
+    let k = board.copper.iter().position(|l| l == name)?;
+    let last = board.copper.len().checked_sub(1)?;
+    Some(match k {
+        0 => CopperLayer::Top,
+        k if k == last => CopperLayer::Bottom,
+        k => CopperLayer::Inner(u8::try_from(k).ok()?),
+    })
+}
+
+/// A track's centre line in our frame: one segment, or an arc's chords.
+fn centre_line(board: &Board, track: &KTrack) -> Vec<(Point, Point)> {
+    let p = |q: PointNm| board_point(board, q);
+    let (a, b) = (p(track.start), p(track.end));
+    let Some(mid) = track.mid else {
+        return vec![(a, b)];
+    };
+    let m = p(mid);
+    let Some((c, r)) = crate::shape::circle_through(a, m, b) else {
+        return vec![(a, b)];
+    };
+    let angle = |q: Point| (q[1] - c[1]).atan2(q[0] - c[0]);
+    let (start, through, end) = (angle(a), angle(m), angle(b));
+    let tau = std::f64::consts::TAU;
+    // Sweep from start to end through mid, either way round.
+    let ccw = (through - start).rem_euclid(tau) < (end - start).rem_euclid(tau);
+    let sweep = if ccw {
+        (end - start).rem_euclid(tau)
+    } else {
+        -(start - end).rem_euclid(tau)
+    };
+    let step = 2.0 * (1.0 - (ARC_CHORD_MM / r).min(1.0)).acos().max(1e-3);
+    let n = ((sweep.abs() / step).ceil() as usize).clamp(1, MAX_ARC_CHORDS);
+    let points: Vec<Point> = (0..=n)
+        .map(|k| {
+            if k == 0 {
+                a
+            } else if k == n {
+                b
+            } else {
+                let t = start + sweep * k as f64 / n as f64;
+                [c[0] + r * t.cos(), c[1] + r * t.sin()]
+            }
+        })
+        .collect();
+    points.windows(2).map(|w| (w[0], w[1])).collect()
+}
+
+/// Tracks and vias of the nets that have pads.
+pub(crate) fn copper(
+    session: &mut Session<'_>,
+    board: &Board,
+    nets: &BTreeMap<u32, Id>,
+    report: &mut Report,
+) -> Result<(), ImportError> {
+    if session.engine.project().rules.require().is_err() {
+        report.add_n(Case::TrackRefused, board.items.tracks.len());
+        report.add_n(Case::ViaRefused, board.items.vias.len());
+        return Ok(());
+    }
+    let mut tracks = Vec::with_capacity(board.items.tracks.len());
+    for track in &board.items.tracks {
+        let (Some(net), Some(layer)) = (nets.get(&track.net), copper_layer(board, &track.layer))
+        else {
+            report.add(Case::TrackWithoutNet);
+            continue;
+        };
+        if track.mid.is_some() {
+            report.add(Case::ArcTrack);
+        }
+        for (start, end) in centre_line(board, track) {
+            if (start[0] - end[0]).hypot(start[1] - end[1]) < 0.01 {
+                report.add(Case::TrackTooShort);
+                continue;
+            }
+            tracks.push(RouteRequest {
+                net: *net,
+                start,
+                end,
+                width: mm(track.width),
+                layer,
+            });
+        }
+    }
+    let tented = session.engine.project().rules.effective().mask.tent_vias;
+    let mut vias = Vec::with_capacity(board.items.vias.len());
+    for via in &board.items.vias {
+        let Some(net) = nets.get(&via.net) else {
+            report.add(Case::ViaWithoutNet);
+            continue;
+        };
+        let (Some(a), Some(b)) = (
+            copper_layer(board, &via.layers[0]),
+            copper_layer(board, &via.layers[1]),
+        ) else {
+            report.add(Case::ViaRefused);
+            continue;
+        };
+        let span = match (a, b) {
+            (CopperLayer::Top, CopperLayer::Bottom) | (CopperLayer::Bottom, CopperLayer::Top) => {
+                ViaSpan::Through
+            }
+            (from, to) => ViaSpan::Between { from, to },
+        };
+        if via.remove_unused_layers {
+            report.add(Case::ViaUnusedLayers);
+        }
+        vias.push(ViaRequest {
+            net: *net,
+            position: board_point(board, via.at),
+            drill: mm(via.drill),
+            diameter: mm(via.size),
+            span,
+            tented: via.tenting.map_or(tented, |(front, back)| front && back),
+        });
+    }
+    let added = add(session, tracks, Vec::new(), report)?;
+    report.counts.tracks = added;
+    let added = add(session, Vec::new(), vias, report)?;
+    report.counts.vias = added;
+    Ok(())
+}
+
+/// Add tracks and vias in batches; a refused batch is halved until each
+/// refused item is found and counted. Returns how many were added.
+fn add(
+    session: &mut Session<'_>,
+    tracks: Vec<RouteRequest>,
+    vias: Vec<ViaRequest>,
+    report: &mut Report,
+) -> Result<usize, ImportError> {
+    let mut added = 0;
+    let mut pending: Vec<(Vec<RouteRequest>, Vec<ViaRequest>)> = Vec::new();
+    for chunk in tracks.chunks(ROUTE_BATCH) {
+        pending.push((chunk.to_vec(), Vec::new()));
+    }
+    for chunk in vias.chunks(ROUTE_BATCH) {
+        pending.push((Vec::new(), chunk.to_vec()));
+    }
+    pending.reverse();
+    while let Some((tracks, vias)) = pending.pop() {
+        let n = tracks.len() + vias.len();
+        if n == 0 {
+            continue;
+        }
+        let edits = RouteEditSet {
+            add: tracks.clone(),
+            vias: vias.clone(),
+            ..RouteEditSet::default()
+        };
+        match session.apply(
+            "layout.route_apply",
+            Operation::Layout(LayoutCommand::ApplyRoute { edits }),
+        ) {
+            Ok(_) => added += n,
+            Err(ImportError::Refused { reason, .. }) if n == 1 => {
+                let case = if tracks.is_empty() {
+                    Case::ViaRefused
+                } else {
+                    Case::TrackRefused
+                };
+                report.add_detail(case, "", "", reason_kind(&reason));
+            }
+            Err(ImportError::Refused { .. }) => {
+                // Halve and try each half; the first half first.
+                let (t1, t2) = tracks.split_at(tracks.len() / 2);
+                let (v1, v2) = vias.split_at(vias.len() / 2);
+                pending.push((t2.to_vec(), v2.to_vec()));
+                pending.push((t1.to_vec(), v1.to_vec()));
+            }
+            Err(other) => return Err(other),
+        }
+    }
+    Ok(added)
+}
+
+/// The kind of a refusal, without the names the core's message may carry.
+fn reason_kind(reason: &str) -> &'static str {
+    if reason.contains("Too close") {
+        "clearance"
+    } else if reason.contains("inside the board") {
+        "outside the board"
+    } else if reason.contains("width") {
+        "width"
+    } else {
+        "other"
+    }
+}

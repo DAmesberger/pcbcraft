@@ -9,7 +9,7 @@ mod support;
 
 use sparksmith_core::geometry::{Transform2, polygon_contains};
 use sparksmith_core::layout::{PlacedPad, placed_pads};
-use sparksmith_core::library::{HoleShape, MaskRule, PadKind, PadShape, PasteRule};
+use sparksmith_core::library::{HoleShape, MaskRule, PadKind, PadShape, PasteRule, ShapeNm};
 use sparksmith_core::{Layer, Project};
 use sparksmith_kicad::ImportError;
 use sparksmith_kicad::board::BoardError;
@@ -205,8 +205,27 @@ fn margins_resolve_pad_then_footprint_then_board() -> Fallible<()> {
     let p9 = get(0, "9").ok_or("pad 9")?;
     assert_eq!(p9.kind, PadKind::PlatedThrough);
     assert_eq!(p9.paste, PasteRule::None);
-    // The non-square pad with a relative margin is approximate and reported.
-    assert!(imported.report.count(Case::PasteRatio) >= 1);
+    // The non-square round rect with a relative margin: KiCad takes the
+    // margin per axis (−0.03 − 0.1 · 1.2 and −0.03 − 0.1 · 0.6) and rebuilds
+    // the radius from the ratio on the new size, a paste window here.
+    assert_eq!(imported.report.count(Case::PasteRatioWindow), 1);
+    assert_eq!(imported.report.count(Case::PasteRatio), 0);
+    let p4 = u99("4")?;
+    let PasteRule::Windows(windows) = &p4.paste else {
+        return Err("pad 4 has no paste window".into());
+    };
+    let [window] = &windows[..] else {
+        return Err("one window expected".into());
+    };
+    let ShapeNm::Rect { a, b, radius_nm } = &window.shape else {
+        return Err("a rectangular window expected".into());
+    };
+    let (w, h) = (
+        (b.x_nm.get() - a.x_nm.get()) as f64 / 1e6,
+        (b.y_nm.get() - a.y_nm.get()) as f64 / 1e6,
+    );
+    assert!(close(w, 0.9) && close(h, 0.42), "{w} × {h}");
+    assert!(close(radius_nm.to_mm_f64(), 0.105));
     // A round rect's radius is a ratio of its short side.
     let p2 = get(0, "2").ok_or("pad 2")?;
     assert!(matches!(p2.shape, PadShape::RoundRect { radius_ratio, .. } if radius_ratio == 0.25));
@@ -219,6 +238,7 @@ fn one_footprint(pads: Vec<Pad>) -> Board {
         origin: None,
         setup: "(pad_to_mask_clearance 0)".into(),
         footprints: vec![Footprint::new("U1", [10.0, 10.0, 0.0], false, pads)],
+        items: String::new(),
     }
 }
 
@@ -307,6 +327,7 @@ fn a_definition_frame_is_independent_of_placement() -> Fallible<()> {
             Footprint::new("R1", [10.0, 10.0, 0.0], false, pads(0.0)),
             Footprint::new("R2", [20.0, 10.0, 90.0], false, pads(90.0)),
         ],
+        items: String::new(),
     };
     let imported = import(board.text().as_bytes())?;
     assert_eq!(imported.report.counts.definitions, 1);

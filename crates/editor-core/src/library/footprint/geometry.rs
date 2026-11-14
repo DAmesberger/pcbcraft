@@ -37,9 +37,11 @@ fn close(mut ring: Vec<Point>) -> Vec<Point> {
 
 /// A `size` box centred on the origin, grown by `by` on every side, with
 /// `radius` on the corners `rounded` selects (counter-clockwise from the
-/// bottom left). Growing is a mitred offset: sharp corners stay sharp and
-/// rounded ones grow with the sides (capped at half the short side), the
-/// rule the native mask openings follow too. `None` when it vanishes.
+/// bottom left). Growing is a true offset: every point within `by` of the
+/// box, so a sharp corner grows round with radius `by` and a rounded one
+/// grows with the sides (capped at half the short side); shrinking keeps
+/// sharp corners sharp. The native mask openings follow the same rule.
+/// `None` when it vanishes.
 fn rounded_box(size: Point, radius: f64, rounded: [bool; 4], by: f64) -> Option<Shape> {
     let (w, h) = (size[0] + 2.0 * by, size[1] + 2.0 * by);
     if !(w > 0.0 && h > 0.0) {
@@ -51,8 +53,9 @@ fn rounded_box(size: Point, radius: f64, rounded: [bool; 4], by: f64) -> Option<
     } else {
         0.0
     };
+    let sharp = by.clamp(0.0, cap);
     let (x, y) = (w / 2.0, h / 2.0);
-    let radii = rounded.map(|on| if on { round } else { 0.0 });
+    let radii = rounded.map(|on| if on { round } else { sharp });
     Some(Shape::Polygon {
         points: vec![[-x, -y], [x, -y], [x, y], [-x, y]],
         radii: if radii.iter().all(|r| *r <= 0.0) {
@@ -91,6 +94,37 @@ pub fn offset_polygon(points: &[Point], by: f64) -> Option<Vec<Point>> {
         })
         .collect();
     (signed_area2(&out) * area > 1e-9).then_some(out)
+}
+
+/// A ring offset by `by` mm (negative shrinks) as a true offset: round
+/// joins whose vertices lie on the true arcs, within `tol`. When the offset
+/// splits a ring (a shrunk waist), the largest piece is kept; a grown ring
+/// keeps its outer boundary. `None` when nothing is left.
+fn true_offset(mut ring: Vec<Point>, by: f64, tol: f64) -> Option<Vec<Point>> {
+    use i_overlay::mesh::float::outline::offset::OutlineOffset;
+    use i_overlay::mesh::float::style::{LineJoin, OutlineStyle};
+    if ring.len() < 3 {
+        return None;
+    }
+    if signed_area2(&ring) < 0.0 {
+        ring.reverse();
+    }
+    let r = by.abs().max(tol);
+    let step = 2.0 * (1.0 - (tol / r).min(1.0)).acos().max(0.01);
+    let style = OutlineStyle::new(by).line_join(LineJoin::Round(step));
+    let shapes: Vec<Vec<Vec<Point>>> = vec![vec![ring]].outline(&style);
+    shapes
+        .into_iter()
+        .filter_map(|shape| shape.into_iter().next())
+        .map(|outer| (signed_area2(&outer).abs(), outer))
+        .filter(|(area, _)| area.is_finite() && *area > 1e-12)
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, mut outer)| {
+            if signed_area2(&outer) < 0.0 {
+                outer.reverse();
+            }
+            outer
+        })
 }
 
 /// The circular arc from `a` to `b` with `bulge = tan(sweep / 4)`
@@ -138,9 +172,10 @@ impl PadShape {
     }
 
     /// The shape grown by `by` mm on every side (negative shrinks) as a core
-    /// shape in the pad frame, centred on the origin. Rounded corners stay
-    /// exact; a custom outline's arcs are flattened within `tol` and a grown
-    /// custom outline is a mitred polygon offset. `None` when it vanishes.
+    /// shape in the pad frame, centred on the origin: a true offset, so a
+    /// grown sharp corner is rounded by `by`. Rounded corners stay exact; a
+    /// custom outline's arcs and grown corners are flattened within `tol`.
+    /// `None` when it vanishes.
     pub fn grown(&self, by: f64, tol: f64) -> Option<Shape> {
         match self {
             Self::Rect { size } => rounded_box(size.to_mm_f64(), 0.0, [false; 4], by),
@@ -171,7 +206,7 @@ impl PadShape {
                 let ring = if by == 0.0 {
                     ring
                 } else {
-                    offset_polygon(&ring, by)?
+                    true_offset(ring, by, tol)?
                 };
                 (ring.len() >= 3).then(|| Shape::polygon(ring))
             }
@@ -429,6 +464,14 @@ mod tests {
         (a - b).abs() <= tol
     }
 
+    impl PadShape {
+        fn flatten_grown(&self, by: f64, tol: f64) -> Vec<Point> {
+            self.grown(by, tol)
+                .map(|s| s.flatten(tol))
+                .unwrap_or_default()
+        }
+    }
+
     #[test]
     fn flattened_shapes_are_counter_clockwise_with_their_exact_area() {
         let tol = 1e-4;
@@ -531,6 +574,77 @@ mod tests {
                 "{shape:?}"
             );
         }
+    }
+
+    /// Openings are true offsets: every point within `by` of the land. A
+    /// grown sharp corner is rounded by `by` (a convex land of area A and
+    /// perimeter P grows to A + P·by + π·by²); a shrunk one stays sharp.
+    #[test]
+    fn grown_openings_are_true_offsets_with_round_corners() {
+        let tol = 1e-5;
+        let by = 0.1;
+        let rect = PadShape::Rect {
+            size: pt([2.0, 1.0]),
+        };
+        let Some(Shape::Polygon { radii, .. }) = rect.grown(by, tol) else {
+            return assert!(rect.grown(by, tol).is_some());
+        };
+        assert_eq!(radii, vec![by; 4]);
+        let grown = area(
+            &rect
+                .grown(by, tol)
+                .map(|s| s.flatten(tol))
+                .unwrap_or_default(),
+        );
+        assert!(
+            close_to(grown, 2.0 + 6.0 * by + PI * by * by, 1e-4),
+            "{grown}"
+        );
+        let shrunk = rect.grown(-by, tol);
+        assert!(
+            matches!(&shrunk, Some(Shape::Polygon { radii, .. }) if radii.is_empty()),
+            "{shrunk:?}"
+        );
+        // A D-shaped round rect: its sharp corners round by `by`, its
+        // rounded ones by their radius plus `by`.
+        let d = PadShape::RoundRect {
+            size: pt([2.0, 1.0]),
+            radius_ratio: 0.25,
+            max_radius_nm: None,
+            corners: CornerMask {
+                top_left: true,
+                top_right: false,
+                bottom_right: false,
+                bottom_left: true,
+            },
+        };
+        let Some(Shape::Polygon { radii, .. }) = d.grown(by, tol) else {
+            return assert!(d.grown(by, tol).is_some());
+        };
+        assert_eq!(radii, vec![0.35, by, by, 0.35]);
+        // A custom triangle: the same area rule, its vertices round.
+        let triangle = PadShape::Custom {
+            outline: Outline {
+                start: [0.0, 0.0],
+                segments: vec![
+                    Segment::Line { to: [2.0, 0.0] },
+                    Segment::Line { to: [0.0, 1.0] },
+                    Segment::Line { to: [0.0, 0.0] },
+                ],
+            },
+        };
+        let perimeter = 3.0 + 5f64.sqrt();
+        let ring = triangle.flatten_grown(by, tol);
+        assert!(
+            close_to(area(&ring), 1.0 + perimeter * by + PI * by * by, 1e-3),
+            "{}",
+            area(&ring)
+        );
+        assert!(!crate::geometry::polygon_self_intersects(&ring));
+        // Shrunk, a convex land's corners stay sharp: its vertices move
+        // inward along the bisectors (no larger than the mitred offset).
+        let inner = triangle.flatten_grown(-by, tol);
+        assert!(area(&inner) > 0.0 && area(&inner) < 1.0);
     }
 
     #[test]

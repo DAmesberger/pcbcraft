@@ -11,6 +11,8 @@ use crate::translate::{self, DefPad, Mapped};
 use sparksmith_core::functions::{Direction, TerminalFunctions};
 use sparksmith_core::geometry::Bounds;
 use sparksmith_core::layout::LayoutCommand;
+use sparksmith_core::layout::outline::{BoardCommand, BoardEdit};
+use sparksmith_core::library::footprint_source::{SketchEdit, SketchRef};
 use sparksmith_core::library::samples::named_block_symbol;
 use sparksmith_core::library::{
     BindingDefinition, ComponentDefinition, Definition, DefinitionMeta, DraftEdit,
@@ -19,13 +21,15 @@ use sparksmith_core::library::{
     designator_prefix_valid,
 };
 use sparksmith_core::materials::MaterialId;
+use sparksmith_core::model::board::BoardShape;
+use sparksmith_core::rules::{RuleKey, RuleProfile, RuleValue, RulesCommand};
 use sparksmith_core::units::{Nm, PointNm};
 use sparksmith_core::{
     BindingRef, ComponentRef, DefinitionId, DefinitionKind, FootprintRef, FunctionId, Id,
     InstanceCommand, LibraryCommand, Operation, Outcome, PackageRef, PackageTerminalId, PadId,
     PhysicalChoice, Revision, StackupPresets, SymbolRef, TerminalId, UnitId,
 };
-use sparksmith_core::{Engine, NewBoard, instances::NewInstance};
+use sparksmith_core::{Engine, Evaluators, NewBoard, instances::NewInstance};
 use std::collections::BTreeMap;
 
 /// Why an import failed. Messages carry no file content.
@@ -63,16 +67,27 @@ pub struct PadRecord {
     pub world: Bounds,
     /// Round custom-pad primitives on the board (centre, radius, mm).
     pub arcs: Vec<([f64; 2], f64)>,
-    /// Sharp land corners on the board, with the mask or paste offset
-    /// there (mm).
-    pub corners: Vec<([f64; 2], f64)>,
 }
 
 /// The new project, its report and the import map of pads.
 pub struct Imported {
     pub engine: Engine,
+    /// Where our board origin lies in KiCad's frame, and KiCad's auxiliary
+    /// (drill and place) origin, nm: our output is KiCad's plot about the
+    /// auxiliary origin moved by `(aux.x − origin.x, origin.y − aux.y)`.
+    pub origin_nm: [i64; 2],
+    pub aux_origin_nm: Option<[i64; 2]>,
     pub report: Report,
     pub pads: Vec<PadRecord>,
+}
+
+impl Imported {
+    /// What moves a KiCad plot about the auxiliary origin onto our output,
+    /// nm (`kicad-cli … --use-drill-file-origin`).
+    pub fn plot_shift_nm(&self) -> [i64; 2] {
+        let aux = self.aux_origin_nm.unwrap_or_default();
+        [aux[0] - self.origin_nm[0], self.origin_nm[1] - aux[1]]
+    }
 }
 
 /// The provenance every imported definition records (L1).
@@ -82,14 +97,29 @@ const PROVENANCE: &str = "Imported from a KiCad board's embedded footprint copy.
 /// Schematic spacing of the imported instances, mm.
 const SHEET_PITCH_MM: f64 = 25.4;
 
-/// Import the footprints of a KiCad board file into a new project on
-/// `new_board`, with the board's copper count taken from `presets` (both
-/// shipped data the caller loads).
-pub fn import(
-    bytes: &[u8],
-    new_board: &NewBoard,
-    presets: &StackupPresets,
-) -> Result<Imported, ImportError> {
+/// What an import builds on: shipped data and host engines the caller
+/// loads (the importer reads no files).
+#[derive(Clone, Copy)]
+pub struct Setup<'a> {
+    /// The new project's board.
+    pub board: &'a NewBoard,
+    /// The stackup family a stackup the file does not state comes from.
+    pub presets: &'a StackupPresets,
+    /// The fab profile the board's rules start from; the file's own
+    /// settings (mask margin, via tenting) are set over it. Without one the
+    /// board has no rules, so its outline, tracks and fills are not
+    /// imported.
+    pub profile: Option<&'a RuleProfile>,
+    /// The host's sketch engines: with a board evaluator the outline is
+    /// imported as a board sketch, else as the rectangle around it.
+    pub evaluators: Evaluators<'a>,
+    /// The board's project file (`.kicad_pro`), when there is one: its
+    /// clearances and least track width are set over the fab profile.
+    pub project_file: Option<&'a [u8]>,
+}
+
+/// Import a KiCad board file into a new project.
+pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> {
     let mut report = Report::default();
     let board = board::read(bytes, &mut report)?;
     report.format_version = board.version;
@@ -98,30 +128,44 @@ pub fn import(
     report.counts.footprints_back = board.footprints.iter().filter(|f| f.back).count();
     report.add_n(Case::BoardObjects, board.other.values().sum());
     let mut session = Session {
-        engine: Engine::new(new_board),
+        engine: Engine::new(setup.board),
+        evaluators: setup.evaluators,
     };
-    if board.copper.len() != new_board.stackup.copper.len() {
-        let stackup = presets
-            .preset(board.copper.len())
-            .map_err(|e| ImportError::Refused {
-                step: "layout.set_stackup",
-                reason: e.to_string(),
-            })?;
+    session.rules(&board, setup.profile, &mut report)?;
+    let stackup = match crate::shape::stackup(&board, setup.presets, &mut report) {
+        Some(stackup) => Some(stackup),
+        None if board.copper.len() != setup.board.stackup.copper.len() => Some(
+            setup
+                .presets
+                .preset(board.copper.len())
+                .map_err(|e| ImportError::Refused {
+                    step: "layout.set_stackup",
+                    reason: e.to_string(),
+                })?,
+        ),
+        None => None,
+    };
+    if let Some(stackup) = stackup {
         session.apply(
             "layout.set_stackup",
             Operation::Layout(LayoutCommand::SetStackup(stackup)),
         )?;
     }
+    session.outline(&board, &mut report)?;
     // Each footprint's pads in its own definition frame; equal definitions
     // are shared.
     let mut definitions: Vec<Vec<Pad>> = Vec::new();
     let mut by_key: BTreeMap<String, usize> = BTreeMap::new();
     let mut uses: Vec<usize> = Vec::with_capacity(board.footprints.len());
     let mut per_footprint: Vec<Vec<PadRecord>> = Vec::with_capacity(board.footprints.len());
+    let mut terminal_nets: Vec<Vec<(PackageTerminalId, u32)>> =
+        Vec::with_capacity(board.footprints.len());
     for fp in &board.footprints {
         let mut records = Vec::new();
-        let pads = footprint_pads(&board, fp, &mut report, &mut records);
+        let mut nets = Vec::new();
+        let pads = footprint_pads(&board, fp, &mut report, &mut records, &mut nets);
         per_footprint.push(records);
+        terminal_nets.push(nets);
         let key = serde_json::to_string(&pads).map_err(|e| ImportError::Refused {
             step: "footprint key",
             reason: e.to_string(),
@@ -167,8 +211,14 @@ pub fn import(
     let mut taken = std::collections::BTreeSet::new();
     let mut place = Vec::with_capacity(board.footprints.len());
     let mut placed: Vec<&Footprint> = Vec::with_capacity(board.footprints.len());
+    let mut placed_nets = Vec::with_capacity(board.footprints.len());
     let mut records = Vec::new();
-    for (fp, (index, recs)) in board.footprints.iter().zip(uses.iter().zip(per_footprint)) {
+    for ((fp, (index, recs)), nets) in board
+        .footprints
+        .iter()
+        .zip(uses.iter().zip(per_footprint))
+        .zip(terminal_nets)
+    {
         let Some(set) = sets.get(*index).ok_or(ImportError::Refused {
             step: "component.place",
             reason: "a footprint without its component".into(),
@@ -179,6 +229,7 @@ pub fn import(
         };
         let n = placed.len();
         placed.push(fp);
+        placed_nets.push(nets);
         records.extend(recs);
         let designator = if sparksmith_core::instances::designator_valid(&fp.reference)
             && taken.insert(fp.reference.to_ascii_uppercase())
@@ -234,11 +285,18 @@ pub fn import(
         }));
     }
     session.batches("layout.place", layout)?;
+    let nets =
+        crate::routing::connect(&mut session, &board, &placed_nets, &instances, &mut report)?;
+    crate::routing::copper(&mut session, &board, &nets, &mut report)?;
+    session.project_rules(setup.project_file, &mut report);
+    crate::zones::fills(&mut session, &board, &nets, &mut report)?;
     report.counts.pads = board.footprints.iter().map(|f| f.pads.len()).sum();
     report.counts.pads_imported = records.len();
     report.add_n(Case::PadsExact, records.len());
     Ok(Imported {
         engine: session.engine,
+        origin_nm: board.origin,
+        aux_origin_nm: board.aux_origin,
         report,
         pads: records,
     })
@@ -266,6 +324,7 @@ fn footprint_pads(
     fp: &Footprint,
     report: &mut Report,
     records: &mut Vec<PadRecord>,
+    nets: &mut Vec<(PackageTerminalId, u32)>,
 ) -> Vec<Pad> {
     let mut pads = Vec::with_capacity(fp.pads.len());
     let mut terminals: BTreeMap<String, PackageTerminalId> = BTreeMap::new();
@@ -277,7 +336,6 @@ fn footprint_pads(
             class,
             world,
             arcs,
-            corners,
         } = match translate::pad(board, fp, kpad, report) {
             Mapped::Pad(p) => *p,
             Mapped::PasteOnly(p) => {
@@ -311,13 +369,11 @@ fn footprint_pads(
                 id
             });
             pad.terminal = Some(id);
+            if let Some((net, _)) = &kpad.net {
+                nets.push((id, *net));
+            }
         }
-        records.push(PadRecord {
-            class,
-            world,
-            arcs,
-            corners,
-        });
+        records.push(PadRecord { class, world, arcs });
         pads.push(pad);
     }
     for (window, reference, number) in paste_only {
@@ -353,22 +409,167 @@ struct Set {
     binding: DefinitionId,
 }
 
-struct Session {
-    engine: Engine,
+pub(crate) struct Session<'a> {
+    pub(crate) engine: Engine,
+    pub(crate) evaluators: Evaluators<'a>,
 }
 
-impl Session {
-    fn apply(&mut self, step: &'static str, op: Operation) -> Result<Outcome, ImportError> {
+/// Board parameters a rectangle sketch starts with (`board.start_sketch`).
+const RECTANGLE_PARAMETERS: [&str; 2] = ["width", "height"];
+
+impl Session<'_> {
+    pub(crate) fn apply(
+        &mut self,
+        step: &'static str,
+        op: Operation,
+    ) -> Result<Outcome, ImportError> {
         self.engine
-            .apply(self.engine.revision(), op)
+            .apply_hosted(self.engine.revision(), op, self.evaluators)
             .map_err(|e| ImportError::Refused {
                 step,
                 reason: e.to_string(),
             })
     }
 
+    /// The fab profile, with the file's board-wide settings over it: the
+    /// mask margin vias and inherited pads take, and whether vias are
+    /// tented.
+    fn rules(
+        &mut self,
+        board: &Board,
+        profile: Option<&RuleProfile>,
+        report: &mut Report,
+    ) -> Result<(), ImportError> {
+        let Some(profile) = profile else {
+            report.add(Case::NoRules);
+            return Ok(());
+        };
+        self.apply(
+            "rules.set_fab_profile",
+            Operation::Rules(RulesCommand::SetProfile {
+                profile: Box::new(profile.clone()),
+                keep_overrides: false,
+            }),
+        )?;
+        let mut overrides = vec![(
+            RuleKey::MaskExpansion,
+            RuleValue::Length(board.setup.mask_margin as f64 / 1e6),
+        )];
+        if let Some(open) = board.setup.vias_on_mask {
+            overrides.push((RuleKey::TentVias, RuleValue::Flag(!open)));
+        }
+        self.set_overrides(overrides, report);
+        Ok(())
+    }
+
+    /// The project file's clearances and least track width over the
+    /// rules. Set after the tracks and vias, which go in as the file has
+    /// them (a check finding, not a refusal, is the place for any the
+    /// project's rules flag), and before the fills, which they shape.
+    pub(crate) fn project_rules(&mut self, project_file: Option<&[u8]>, report: &mut Report) {
+        if self.engine.project().rules.require().is_err() {
+            return;
+        }
+        match project_file.map(|bytes| crate::project::read(bytes, report)) {
+            Some(Some(rules)) => {
+                report.add(Case::ProjectRules);
+                self.set_overrides(crate::project::overrides(&rules), report);
+            }
+            Some(None) => report.add(Case::ProjectUnreadable),
+            None => report.add(Case::NoProject),
+        }
+    }
+
+    fn set_overrides(&mut self, overrides: Vec<(RuleKey, RuleValue)>, report: &mut Report) {
+        for (key, value) in overrides {
+            if self
+                .apply(
+                    "rules.set_override",
+                    Operation::Rules(RulesCommand::SetOverride { key, value }),
+                )
+                .is_err()
+            {
+                report.add(Case::RuleRefused);
+            }
+        }
+    }
+
+    /// The board outline: a board sketch of the `Edge.Cuts` drawings (with
+    /// a board evaluator), else the rectangle from the origin around them.
+    fn outline(&mut self, board: &Board, report: &mut Report) -> Result<(), ImportError> {
+        let Some(bounds) = crate::shape::outline_bounds(board) else {
+            report.add(Case::OutlineMissing);
+            return Ok(());
+        };
+        if self.engine.project().rules.require().is_err() {
+            report.add(Case::OutlineNotImported);
+            return Ok(());
+        }
+        let curves = crate::shape::outline_edits(board, report);
+        if self.evaluators.board.is_none() {
+            // The box's corner is the origin, up to its fitted arcs.
+            if bounds.min[0] < -1e-6 || bounds.min[1] < -1e-6 {
+                report.add(Case::OutlineNotImported);
+                return Ok(());
+            }
+            self.apply(
+                "board.set_rectangle",
+                Operation::Board(BoardCommand::SetRectangle { size: bounds.max }),
+            )?;
+            report.add(Case::OutlineRectangle);
+            return Ok(());
+        }
+        self.apply(
+            "board.start_sketch",
+            Operation::Board(BoardCommand::StartSketch),
+        )?;
+        let BoardShape::Sketch(sketch) = &self.engine.project().board_shape else {
+            return Err(ImportError::Refused {
+                step: "board.start_sketch",
+                reason: "no board sketch".into(),
+            });
+        };
+        // The starting rectangle goes: its lines, then its parameters.
+        let mut edits = vec![BoardEdit::Sketch {
+            edit: SketchEdit::Delete {
+                ids: sketch
+                    .edges
+                    .iter()
+                    .map(|e| SketchRef::Curve(e.curve.clone()))
+                    .collect(),
+            },
+        }];
+        edits.extend(
+            sketch
+                .parameters
+                .iter()
+                .filter(|p| RECTANGLE_PARAMETERS.contains(&p.name.0.as_str()))
+                .map(|p| BoardEdit::RemoveParameter {
+                    name: p.name.clone(),
+                }),
+        );
+        edits.extend(curves.into_iter().map(|edit| BoardEdit::Sketch { edit }));
+        let max = sparksmith_core::layout::outline::MAX_BOARD_EDITS;
+        for chunk in edits.chunks(max) {
+            self.apply(
+                "board.edit",
+                Operation::Board(BoardCommand::Edit {
+                    edits: chunk.to_vec(),
+                }),
+            )?;
+        }
+        match &self.engine.project().board_shape {
+            BoardShape::Sketch(sketch) if sketch.fault.is_none() => {
+                report.add(Case::OutlineSketch);
+                report.counts.cutouts = sketch.solved.cutouts.len();
+            }
+            _ => report.add(Case::OutlineNotClosed),
+        }
+        Ok(())
+    }
+
     /// Apply `ops` in batches of at most [`sparksmith_core::MAX_BATCH`].
-    fn batches(
+    pub(crate) fn batches(
         &mut self,
         step: &'static str,
         ops: Vec<Operation>,
@@ -379,7 +580,7 @@ impl Session {
             let batch: Vec<Operation> = ops.by_ref().take(sparksmith_core::MAX_BATCH).collect();
             let outcomes = self
                 .engine
-                .apply_all_hosted(self.engine.revision(), batch, Default::default())
+                .apply_all_hosted(self.engine.revision(), batch, self.evaluators)
                 .map_err(|e| ImportError::Refused {
                     step,
                     reason: e.to_string(),
