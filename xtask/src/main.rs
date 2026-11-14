@@ -123,7 +123,6 @@ fn run() -> Result<()> {
         }
         "board-parity" => board_parity(),
         "wasm" => wasm(),
-        "wasm-scripting" => wasm_tests("sparksmith-core", "scripting::tests", "scripting"),
         "wasm-footprint" => wasm_tests("sparksmith-solidcraft", "footprint::tests", "footprint"),
         "layers" => layers::check(),
         "core-modules" => core_modules::check(),
@@ -138,7 +137,7 @@ fn run() -> Result<()> {
         "ui-forms" => ui_forms::check(),
         "raw-keys" => raw_keys::check(),
         _ => Err(
-            "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
+            "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
              | licences --check | brand-crates | clean-room | no-builtin-data | generic-terms | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
              | format-lock [--update] | kicad-compare [--design PATH]"
                 .into(),
@@ -147,8 +146,7 @@ fn run() -> Result<()> {
 }
 
 /// Execute a crate's wasm proof tests in Node, separately from the
-/// compile-only gate: the scripting proof (`wasm-scripting`) and the
-/// footprint evaluator's golden hashes (`wasm-footprint`, native/wasm
+/// compile-only gate: the footprint evaluator's golden hashes (`wasm-footprint`, native/wasm
 /// agreement). Requires the wasm-bindgen test runner matching Cargo.lock
 /// and Node on PATH.
 fn wasm_tests(package: &str, filter: &str, what: &str) -> Result<()> {

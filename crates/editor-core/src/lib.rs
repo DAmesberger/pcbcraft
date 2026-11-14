@@ -32,7 +32,6 @@ pub mod product;
 pub mod quantity;
 pub mod rules;
 pub mod schematic;
-pub mod scripting;
 pub mod shared;
 #[cfg(test)]
 mod tests;

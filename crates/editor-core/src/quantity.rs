@@ -2,8 +2,8 @@
 //!
 //! Units are data: a [`UnitSet`] supplies a dimension and the linear units
 //! that measure it, so nothing here is chosen by a component name or a unit
-//! symbol. Quantity kinds (`fields`) and script requests (`scripting`) both
-//! use this module; it knows nothing about either, and nothing about Rhai.
+//! symbol. Quantity kinds (`fields`) use this module; it knows nothing
+//! about them, and nothing about Rhai.
 use crate::diagnostics::{Error, Result};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

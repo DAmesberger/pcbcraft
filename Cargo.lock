@@ -5109,7 +5109,6 @@ dependencies = [
  "sparksmith-generator-abi",
  "sparksmith-units-derive",
  "thiserror 2.0.21",
- "wasm-bindgen-test",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 use super::*;
 use sparksmith_core::{
-    DefinitionKind, Engine, InstanceCommand, Operation, QueryResult, UnitId, instances::NewInstance,
+    Engine, InstanceCommand, Operation, QueryResult, UnitId, instances::NewInstance,
 };
 
 /// A sheet point a test writes in mm; test points lie within the range.
@@ -64,55 +64,6 @@ fn json_requests_reach_the_engine_and_report_typed_errors() -> TestResult {
     );
     let empty = session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}));
     assert_eq!(empty["error"]["code"], "history_empty");
-    Ok(())
-}
-
-#[test]
-fn pad_generator_is_available_through_the_shared_transport_contract() -> TestResult {
-    let mut session = Session::new(Engine::demo()?);
-    let original = session.engine().document().clone();
-    let revision = session.engine().revision();
-    let (index, footprint) = session
-        .engine()
-        .drafts()
-        .items
-        .iter()
-        .enumerate()
-        .find(|(_, d)| d.definition.kind() == DefinitionKind::Footprint)
-        .map(|(i, d)| (i, d.id))
-        .ok_or("demo footprint draft")?;
-    let operation = json!({
-        "editor": "Library", "operation": {
-            "command": "library.generate_pads", "params": {"draft": footprint, "script": {
-                "api_version": 1,
-                "source": "for i in 0..2 { footprint.pad(i + 1, i * pitch, q(0.0, \"mm\"), pitch, pitch); }",
-                "units": [{"dimension": [1,0,0,0,0,0,0], "units": [
-                    {"symbol": "m", "scale": 1.0, "si_prefixes": true}
-                ]}],
-                "inputs": {"pitch": {"type": "quantity", "value": 2.0, "unit": "mm"}}
-            }}
-        }
-    });
-    let reply = session.dispatch(json!({"command": "project.apply", "params": {
-        "expected_revision": revision, "operation": operation,
-    }}));
-    assert_eq!(reply["ok"], true, "{reply}");
-    let draft = &reply["result"]["drafts"][index];
-    assert_eq!(
-        draft["draft"]["definition"]["body"]["pads"][1]["position"],
-        json!({"x_nm": 2_000_000, "y_nm": 0})
-    );
-    assert_eq!(draft["check"]["result"]["publishable"], true, "{draft}");
-    assert_eq!(session.engine().project(), original.project.as_ref());
-    assert_eq!(
-        session.dispatch(json!({"command": "project.undo", "params": {"expected_revision": session.engine().revision()}}))["ok"],
-        true
-    );
-    assert_eq!(session.engine().document(), &original);
-    let catalog = serde_json::to_string(&Request::catalog())?;
-    assert!(catalog.contains("library.generate_pads"));
-    assert!(!catalog.contains("part."));
-    assert!(!catalog.contains("migrate"));
     Ok(())
 }
 

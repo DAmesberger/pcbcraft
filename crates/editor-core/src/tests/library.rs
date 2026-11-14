@@ -581,24 +581,6 @@ fn new_library_commands_fail_atomically() -> Result<()> {
             drafts: vec![f.package, f.package],
             close: false,
         },
-        LibraryCommand::GeneratePads {
-            draft: unknown,
-            script: crate::scripting::Script {
-                api_version: 1,
-                source: String::new(),
-                units: vec![],
-                inputs: Default::default(),
-            },
-        },
-        LibraryCommand::GeneratePads {
-            draft: f.component,
-            script: crate::scripting::Script {
-                api_version: 1,
-                source: String::new(),
-                units: vec![],
-                inputs: Default::default(),
-            },
-        },
     ];
     for command in operations {
         let operation = Operation::Library(command);

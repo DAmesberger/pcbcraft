@@ -21,7 +21,6 @@ use crate::library::templates::footprint_family::{self, FootprintTemplate};
 use crate::library::{self, Definition, DefinitionMeta, DraftEdit, Grid, drafts, standard_fields};
 use crate::model::Document;
 use crate::model::PhysicalChoice;
-use crate::scripting;
 use crate::units::PointNm;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -88,13 +87,6 @@ pub enum LibraryCommand {
         parts: Vec<DefinitionId>,
         #[serde(default = "close_by_default")]
         close: bool,
-    },
-    /// Regenerate a footprint draft's existing pads with a bounded script.
-    /// Pad IDs and package-terminal associations are preserved.
-    #[serde(rename = "library.generate_pads")]
-    GeneratePads {
-        draft: DefinitionId,
-        script: scripting::Script,
     },
     /// Replace the authoring grid (an undoable editor setting saved with the
     /// drafts). Geometry never moves; the outcome lists draft pins that are
@@ -323,7 +315,6 @@ declare_classes!(LibraryCommand {
     DiscardDraft "library.discard_draft" Edit "Discard a draft",
     Publish "library.publish" Ask "Publish drafts",
     PublishWithParts "library.publish_with_parts" Ask "Publish drafts and their Parts",
-    GeneratePads "library.generate_pads" Edit "Generate pads",
     SetGrid "library.set_grid" Edit "Set the symbol grid",
     SetSymbolConventions "library.set_symbol_conventions" Edit "Set symbol conventions",
     RestyleSymbol "library.restyle_symbol" Edit "Restyle a symbol",
@@ -1000,31 +991,6 @@ pub(crate) fn apply_library(
                 .items
                 .retain(|d| !parts.contains(&d.id));
             Ok(outcome)
-        }
-        LibraryCommand::GeneratePads { draft, script } => {
-            let current = document
-                .drafts
-                .get(draft)
-                .ok_or_else(|| Error::NotFound("That draft no longer exists".into()))?;
-            let Definition::Footprint(footprint) = &current.definition else {
-                return Err(Error::Invalid(
-                    "pad generation requires a footprint draft".into(),
-                ));
-            };
-            if footprint.source.is_some() {
-                return Err(Error::Conflict(
-                    "footprint.derived: this footprint's pads are derived from its sketch; detach it (library.edit_footprint Detach) before scripting pads".into(),
-                ));
-            }
-            let generated = scripting::generate_pads(&script, footprint)?;
-            let edit = DraftEdit {
-                id: draft,
-                meta: current.meta.clone(),
-                definition: Definition::Footprint(generated),
-            };
-            drafts::edit(Arc::make_mut(&mut document.drafts), vec![edit])?;
-            follow_envelope(document, draft)?;
-            Ok(Outcome::None)
         }
         LibraryCommand::SetGrid { grid } => {
             let grid = Grid::from(grid);

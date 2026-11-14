@@ -24,10 +24,11 @@ fn the_catalog_has_its_260_entries() {
     // 49 requests (library.review_check and project.apply_all joined, then
     // interface.publish_preview and interface.publish, then assembly.follow,
     // assembly.preview and assembly.update, then library.generators and
-    // library.generate_part), 168 operations (the seven assembly.* commands,
-    // then library.generate joined), 43 queries (assembly.status joined);
-    // the three tables above are what keeps the count honest.
-    assert_eq!(metadata::entries().len(), 262);
+    // library.generate_part), 167 operations (the seven assembly.* commands,
+    // then library.generate joined, then library.generate_pads removed), 43
+    // queries (assembly.status joined); the three tables above are what keeps
+    // the count honest.
+    assert_eq!(metadata::entries().len(), 261);
 }
 
 /// A title is short, says more than the wire name, and is unique within its
