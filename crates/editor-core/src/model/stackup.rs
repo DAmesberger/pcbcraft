@@ -500,6 +500,34 @@ impl Stackup {
         self.dielectrics.iter().map(|d| d.thickness_mm).sum()
     }
 
+    /// The top and bottom foils' thicknesses in µm (`None` without foils).
+    pub fn outer_copper_um(&self) -> Option<(f64, f64)> {
+        Some((
+            self.copper.first()?.thickness_um,
+            self.copper.last()?.thickness_um,
+        ))
+    }
+
+    /// Whether both outer foils are `um` thick.
+    pub fn outer_copper_is(&self, um: f64) -> bool {
+        self.outer_copper_um()
+            .is_some_and(|(top, bottom)| (top - um).abs() < 1e-6 && (bottom - um).abs() < 1e-6)
+    }
+
+    /// This stackup with both outer foils `um` thick (inner foils and
+    /// plane marks unchanged), checked.
+    pub fn with_outer_copper(&self, um: f64) -> Result<Stackup> {
+        let mut next = self.clone();
+        let count = next.copper.len();
+        for (i, foil) in next.copper.iter_mut().enumerate() {
+            if i == 0 || i + 1 == count {
+                foil.thickness_um = um;
+            }
+        }
+        next.check()?;
+        Ok(next)
+    }
+
     /// Finished board thickness over the outer copper, in mm (mask excluded).
     pub fn thickness_mm(&self) -> f64 {
         self.dielectric_mm()

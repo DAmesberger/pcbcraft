@@ -154,7 +154,7 @@ mod tests {
         )?;
         assert_eq!(
             rule_profiles::read_profile_file(&builtin)?.name,
-            "JLCPCB 4-layer 1 oz"
+            "JLCPCB 4-layer"
         );
         let imported = reply(&library, &args(&["import", EXAMPLE]))?;
         assert_eq!(imported["imported"]["id"], "jlcpcb-2-layer-1oz");

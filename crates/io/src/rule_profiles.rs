@@ -639,9 +639,9 @@ mod tests {
     #[test]
     fn the_jlcpcb_options_give_the_published_limits_and_default_to_the_old_values() -> Result<()> {
         use sparksmith_core::rules::CopperObject::{PthHole, Track};
-        for (name, ring, pth) in [
-            ("jlcpcb-2-layer-1oz.json", 0.18, 0.28),
-            ("jlcpcb-4-layer-1oz.json", 0.15, 0.3),
+        for (name, ring, pth, space_2oz) in [
+            ("jlcpcb-2-layer-1oz.json", 0.18, 0.28, 0.16),
+            ("jlcpcb-4-layer-1oz.json", 0.15, 0.3, 0.15),
         ] {
             let text = shipped_text(name)?;
             let p = decode(text.as_bytes())?;
@@ -654,11 +654,12 @@ mod tests {
                     rule.remove("cases");
                 }
             }
-            assert_eq!(
-                p.rules(),
-                decode(&serde_json::to_vec(&bare)?)?.rules(),
-                "{name}"
-            );
+            // The defaults give the base values, except the smallest drill:
+            // the recommended one is JLCPCB's preferred 0.2 mm via hole.
+            let mut base = decode(&serde_json::to_vec(&bare)?)?.rules().clone();
+            assert_eq!(base.holes.drill_min, 0.15, "{name}");
+            base.holes.drill_min = 0.2;
+            assert_eq!(p.rules(), &base, "{name}");
             assert!(p.options().iter().all(|o| !o.source.is_empty()), "{name}");
             for option in p.options() {
                 for choice in &option.choices {
@@ -689,6 +690,12 @@ mod tests {
                 0.13
             );
             assert_eq!(pick("drill", "microvia")?.rules().holes.drill_min, 0.1);
+            assert_eq!(min.rules().holes.drill_min, 0.15, "{name}");
+            let heavy = pick("copper_weight", "2oz")?;
+            assert_eq!(heavy.outer_copper_um(), Some(70.0), "{name}");
+            assert_eq!(heavy.rules().copper.track_width_min, space_2oz, "{name}");
+            assert_eq!(heavy.rules().holes.pth_annular_ring_min, 0.254, "{name}");
+            assert_eq!(heavy.rules().mask.web_min, 0.2, "{name}");
         }
         Ok(())
     }
@@ -838,7 +845,7 @@ mod tests {
         assert_eq!(for_new_board(&library, None, None)?, jlcpcb()?);
         assert_eq!(
             for_new_board(&library, Some("jlcpcb-4-layer-1oz"), None)?.name,
-            "JLCPCB 4-layer 1 oz"
+            "JLCPCB 4-layer"
         );
         assert!(for_new_board(&library, Some("no-such"), None).is_err());
         Ok(())

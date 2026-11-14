@@ -113,7 +113,7 @@ fn a_plated_pad_hole_keeps_the_pth_annular_ring() -> Result<()> {
     assert!(
         findings.iter().any(|f| f.message
             == "R1 pad 1: annular ring 0.2 mm; needs at least 0.25 mm \
-                (JLCPCB 2-layer 1 oz: min PTH annular ring)"),
+                (JLCPCB 2-layer: min PTH annular ring)"),
         "{findings:#?}"
     );
     // 1.1 mm land: exactly 0.25 mm passes.
@@ -197,7 +197,7 @@ fn a_pad_hole_keeps_its_clearance_to_other_copper() -> Result<()> {
     assert!(message.starts_with("R1 pad 1: hole is "), "{message}");
     assert!(message.contains(&format!(" mm from a track on {name}; ")));
     assert!(
-        message.ends_with("needs 0.35 mm (JLCPCB 2-layer 1 oz: track to plated hole clearance)"),
+        message.ends_with("needs 0.35 mm (JLCPCB 2-layer: track to plated hole clearance)"),
         "{message}"
     );
     let gap = gap_in(message, "hole is ")?;
@@ -239,7 +239,7 @@ fn a_pad_hole_keeps_its_clearance_to_other_copper() -> Result<()> {
     assert!(
         findings[0]
             .message
-            .ends_with("needs 0.2 mm (JLCPCB 2-layer 1 oz: track to unplated hole clearance)"),
+            .ends_with("needs 0.2 mm (JLCPCB 2-layer: track to unplated hole clearance)"),
         "{}",
         findings[0].message
     );
@@ -276,7 +276,7 @@ fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
         "{message}"
     );
     assert!(
-        message.ends_with("needs 0.45 mm (JLCPCB 2-layer 1 oz: via hole to plated hole clearance)"),
+        message.ends_with("needs 0.45 mm (JLCPCB 2-layer: via hole to plated hole clearance)"),
         "{message}"
     );
     let gap = gap_in(message, "holes are ")?;
@@ -298,7 +298,7 @@ fn a_pad_hole_keeps_its_spacing_to_other_holes() -> Result<()> {
     assert!(
         findings[0]
             .message
-            .ends_with("needs 0.45 mm (JLCPCB 2-layer 1 oz: via hole to unplated hole clearance)"),
+            .ends_with("needs 0.45 mm (JLCPCB 2-layer: via hole to unplated hole clearance)"),
         "{}",
         findings[0].message
     );
@@ -328,7 +328,7 @@ fn an_unplated_hole_in_copper_keeps_the_npth_pad_annular_ring() -> Result<()> {
     assert!(
         findings.iter().any(|f| f.message
             == "R1 pad 1: annular ring 0.4 mm round the unplated hole; needs at least 0.45 mm \
-                (JLCPCB 2-layer 1 oz: min NPTH pad annular ring)"),
+                (JLCPCB 2-layer: min NPTH pad annular ring)"),
         "{findings:#?}"
     );
     assert!(found(&project, "board.pth_annular_ring").is_empty());

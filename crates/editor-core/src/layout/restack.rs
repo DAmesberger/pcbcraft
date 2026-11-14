@@ -56,6 +56,7 @@ pub(super) fn apply(project: &mut Project, edit: StackupEdit) -> Result<()> {
     } = edit;
     let stackup = stackup.keeping_unstated(&project.stackup);
     stackup.check()?;
+    check_outer_copper(project, &stackup)?;
     let map = move_map(&project.stackup, &stackup, &moves)?;
     if removed.len() > MAX_COPPER_LAYERS {
         return Err(Error::Invalid(format!(
@@ -119,6 +120,30 @@ pub(super) fn apply(project: &mut Project, edit: StackupEdit) -> Result<()> {
     }
     project.stackup = stackup;
     Ok(())
+}
+
+/// The outer foils stay those the fab profile's copper weight orders
+/// (`FabChoice::outer_copper_um`): a stackup edit that changes them is
+/// refused, naming the option to choose instead (`rules.set_fab_options`
+/// sets the foils with the choice).
+fn check_outer_copper(project: &Project, stackup: &Stackup) -> Result<()> {
+    let Some(profile) = &project.rules.profile else {
+        return Ok(());
+    };
+    let (Some(um), Some(option)) = (profile.outer_copper_um(), profile.copper_option()) else {
+        return Ok(());
+    };
+    if stackup.outer_copper_is(um) {
+        return Ok(());
+    }
+    Err(Error::Conflict(format!(
+        "stackup.outer_copper: the fab profile's {} is {}, so the top and bottom copper stay \
+         {} µm; choose another {} in Design rules to change them",
+        option.name.to_lowercase(),
+        profile.choice_name(&option.id),
+        um,
+        option.name.to_lowercase(),
+    )))
 }
 
 /// The moves as a map, checked: each `from` a layer of `old`, each `to` a
