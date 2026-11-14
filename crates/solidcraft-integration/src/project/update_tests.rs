@@ -25,6 +25,7 @@ fn bodies(model: &NativeModel) -> Vec<BodyBox> {
 /// fresh build of the edited board, whatever changed.
 #[test]
 fn an_exact_model_is_built_anew_never_updated() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = board()?;
     let model = build(&project)?;
     if let Some(track) = project.tracks.first_mut() {
@@ -50,6 +51,7 @@ fn an_exact_model_is_built_anew_never_updated() -> Result<()> {
 /// of the board, and keeps its way of holding the flat bodies.
 #[test]
 fn a_meshed_model_is_updated_from_what_it_kept() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = board()?;
     let sources = SourceCache::default();
     let live = build_flat(&project, &sources, None, Flat::Meshed)?;
@@ -67,6 +69,7 @@ fn a_meshed_model_is_updated_from_what_it_kept() -> Result<()> {
 /// changing `board_width` and `board_depth` in the saved file resizes it.
 #[test]
 fn the_saved_laminate_follows_the_board_size_parameters() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = board()?;
     let model = build(&project)?;
     let temporary = tempfile::tempdir()?;

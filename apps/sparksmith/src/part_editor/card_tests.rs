@@ -120,6 +120,7 @@ const COMPONENT_SECTIONS: [&str; 5] = ["DEFINITION", "FIELDS", "PARTS", "LIBRARY
 /// the click is one `library.import_standard_fields`.
 #[test]
 fn add_standard_fields_imports_them_once() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let operation = h.click("Add standard fields")?;
     assert!(

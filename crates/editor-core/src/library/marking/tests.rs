@@ -85,6 +85,7 @@ const AREA_0402: [f64; 2] = [0.6, 0.5];
 
 #[test]
 fn auto_codes_pick_eia96_then_digits_and_fit_the_area() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let spec = code(auto_resistor());
     let ten_k = layout(&spec, &inputs(AREA_0603, Some(("10 kΩ", 10e3))))?;
     assert_eq!(texts(&ten_k), ["01C"]);
@@ -104,6 +105,7 @@ fn auto_codes_pick_eia96_then_digits_and_fit_the_area() -> Fallible<()> {
 
 #[test]
 fn an_unrepresentable_value_draws_nothing_with_an_info_finding() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let layout = layout(
         &code(CodeScheme::Eia96),
         &inputs(AREA_0603, Some(("10.3 kΩ", 10.3e3))),
@@ -138,6 +140,7 @@ fn a_code_too_wide_at_the_minimum_height_does_not_fit() -> Fallible<()> {
 
 #[test]
 fn changing_the_value_changes_the_marking() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let spec = code(auto_resistor());
     let a = layout(&spec, &inputs(AREA_0603, Some(("10 kΩ", 10e3))))?;
     let b = layout(&spec, &inputs(AREA_0603, Some(("4.99 kΩ", 4.99e3))))?;
@@ -200,6 +203,7 @@ fn lines_that_do_not_fit_are_dropped_from_the_end() -> Fallible<()> {
 
 #[test]
 fn polarity_bands_take_room_from_the_text() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let spec = MarkingSpec {
         items: vec![
             MarkingItem::Polarity {
@@ -248,6 +252,7 @@ fn polarity_bands_take_room_from_the_text() -> Fallible<()> {
 
 #[test]
 fn colour_bands_and_artwork() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let spec = MarkingSpec {
         items: vec![
             MarkingItem::Bands {

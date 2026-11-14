@@ -942,11 +942,11 @@ impl PcbEditor {
         let repaint = ctx.clone();
         if std::thread::Builder::new()
             .name("sparksmith-interface-picker".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let picked = pollster::block_on(future).map(|f| f.path().to_path_buf());
                 let _ = sender.send(picked);
                 repaint.request_repaint();
-            })
+            }))
             .is_ok()
         {
             self.interface.picking = Some((pick, receiver));

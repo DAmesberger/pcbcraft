@@ -87,10 +87,10 @@ fn spawn<T: Send + 'static>(
 ) -> Receiver<T> {
     let (sender, receiver) = std::sync::mpsc::channel();
     let ctx = ctx.clone();
-    std::thread::spawn(move || {
+    std::thread::spawn(sparksmith_core::library::standards::carried(move || {
         let _ = sender.send(work());
         ctx.request_repaint();
-    });
+    }));
     receiver
 }
 

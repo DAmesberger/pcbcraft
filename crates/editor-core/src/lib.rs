@@ -720,6 +720,10 @@ pub struct Engine {
     /// The host's generator runtime (`library.generate`, GP1): a host
     /// setting like the waiver rule, kept across documents.
     generators: Option<Arc<dyn library::generated::GeneratorRuntime + Send + Sync>>,
+    /// The host's standards and materials ([`Engine::set_context`]): a host
+    /// setting like the generator runtime, kept across documents. Current
+    /// on the calling thread while an operation applies or a query answers.
+    context: Option<Arc<library::standards::Context>>,
 }
 
 impl Engine {
@@ -731,6 +735,34 @@ impl Engine {
         runtime: Arc<dyn library::generated::GeneratorRuntime + Send + Sync>,
     ) {
         self.generators = Some(runtime);
+    }
+
+    /// Give this engine the host's context: the standards (and materials)
+    /// it draws on. It stays across new and opened documents. Without one,
+    /// whatever needs a standard is refused.
+    pub fn set_context(&mut self, context: Arc<library::standards::Context>) {
+        self.context = Some(context);
+    }
+
+    /// Drop the context, as a host that gave none: a test fixture, never in
+    /// the product (test engines start with the fixture context).
+    #[cfg(any(test, feature = "test-fixtures"))]
+    pub fn clear_context(&mut self) {
+        self.context = None;
+    }
+
+    /// The context the host gave ([`Self::set_context`]).
+    pub fn context(&self) -> Option<&Arc<library::standards::Context>> {
+        self.context.as_ref()
+    }
+
+    /// Make this engine's context current on this thread until the scope
+    /// ends: what a host does to draw or build from this engine's document
+    /// outside an operation or query.
+    pub fn enter_context(&self) -> Option<library::standards::Scope> {
+        self.context
+            .as_ref()
+            .map(library::standards::Context::enter)
     }
 
     /// Whether this engine has a generator runtime.
@@ -784,7 +816,20 @@ impl Engine {
             copper: std::sync::OnceLock::new(),
             rerouted: layout::router::reroute::Rerouted::default(),
             generators: None,
+            context: Self::fixture_context(),
         }
+    }
+
+    /// Test builds give every engine the fixture standards, as they give
+    /// it fixture stackups; the product's host sets its own.
+    #[cfg(any(test, feature = "test-fixtures"))]
+    fn fixture_context() -> Option<Arc<library::standards::Context>> {
+        library::standards::Context::fixture().ok()
+    }
+
+    #[cfg(not(any(test, feature = "test-fixtures")))]
+    fn fixture_context() -> Option<Arc<library::standards::Context>> {
+        None
     }
 
     /// An engine without a board (no layers, no size, which every check
@@ -841,8 +886,13 @@ impl Engine {
     /// Unconnected terminals are marked no-connect. The board's rules are
     /// `profile`. The undo history is cleared.
     /// Its stackups are `presets`' (the shipped stackup data).
-    pub fn showcase_with(presets: &StackupPresets, profile: rules::RuleProfile) -> Result<Self> {
-        Self::showcase_in(None, presets, profile)
+    /// It draws on the host's `context`, which it keeps.
+    pub fn showcase_with(
+        context: Arc<library::standards::Context>,
+        presets: &StackupPresets,
+        profile: rules::RuleProfile,
+    ) -> Result<Self> {
+        Self::showcase_in(context, None, presets, profile)
     }
 
     /// A test fixture, never in the product: [`Engine::showcase_with`] the
@@ -850,6 +900,7 @@ impl Engine {
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase() -> Result<Self> {
         Self::showcase_in(
+            library::standards::Context::fixture()?,
             None,
             &StackupPresets::fixture()?,
             rules::fixtures::prototype()?,
@@ -863,11 +914,12 @@ impl Engine {
     /// parameters (`layout::showcase::board_edits`). The pours are filled
     /// last, over the final shape. The undo history is cleared.
     pub fn showcase_hosted(
+        context: Arc<library::standards::Context>,
         evaluators: Evaluators<'_>,
         presets: &StackupPresets,
         profile: rules::RuleProfile,
     ) -> Result<Self> {
-        Self::showcase_in(Some(evaluators), presets, profile)
+        Self::showcase_in(context, Some(evaluators), presets, profile)
     }
 
     /// A test fixture, never in the product: [`Engine::showcase_hosted`]
@@ -875,6 +927,7 @@ impl Engine {
     #[cfg(any(test, feature = "test-fixtures"))]
     pub fn showcase_hosted_fixture(evaluators: Evaluators<'_>) -> Result<Self> {
         Self::showcase_in(
+            library::standards::Context::fixture()?,
             Some(evaluators),
             &StackupPresets::fixture()?,
             rules::fixtures::prototype()?,
@@ -882,15 +935,18 @@ impl Engine {
     }
 
     fn showcase_in(
+        context: Arc<library::standards::Context>,
         hosted: Option<Evaluators<'_>>,
         presets: &StackupPresets,
         profile: rules::RuleProfile,
     ) -> Result<Self> {
+        let _scope = context.enter();
         let showcase_rules = profile.rules().clone();
         let mut engine = Self::new(&NewBoard {
             size: layout::showcase::BOARD_MM,
             stackup: presets.preset(MIN_COPPER_LAYERS)?,
         });
+        engine.set_context(Arc::clone(&context));
         engine.apply(
             engine.revision,
             Operation::Rules(rules::RulesCommand::SetProfile {
@@ -1416,6 +1472,7 @@ impl Engine {
             check_settings: self.check_settings,
             copper: self.copper.clone(),
             generators: self.generators.clone(),
+            context: self.context.clone(),
             ..Engine::with_document(self.document.clone())
         };
         let mut outcomes = Vec::with_capacity(count);
@@ -1485,6 +1542,7 @@ impl Engine {
             copper: self.copper.clone(),
             rerouted: self.rerouted.clone(),
             generators: self.generators.clone(),
+            context: self.context.clone(),
         }
     }
 
@@ -1494,6 +1552,7 @@ impl Engine {
         operation: Operation,
         evaluators: Evaluators<'_>,
     ) -> Result<Outcome> {
+        let _context = self.enter_context();
         let evaluator = evaluators.footprint;
         self.check_revision(expected_revision)?;
         self.rerouted = Default::default();
@@ -1913,6 +1972,7 @@ impl Engine {
         context: &catalog::CatalogContext,
         evaluator: Option<&dyn library::FootprintEvaluator>,
     ) -> Result<QueryResult> {
+        let _context = self.enter_context();
         let index = || {
             catalog::Index::with_sources(
                 &self.document.project,

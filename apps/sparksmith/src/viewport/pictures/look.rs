@@ -380,6 +380,7 @@ fn pad_views(gpu: &mut Gpu) -> Result<Vec<PadView>, Box<dyn std::error::Error>> 
 /// map undone), so they test the shading, not the studio or the curve.
 #[test]
 fn exposed_gold_is_gold_against_a_reference_metal() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
@@ -416,6 +417,7 @@ fn exposed_gold_is_gold_against_a_reference_metal() -> Result<(), Box<dyn std::e
 /// gold's hue band), by a soft top light rather than a brighter F0.
 #[test]
 fn exposed_gold_reads_as_gold_in_the_studio() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
@@ -450,6 +452,7 @@ fn exposed_gold_reads_as_gold_in_the_studio() -> Result<(), Box<dyn std::error::
 /// showcase, pad copper covers at most 5 % as many pixels as the finish.
 #[test]
 fn the_finish_hides_the_pad_copper_under_it() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
@@ -508,6 +511,7 @@ fn the_finish_hides_the_pad_copper_under_it() -> Result<(), Box<dyn std::error::
 /// pitch, the share of the can's top the view sees).
 #[test]
 fn the_module_marking_shows_at_every_tilt() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };

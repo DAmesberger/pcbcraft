@@ -237,6 +237,7 @@ fn part_bodies(model: &sparksmith_solidcraft::project::NativeModel) -> (usize, V
 /// parameters live.
 #[test]
 fn a_board_using_the_part_file_saves_reopens_and_builds_the_same() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let (mut session, package) = open()?;
     if !matches!(model(&session, package), Some(PackageModel::PartFile(_))) {
         let revision = session.engine().revision();

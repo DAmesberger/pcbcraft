@@ -211,7 +211,7 @@ impl Evaluator {
         let (jobs, inbox) = mpsc::channel::<Job>();
         let (outbox, results) = mpsc::channel();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             while let Ok(mut job) = inbox.recv() {
                 while let Ok(newer) = inbox.try_recv() {
                     job = newer;
@@ -221,7 +221,7 @@ impl Evaluator {
                 }
                 ctx.request_repaint();
             }
-        });
+        }));
         self.jobs = Some(jobs);
         self.results = Some(results);
     }
@@ -758,11 +758,11 @@ impl PartChooser {
             .pick_file();
         let (sender, receiver) = mpsc::channel();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let picked = pollster::block_on(future).map(|h| h.path().to_path_buf());
             let _ = sender.send(picked);
             ctx.request_repaint();
-        });
+        }));
         self.picking = Some(receiver);
     }
 

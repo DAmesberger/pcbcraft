@@ -58,7 +58,7 @@ fn time(name: &str, project: &Project, runs: usize) {
 #[ignore = "benchmark"]
 fn esp32_build_timing() {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     time("esp32-s31-devboard", &esp32(), 4);
 }
 
@@ -66,6 +66,6 @@ fn esp32_build_timing() {
 #[ignore = "benchmark"]
 fn showcase_build_timing() {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     time("showcase", &showcase(), 4);
 }

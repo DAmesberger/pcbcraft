@@ -294,6 +294,7 @@ mod tests {
 
     #[test]
     fn a_ball_grid_stands_on_solder_balls_numbered_from_a1() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let form = GridForm::ball_grid(
             3,
             4,
@@ -327,6 +328,7 @@ mod tests {
 
     #[test]
     fn depopulated_positions_have_no_ball() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let mut form = GridForm::ball_grid(
             5,
             5,
@@ -348,6 +350,7 @@ mod tests {
 
     #[test]
     fn a_land_grid_sets_gold_lands_into_the_body() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let mut form = GridForm::ball_grid(
             2,
             3,
@@ -378,6 +381,7 @@ mod tests {
 
     #[test]
     fn a_large_grid_with_a_centre_void_builds_every_ball() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         // 20 × 20 at 0.8 mm with a 6 × 6 centre void: 364 balls, two
         // runs on each of the void's rows.
         let mut form = GridForm::ball_grid(

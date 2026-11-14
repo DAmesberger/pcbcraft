@@ -50,6 +50,7 @@ fn mean(pixels: &[[u8; 4]]) -> [f64; 3] {
 #[test]
 fn a_followed_bottom_track_shows_through_the_faded_board() -> Result<(), Box<dyn std::error::Error>>
 {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = Gpu::new() else {
         if std::env::var_os("SPARKSMITH_REQUIRE_GPU").is_some() {
             return Err("SPARKSMITH_REQUIRE_GPU is set but no GPU adapter was found".into());
@@ -101,6 +102,7 @@ fn a_followed_bottom_track_shows_through_the_faded_board() -> Result<(), Box<dyn
 /// pixels are about as bright in both looks.
 #[test]
 fn the_faded_board_is_as_legible_in_the_realistic_look() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = super::esp32::gpu_or_skip()? else {
         return Ok(());
     };

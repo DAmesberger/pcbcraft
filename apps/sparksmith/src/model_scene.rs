@@ -1259,6 +1259,7 @@ pub(crate) mod tests {
     #[test]
     fn vias_draw_as_placements_of_one_mesh_per_definition() -> Result<(), Box<dyn std::error::Error>>
     {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let count = 40;
         let project = via_project(count)?;
         let model = sparksmith_solidcraft::project::build(&project)?;
@@ -1347,6 +1348,7 @@ pub(crate) mod tests {
     /// cap many times over.
     #[test]
     fn ten_thousand_vias_hold_one_mesh_per_definition() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let model = sparksmith_solidcraft::project::build(&via_project(2)?)?;
         let mut geometry = model.geometry;
         // The first via's bodies (one tented, one open via are built): copied
@@ -1440,6 +1442,7 @@ pub(crate) mod tests {
     #[test]
     fn pbr_bytes_hold_three_vertices_per_triangle_in_one_run_per_layer()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         let bytes = |layer: ViewLayer| {
             3 * TRI_SIZE
@@ -1478,6 +1481,7 @@ pub(crate) mod tests {
     #[test]
     fn keeping_visible_runs_matches_packing_only_the_shown_bodies()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         use sparksmith_core::{CopperLayer, Layer};
         let scene = demo_scene()?;
         let views = [
@@ -1527,6 +1531,7 @@ pub(crate) mod tests {
     #[test]
     fn a_side_without_mask_keeps_its_laminate_and_copper() -> Result<(), Box<dyn std::error::Error>>
     {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         use sparksmith_core::Layer;
         let mut project = demo_project()?;
         project.stackup.mask_top = false;
@@ -1588,6 +1593,7 @@ pub(crate) mod tests {
     /// nothing, while the laminate's own face lies under the mask.
     #[test]
     fn laminate_in_a_mask_opening_is_shaded() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         let view = LayerView::default();
         let open: Vec<&Geometry> = scene
@@ -1620,6 +1626,7 @@ pub(crate) mod tests {
     #[test]
     fn a_mask_s_underside_stays_out_of_the_material_stream()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         let mut x_ray = LayerView::default();
         x_ray.set_laminate(&scene.stack, false);
@@ -1649,6 +1656,7 @@ pub(crate) mod tests {
 
     #[test]
     fn normals_are_unit_and_outward() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         let word = |bytes: &[u8], at: usize| -> Option<f32> {
             bytes
@@ -1689,6 +1697,7 @@ pub(crate) mod tests {
     /// neither.
     #[test]
     fn vertices_carry_each_body_s_coat_and_pattern() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         let graphs = &scene.stream.graphs;
         let mut seen = std::collections::HashSet::new();
@@ -1777,6 +1786,7 @@ pub(crate) mod tests {
     #[test]
     fn every_body_is_shaded_by_the_stream_or_from_its_shared_triangles()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         let vertices: usize = scene
             .stream
@@ -1831,6 +1841,7 @@ pub(crate) mod tests {
 
     #[test]
     fn oversized_models_are_refused() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let model = sparksmith_solidcraft::project::build(Engine::demo()?.project())?;
         let mut geometry = model.geometry;
         let one = geometry
@@ -1847,6 +1858,7 @@ pub(crate) mod tests {
 
     #[test]
     fn shadows_ring_the_board_and_every_package() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         // Three ring bands of 48 segments; the centre band is a fan.
         assert_eq!(scene.shadows.ground.len(), GROUND_SEGMENTS * (3 + 6 + 6));
@@ -1926,6 +1938,7 @@ pub(crate) mod tests {
     #[test]
     fn marking_decals_draw_and_hide_with_the_component_bodies()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         use sparksmith_solidcraft::marking::{board::DECAL_KIND, finish_surface};
         let (scene, count) = marked_scene()?;
         assert!(count >= 2, "{count}");
@@ -1982,6 +1995,7 @@ pub(crate) mod tests {
     #[test]
     fn highlight_blocks_are_flat_one_per_item_and_segment() -> Result<(), Box<dyn std::error::Error>>
     {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let scene = demo_scene()?;
         for (item, segment, _) in &scene.highlight {
             let same = scene
@@ -2030,6 +2044,7 @@ pub(crate) mod tests {
     #[test]
     fn peeling_each_layer_hides_exactly_that_layers_bodies()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         use sparksmith_solidcraft::material::BodyKind;
         use sparksmith_solidcraft::scene::Geometry;
         let (project, scene) = showcase_live()?;

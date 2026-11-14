@@ -733,11 +733,11 @@ impl ModelImport {
             .pick_file();
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let picked = pollster::block_on(future).map(|h| h.path().to_path_buf());
             let _ = sender.send(picked);
             ctx.request_repaint();
-        });
+        }));
         self.refusal = None;
         self.state = State::Picking(receiver);
     }
@@ -765,10 +765,10 @@ impl ModelImport {
                 Ok(Some(path)) => {
                     let (sender, receiver) = std::sync::mpsc::channel();
                     let repaint = ctx.clone();
-                    std::thread::spawn(move || {
+                    std::thread::spawn(sparksmith_core::library::standards::carried(move || {
                         let _ = sender.send(read(&path));
                         repaint.request_repaint();
-                    });
+                    }));
                     self.state = State::Reading(receiver);
                 }
                 Ok(None) => {}
@@ -944,10 +944,10 @@ impl PartEditor {
                     };
                     let (sender, receiver) = std::sync::mpsc::channel();
                     let repaint = ctx.clone();
-                    std::thread::spawn(move || {
+                    std::thread::spawn(sparksmith_core::library::standards::carried(move || {
                         let _ = sender.send(measure(request));
                         repaint.request_repaint();
-                    });
+                    }));
                     import.state = State::Measuring {
                         wizard,
                         package: package_id,
@@ -1780,6 +1780,7 @@ mod tests {
     /// which the estimate alone does not.
     #[test]
     fn finish_measures_the_contacts_a_build_rechecks() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let bytes = gull_wing_glb();
         let format = ModelFormat::Gltf;
         let seen = inspect::inspect_in(&bytes, format, &imported::reader_frame(format))?;
@@ -2239,6 +2240,8 @@ mod tests {
         /// contacts cannot be measured, and an import the engine refuses.
         #[test]
         fn a_refused_import_returns_to_review_with_the_refusal() -> TestResult {
+            let _context =
+                sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
             let mut h = Harness::new()?;
             walk_to_review(
                 &mut h,

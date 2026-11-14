@@ -586,6 +586,7 @@ mod tests {
 
     #[test]
     fn an_lga_module_has_its_pads_numbered_on_the_lead_points() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let form = lga();
         let (native, def) = built(form.clone())?;
         let leads = form.row_centres();
@@ -634,6 +635,7 @@ mod tests {
 
     #[test]
     fn a_castellated_module_plates_its_notches() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let (native, def) = built(ModuleForm::typical())?;
         // Pin 1 has its land and its plated notch, both terminal 1.
         let one = terminal_bodies(&def, 1);

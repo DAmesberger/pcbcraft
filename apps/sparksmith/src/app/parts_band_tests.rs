@@ -193,6 +193,7 @@ fn until_shown(ax: &mut Ax) -> Fallible {
 
 #[test]
 fn hovering_a_row_lights_its_part_in_layout_and_3d_without_a_rebuild() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut ax = Ax::with_engine(esp32()?, Workspace::Pcb)?;
     open_band(&mut ax);
     let row = rows(&ax).first().cloned().ok_or("a row")?;

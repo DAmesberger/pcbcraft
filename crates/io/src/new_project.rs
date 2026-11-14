@@ -11,8 +11,9 @@ use crate::shipped::{Shelf, ShippedLibrary};
 use crate::{Error, Result};
 use serde::Deserialize;
 use sparksmith_core::format::EditorFile;
+use sparksmith_core::library::standards::Context;
 use sparksmith_core::{Engine, NewBoard, StackupPresets};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 /// The new-project defaults file in the `defaults/` shelf.
 pub const FILE: &str = "new-project.json";
@@ -145,14 +146,17 @@ pub fn shipped() -> Result<NewProjectDefaults> {
         .map_err(Error::Invalid)
 }
 
-/// An engine on a new, empty project on the shipped new board.
-pub fn engine() -> Result<Engine> {
-    Ok(Engine::new(&shipped()?.board))
+/// An engine on a new, empty project on the shipped new board, drawing on
+/// the host's `context`.
+pub fn engine(context: &Arc<Context>) -> Result<Engine> {
+    let mut engine = Engine::new(&shipped()?.board);
+    engine.set_context(Arc::clone(context));
+    Ok(engine)
 }
 
 /// [`engine`] on the fab profile a new board takes: the user's Settings
 /// default, else the shipped default (`rule_profiles::for_new_board`).
-pub fn profiled_engine() -> Result<Engine> {
+pub fn profiled_engine(context: &Arc<Context>) -> Result<Engine> {
     let defaults = shipped()?;
     let mut project = sparksmith_core::Project::new(&defaults.board);
     sparksmith_core::rules::apply(
@@ -162,20 +166,24 @@ pub fn profiled_engine() -> Result<Engine> {
             keep_overrides: false,
         },
     )?;
-    Ok(Engine::from_file_with(
+    let mut engine = Engine::from_file_with(
         EditorFile {
             version: sparksmith_core::format::FILE_VERSION,
             project,
             drafts: Default::default(),
         },
         &defaults.presets.glass_dk,
-    )?)
+    )?;
+    engine.set_context(Arc::clone(context));
+    Ok(engine)
 }
 
 /// An engine for an already validated file, its stackup estimating Dk
-/// with the shipped stackup data.
-pub fn open(file: EditorFile) -> Result<Engine> {
-    Ok(Engine::from_file_with(file, &shipped()?.presets.glass_dk)?)
+/// with the shipped stackup data, drawing on the host's `context`.
+pub fn open(file: EditorFile, context: &Arc<Context>) -> Result<Engine> {
+    let mut engine = Engine::from_file_with(file, &shipped()?.presets.glass_dk)?;
+    engine.set_context(Arc::clone(context));
+    Ok(engine)
 }
 
 #[cfg(test)]

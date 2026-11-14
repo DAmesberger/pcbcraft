@@ -41,6 +41,7 @@ fn names(result: &Value) -> Vec<String> {
 fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
     let mut session = Session::new(showcase(
+        sparksmith_core::library::standards::Context::fixture()?,
         &sparksmith_core::StackupPresets::fixture()?,
         sparksmith_core::rules::fixtures::prototype()?,
     )?);
@@ -105,6 +106,7 @@ fn the_showcase_exports_as_a_folder_and_a_zip() -> Fallible<()> {
 fn the_project_name_reaches_the_production_files() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
     let mut session = Session::new(showcase(
+        sparksmith_core::library::standards::Context::fixture()?,
         &sparksmith_core::StackupPresets::fixture()?,
         sparksmith_core::rules::fixtures::prototype()?,
     )?);
@@ -168,6 +170,7 @@ fn the_project_name_reaches_the_production_files() -> Fallible<()> {
 #[test]
 fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
     let mut session = Session::new(showcase(
+        sparksmith_core::library::standards::Context::fixture()?,
         &sparksmith_core::StackupPresets::fixture()?,
         sparksmith_core::rules::fixtures::prototype()?,
     )?);
@@ -212,6 +215,7 @@ fn the_production_check_takes_a_whole_profile() -> Fallible<()> {
 fn unwaived_errors_block_export_and_waivers_are_saved_and_undoable() -> Fallible<()> {
     let dir = tempfile::tempdir()?;
     let mut session = Session::new(showcase(
+        sparksmith_core::library::standards::Context::fixture()?,
         &sparksmith_core::StackupPresets::fixture()?,
         sparksmith_core::rules::fixtures::prototype()?,
     )?);

@@ -4,7 +4,7 @@ The PCB 3D view and the saved `.solidcraft` model use the same physical looks. T
 
 ## Data files
 
-The program holds none of these values in code ([shipped library](shipped-library.md)). `sparksmith-io` reads the `materials/` shelf once per process (`materials::load`, at start-up and before the first automation request) into a `sparksmith_core::materials::MaterialLibrary`, which `sparksmith_solidcraft::looks` keeps. The board's layer stack (`stack::Stack`) carries it, so the live 3D view, the board plan and the exact export read the same loaded values, and no build reloads them. A missing or broken file is an error naming it, returned by the first build that needs the data; there is no fallback in code.
+The program holds none of these values in code ([shipped library](shipped-library.md)). `sparksmith-io` reads the `materials/` shelf once, at start-up (`materials::load`), into a `sparksmith_core::materials::MaterialLibrary` held by the host's context (`standards::Context`, [extension surface](extension-surface.md#explicit-context)), which every engine is handed; `sparksmith_solidcraft::looks` reads the library of the context current on the building thread. The board's layer stack (`stack::Stack`) carries it, so the live 3D view, the board plan and the exact export read the same loaded values, and no build reloads them. A missing or broken file is an error naming it, returned by the first build that needs the data; there is no fallback in code.
 
 | File | Holds |
 |---|---|

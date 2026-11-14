@@ -21,4 +21,6 @@ The electronics document owns circuit/layout truth. Solidcraft integration maps 
 
 Keep lower layers free of window/GPU/transport APIs. The Solidcraft adapter can depend on the upstream engine without leaking its CAD types throughout the electrical document. Direct kernel access is reserved for shared Solidcraft implementation work under its own rules.
 
+Nothing about standards or materials is installed for the process: the host makes one `standards::Context` (`sparksmith_io::standards::shipped_context`) and hands it to every engine (`Engine::set_context`, or the `new_project` constructors), which makes it current while an operation or query runs. Code outside an engine call reads the context current on its thread; a thread you start runs its work through `standards::carried`; a test that calls below the engine enters `Context::fixture()`. Never add a process-wide `OnceLock` of host data ([extension surface](../../docs/extension-surface.md#explicit-context)).
+
 Routing uses a strategy interface over topology, obstacle queries and a transactional edit set. Manual routing must not encode assumptions that prevent later connected-track displacement, chain shoves or locked objects.

@@ -465,6 +465,7 @@ mod tests {
     /// stack outward from the outer foils in physical order.
     #[test]
     fn the_stack_follows_the_stackup_in_physical_order() -> std::result::Result<(), String> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let mut stackup = Stackup::preset(6).map_err(|e| e.to_string())?;
         stackup.copper[0].thickness_um = 70.0;
         stackup.copper[2].thickness_um = 18.0;
@@ -533,6 +534,7 @@ mod tests {
     /// the laminate.
     #[test]
     fn a_side_without_films_has_no_slots_for_them() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let stackup = Stackup {
             mask_bottom: false,
             silkscreen_top: false,

@@ -130,6 +130,7 @@ fn the_window_offers_the_tiers_and_asks_for_the_file() -> Fallible {
 /// planned.
 #[test]
 fn an_export_runs_off_the_ui_thread_and_reports_the_check() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("board.solidcraft");

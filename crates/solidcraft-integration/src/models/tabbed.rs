@@ -356,6 +356,7 @@ mod tests {
 
     #[test]
     fn sot23_5_rows_have_their_own_spacing() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let def = leads_stand_on_their_points(sot23_5())?;
         assert_eq!(
             def.bodies
@@ -376,6 +377,7 @@ mod tests {
 
     #[test]
     fn sot223_tab_lead_is_the_last_terminal() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let def = leads_stand_on_their_points(sot223())?;
         let tab = def
             .bodies
@@ -388,6 +390,7 @@ mod tests {
 
     #[test]
     fn dpak_flange_lies_flat_under_the_body() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let pkg = package(dpak());
         let mut native = Native::new("models")?;
         build_definition(&mut native, "pkgt", &pkg)?;
@@ -400,6 +403,7 @@ mod tests {
 
     #[test]
     fn the_pitch_parameter_moves_the_rows() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let pkg = package(sot23_5());
         let mut native = Native::new("models")?;
         let def = build_definition(&mut native, "pkgt", &pkg)?;

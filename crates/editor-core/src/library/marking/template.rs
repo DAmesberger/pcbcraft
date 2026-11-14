@@ -204,6 +204,7 @@ mod tests {
 
     #[test]
     fn parses_every_placeholder() {
+        let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
         assert_eq!(
             parse("{mpn} {{x}}\n{var:date_code}{field:D7|eia96}{field:9}"),
             Ok(vec![

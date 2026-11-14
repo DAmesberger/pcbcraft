@@ -146,9 +146,13 @@ impl App {
         cc: &eframe::CreationContext<'_>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // The standards every engine draws on (symbol drawings, marking codes,
-        // standard fields, the generic-part grammar), from the shipped
-        // library, before the first engine is made.
-        sparksmith_io::standards::install_shipped()?;
+        // standard fields, the generic-part grammar) and the material
+        // library every 3D build reads, from the shipped library, before
+        // the first engine is made. They are current on the window's thread
+        // for the program's life; every engine is handed them and every
+        // worker carries them (`standards::carried`).
+        let context = sparksmith_io::standards::shipped_context()?;
+        std::mem::forget(context.enter());
         // What a new project starts with (fab profile, stackup, board
         // size), from the shipped library, once.
         sparksmith_io::new_project::shipped()?;

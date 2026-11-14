@@ -9,6 +9,7 @@ fn near(actual: f64, expected: f64) {
 
 #[test]
 fn copper_has_physical_thickness_empty_drill_and_expected_volumes() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let b = Board::fixture()?;
     for id in [1, 2, 3, 5, 6] {
         let g = b
@@ -47,6 +48,7 @@ fn copper_has_physical_thickness_empty_drill_and_expected_volumes() -> Result<()
 
 #[test]
 fn shared_selection_and_net_highlight_reuse_the_same_meshes() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut b = Board::fixture()?;
     let meshes = b
         .geometry
@@ -79,6 +81,7 @@ fn shared_selection_and_net_highlight_reuse_the_same_meshes() -> Result<()> {
 
 #[test]
 fn width_undo_and_rejection_are_atomic() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut b = Board::fixture()?;
     let original = b.snapshot()?;
     assert!(
@@ -117,6 +120,7 @@ fn width_undo_and_rejection_are_atomic() -> Result<()> {
 
 #[test]
 fn native_reopen_retains_identity_and_regenerates_copper() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let dir = tempfile::tempdir()?;
     let path = dir
         .path()

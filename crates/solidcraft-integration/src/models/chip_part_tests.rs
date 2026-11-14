@@ -172,6 +172,7 @@ fn from_builder(package: &PackageDefinition) -> Result<Measured> {
 
 #[test]
 fn the_generators_part_file_equals_the_in_code_chip_builder() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let keys = [
         "resistor-0402",
         "resistor-0603",
@@ -240,6 +241,7 @@ fn the_bundles_part_files_pass_the_part_file_check() -> Result<()> {
 /// refused.
 #[test]
 fn the_part_files_terminations_bind_to_the_builders_terminals() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for key in [
         "resistor-0603",
         "capacitor-0805",

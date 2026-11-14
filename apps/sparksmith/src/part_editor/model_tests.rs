@@ -207,6 +207,7 @@ impl Harness {
 
 #[test]
 fn placement_edits_keep_the_preview_build_key() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let key = h
         .editor
@@ -238,6 +239,7 @@ fn placement_edits_keep_the_preview_build_key() -> TestResult {
 
 #[test]
 fn dragging_the_triad_moves_only_the_display_until_release() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let generation = h.viewport.generation();
     let revision = h.engine.revision();
@@ -275,6 +277,7 @@ fn dragging_the_triad_moves_only_the_display_until_release() -> TestResult {
 
 #[test]
 fn escape_cancels_a_triad_drag() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let handle = gizmo::handle_point("y", sparksmith_solidcraft::geom::Vec3::ZERO, 0.0)
         .ok_or("the triad was not drawn")?;
@@ -301,6 +304,7 @@ fn escape_cancels_a_triad_drag() -> TestResult {
 
 #[test]
 fn quick_actions_and_fit_are_one_command_each() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     h.click_label("QUICK ACTIONS")?;
     h.click_label("Z +90°")?;
@@ -342,6 +346,7 @@ fn quick_actions_and_fit_are_one_command_each() -> TestResult {
 
 #[test]
 fn typed_values_commit_once_when_the_field_is_left() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     h.click_label("MODEL OFFSET")?;
     let texts = h.inspector(vec![]);
@@ -385,6 +390,7 @@ fn typed_values_commit_once_when_the_field_is_left() -> TestResult {
 /// start folded, each saying what it holds on its caption line.
 #[test]
 fn offset_and_quick_actions_start_folded_with_a_summary() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let texts = h.inspector(vec![]);
     let has = |text: &str| texts.iter().any(|(t, _)| t == text);
@@ -403,6 +409,7 @@ fn offset_and_quick_actions_start_folded_with_a_summary() -> TestResult {
 /// replaced: it stays, marked with one error line, until Esc restores it.
 #[test]
 fn an_invalid_body_length_stays_marked_until_esc() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let texts = h.inspector(vec![]);
     let length = texts
@@ -459,6 +466,7 @@ fn an_invalid_body_length_stays_marked_until_esc() -> TestResult {
 
 #[test]
 fn point_to_point_moves_a_model_point_onto_a_pad_point() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     h.editor.model.point_to_point = PointToPoint::Source;
     h.frame(vec![]);
@@ -515,6 +523,7 @@ fn package_of(
 
 #[test]
 fn the_form_chooser_sends_one_typed_form_and_parameters_commit_when_left() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     // The Body section offers every family; the chip's parameters show.
     let texts = h.inspector(vec![]);
@@ -586,6 +595,7 @@ fn the_form_chooser_sends_one_typed_form_and_parameters_commit_when_left() -> Te
 
 #[test]
 fn a_residual_from_mismatched_spacing_is_explained() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let draft = h.editor.draft.as_ref().ok_or("draft")?.ids.package;
     h.sent.push(model_place::edit(
@@ -614,6 +624,7 @@ fn a_residual_from_mismatched_spacing_is_explained() -> TestResult {
 
 #[test]
 fn arrow_keys_over_the_view_nudge_the_model_one_command_each() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut h = Harness::new()?;
     let centre = h.viewport.rect().ok_or("not drawn")?.center();
     h.frame(vec![egui::Event::PointerMoved(centre)]);
@@ -687,6 +698,7 @@ impl Harness {
 /// decals follow the display transform like the model does.
 #[test]
 fn the_preview_shows_marking_decals_and_edits_rebuild_only_them() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_core::library::marking::{Finish, MarkingItem, MarkingSpec, Template};
     use sparksmith_solidcraft::marking::board::DECAL_KIND;
     let mut h = Harness::new()?;
@@ -756,6 +768,7 @@ fn the_preview_shows_marking_decals_and_edits_rebuild_only_them() -> TestResult 
 /// the marking floating over no model until the model was moved.
 #[test]
 fn decals_landing_after_the_renderer_took_the_model_keep_the_model() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_core::library::marking::{Finish, MarkingItem, MarkingSpec, Template};
     let mut h = Harness::new()?;
     // The renderer drew the model: its vertex stream is on the GPU now.
@@ -845,6 +858,7 @@ fn settle_card(h: &mut Harness) -> Result<Vec<(String, Pos2)>, Box<dyn std::erro
 
 #[test]
 fn a_committed_part_value_is_one_operation_and_one_undo_step() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_core::library::PackageModel;
     use sparksmith_core::library::package_model::PartValue;
     let mut h = Harness::new()?;
@@ -894,6 +908,7 @@ fn a_committed_part_value_is_one_operation_and_one_undo_step() -> TestResult {
 
 #[test]
 fn use_generated_model_restores_the_generated_model() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_core::library::PackageModel;
     let mut h = Harness::new()?;
     use_builtin(&mut h)?;
@@ -909,6 +924,7 @@ fn use_generated_model_restores_the_generated_model() -> TestResult {
 
 #[test]
 fn part_file_opens_the_chooser_and_use_assigns_the_checked_file() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_core::library::PackageModel;
     let mut h = Harness::new()?;
     h.click_label("Part file…")?;

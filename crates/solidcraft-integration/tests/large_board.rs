@@ -148,12 +148,16 @@ fn large_board_timings() -> Fallible {
     eprintln!("load average: {}", load.unwrap_or_default().trim());
     let materials =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library/materials");
-    sparksmith_solidcraft::looks::ensure(|| {
-        sparksmith_core::materials::MaterialLibrary::load(|name| {
-            std::fs::read_to_string(materials.join(name))
-                .map_err(|error| sparksmith_core::Error::Invalid(error.to_string()))
-        })
+    let library = sparksmith_core::materials::MaterialLibrary::load(|name| {
+        std::fs::read_to_string(materials.join(name))
+            .map_err(|error| sparksmith_core::Error::Invalid(error.to_string()))
     })?;
+    let standards = sparksmith_core::library::standards::Context::fixture()?;
+    let context = std::sync::Arc::new(
+        sparksmith_core::library::standards::Context::new((**standards.standards()).clone())
+            .with_materials(Ok(library)),
+    );
+    let _context = context.enter();
     let start = Instant::now();
     let board = large_board()?;
     eprintln!(

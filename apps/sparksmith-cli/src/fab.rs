@@ -165,6 +165,7 @@ mod tests {
     /// refused, naming each one.
     #[test]
     fn a_blocked_export_lists_the_error_titles() -> super::Result<()> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let dir = tempfile::tempdir()?;
         let project = dir.path().join("board.sparksmith");
         let out = dir.path().join("out");
@@ -172,6 +173,7 @@ mod tests {
         use sparksmith_core::rules::fixtures;
         let mut session =
             sparksmith_automation::session::Session::new(sparksmith_automation::session::showcase(
+                sparksmith_core::library::standards::Context::fixture()?,
                 &sparksmith_core::StackupPresets::fixture()?,
                 fixtures::prototype()?,
             )?);

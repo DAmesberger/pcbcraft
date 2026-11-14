@@ -107,3 +107,20 @@ The types are in the ABI crate, `sparksmith_generator_abi::surface` (`no_std` + 
 - `declare_classes!` and its `CLASSES` and `TITLES` tables, `Operation::classes()` and `Operation::titles()`: now `declare_entries!`, `ENTRIES` and `Operation::entries()`.
 
 `Request::expected_revision` stays until the envelope carries the revision (S2). MCP behaviour, the tool lists and their annotations are unchanged.
+
+## Explicit context
+
+Nothing about standards or materials is installed for the process (S2b). The host's data is one value, `sparksmith_core::library::standards::Context`: the standards (standard fields, marking codes, the generic-part grammar, symbol drawings) and the material library, or why that failed to load.
+
+- **Made once by the host:** `sparksmith_io::standards::shipped_context()` reads the shipped library. The desktop app makes it in `App::new`, the CLI in `run`.
+- **Handed to every engine:** `Engine::set_context`, kept across new and opened documents like the generator runtime and copied by `fork`. `sparksmith_io::new_project::{engine, profiled_engine, open}` take it; `Engine::showcase_with`, `Engine::showcase_hosted` and `session::showcase` take it.
+- **Current while it is used:** an engine enters its context on the calling thread for each operation and query (`Engine::enter_context`); a session for each request, so a 3D build or export reads the same. Code outside an engine call reads the context current on its thread (`standards::get`, `looks::get`). The desktop app keeps its context current on the window's thread for the program's life; the CLI for its run.
+- **Carried to workers:** a thread a host or a build starts runs its work through `standards::carried`, which enters the starting thread's context. Solidcraft's parallel builds and every worker the desktop app starts do.
+- **Missing is an error:** with no context current, a standard or material is refused with a message that names the cause; nothing falls back to a value in code or another engine's data.
+- **Tests:** test builds give every new engine the fixture context (the repository's standards and materials, compiled into the test build), as they give it fixture stackups; a test that calls below the engine enters `Context::fixture()` itself. The process-wide self-install is gone. `Engine::clear_context` (tests only) makes an engine without one.
+
+Two engines in one process with different contexts answer the same request each by its own (`standards::tests`, `session::tests::sessions_answer_with_their_own_context`).
+
+A material library is kept for the rest of the program once loaded, since built models keep references into it: a host makes one context at startup, not one per request.
+
+Not moved in S2b: the compiled-in starter rows (a parse cache of tables built into the program, the same for every engine), and two caches of shipped files that do not differ between engines of one host: the new-project defaults (`sparksmith_io::new_project::shipped`) and the shipped part files (`session::shipped_parts::builtin_parts`).

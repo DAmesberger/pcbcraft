@@ -139,6 +139,7 @@ fn explicit_lands_make_mechanical_pads_and_refusals_change_nothing() -> TestResu
 /// fabrication set generates.
 #[test]
 fn the_starter_set_builds_in_3d_and_reaches_the_outputs() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut session = Session::new(Engine::showcase()?);
     for (builtin, at) in [
         ("smd-nut", [3.5, 3.5]),

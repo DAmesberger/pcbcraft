@@ -3673,6 +3673,7 @@ mod tests {
     /// the look. The dialog closes once the document has moved on.
     #[test]
     fn board_setup_dialog_issues_set_fabrication() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut engine = Engine::demo()?;
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
@@ -4297,6 +4298,7 @@ mod tests {
     /// are not selected on their own); a part's body picks the part.
     #[test]
     fn a_3d_pick_selects_as_a_layout_click() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let engine = Engine::demo()?;
         let model = sparksmith_solidcraft::project::build(engine.project())?;
         let ctx = egui::Context::default();

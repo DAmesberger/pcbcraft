@@ -245,6 +245,7 @@ use folder_preview::sample_item as folder_item;
 /// drafts it, and the copy's origin chip names the folder.
 #[test]
 fn a_folder_item_opens_read_only_and_edit_a_copy_drafts_it() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let ctx = context();
     let (pick, bundle) = folder_item()?;
     let mut project = Engine::default();
@@ -339,6 +340,7 @@ fn a_folder_item_opens_read_only_and_edit_a_copy_drafts_it() -> TestResult {
 /// after a subject change it is dropped, never shown for another item.
 #[test]
 fn a_lent_preview_is_restored_only_under_its_own_subject() -> TestResult {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let (pick, bundle) = folder_item()?;
     let mut editor = PartEditor::default();
     editor.set_sources(

@@ -20,6 +20,7 @@ fn meshed(project: &Project) -> Result<(BoardPlan, Vec<Meshed>, Stats)> {
 /// body, one to one with the exact build's.
 #[test]
 fn meshed_bodies_are_the_plans() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     for project in [shaped()?, showcase()?] {
         let (plan, bodies, stats) = meshed(&project)?;
         let differences = parity(&plan, &bodies)?;
@@ -39,6 +40,7 @@ fn meshed_bodies_are_the_plans() -> Result<()> {
 /// once drew the laminate, and a slab filed under another dielectric.
 #[test]
 fn the_parity_check_finds_a_merged_or_misfiled_slab() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (plan, bodies, _) = meshed(&showcase()?)?;
     let slabs: Vec<usize> = bodies
         .iter()
@@ -73,6 +75,7 @@ fn the_parity_check_finds_a_merged_or_misfiled_slab() -> Result<()> {
 /// The parity check sees a mesh dropped, one added and one reshaped.
 #[test]
 fn the_parity_check_finds_a_dropped_added_or_reshaped_mesh() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let (plan, bodies, _) = meshed(&showcase()?)?;
     let track = bodies
         .iter()
@@ -118,6 +121,7 @@ fn the_parity_check_finds_a_dropped_added_or_reshaped_mesh() -> Result<()> {
 /// and an inner foil's level leaves room for that layer's copper.
 #[test]
 fn the_laminate_is_one_body_per_slab() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let (plan, bodies, _) = meshed(&project)?;
     let slabs: Vec<&Meshed> = bodies
@@ -186,6 +190,7 @@ fn the_laminate_is_one_body_per_slab() -> Result<()> {
 /// placed where it lies.
 #[test]
 fn bodies_alike_share_one_mesh() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let (_, bodies, stats) = meshed(&project)?;
     let barrels: Vec<&Meshed> = bodies
@@ -220,6 +225,7 @@ fn bodies_alike_share_one_mesh() -> Result<()> {
 /// board again makes nothing.
 #[test]
 fn an_edit_meshes_only_what_it_changed() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = showcase()?;
     let plan = plan::of(&project)?;
     let mut memo = Memo::default();
@@ -246,6 +252,7 @@ fn an_edit_meshes_only_what_it_changed() -> Result<()> {
 /// that track's mesh.
 #[test]
 fn a_meshed_model_picks_every_flat_body_as_its_object() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = shaped()?;
     let exact = build(&project)?;
     let live = build_flat(&project, &SourceCache::default(), None, Flat::Meshed)?;
@@ -327,6 +334,7 @@ fn a_meshed_model_picks_every_flat_body_as_its_object() -> Result<()> {
 /// never saved.
 #[test]
 fn a_meshed_model_is_never_saved() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let live = build_flat(&shaped()?, &SourceCache::default(), None, Flat::Meshed)?;
     let dir = tempfile::tempdir().map_err(|e| Error::Verification(e.to_string()))?;
     let path = dir.path().join("live.solidcraft");
@@ -340,6 +348,7 @@ fn a_meshed_model_is_never_saved() -> Result<()> {
 /// that track again; the native design runs no command.
 #[test]
 fn an_update_of_a_meshed_model_stays_meshed() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = showcase()?;
     let sources = SourceCache::default();
     let live = build_flat(&project, &sources, None, Flat::Meshed)?;
@@ -374,6 +383,7 @@ fn an_update_of_a_meshed_model_stays_meshed() -> Result<()> {
 /// others taken as they were.
 #[test]
 fn a_plan_from_the_memo_is_the_plan_made_anew() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::layout::fill::{RefillTarget, refill};
     let mut project = showcase()?;
     let mut memo = plan::Memo::default();
@@ -406,6 +416,7 @@ fn a_plan_from_the_memo_is_the_plan_made_anew() -> Result<()> {
 /// dimension tool reaches the board's edges by them.
 #[test]
 fn the_meshed_laminate_has_the_board_outlines_edges() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let [width, depth] = project.board_size;
     let (_, bodies, _) = meshed(&project)?;
@@ -472,6 +483,7 @@ fn the_meshed_laminate_has_the_board_outlines_edges() -> Result<()> {
 /// dielectrics of different glass are drawn with different graphs.
 #[test]
 fn each_slab_carries_its_dielectrics_realistic_material() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use crate::look_graph::look_key;
     use sparksmith_core::GlassStyle;
     let mut project = showcase()?;

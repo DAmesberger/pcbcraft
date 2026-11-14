@@ -373,6 +373,7 @@ fn r5_end_face(project: &Project, r5: Id) -> Fallible<BodyFace> {
 /// point; a 3D pick elsewhere on the face names the same face.
 #[test]
 fn a_layout_pick_on_r5s_body_trace_is_the_reference_a_3d_pick_makes() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let engine = esp32()?;
     let project = engine.project();
@@ -559,6 +560,7 @@ fn stacked_traces_on_j1_open_the_chooser() -> Fallible {
 /// the same ends and the same selection.
 #[test]
 fn a_dimension_made_in_either_view_shows_in_the_other() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let _serial = serial();
     let mut engine = esp32()?;
     let project = engine.project();

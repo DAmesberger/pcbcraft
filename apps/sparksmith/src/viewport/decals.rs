@@ -91,9 +91,9 @@ impl Viewport {
         let (send, result) = mpsc::channel();
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-decals".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let _ = send.send(build(&geometry));
-            });
+            }));
         if spawned.is_ok() {
             self.decals.builds = self.decals.builds.saturating_add(1);
             self.decals.job = Some(Job {

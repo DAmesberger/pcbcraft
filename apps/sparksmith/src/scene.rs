@@ -176,9 +176,6 @@ impl Made {
 
 /// Build one job's display geometry and pick sources.
 fn build(job: Job, kept: &mut Kept) -> (u64, BuiltGeometry) {
-    // Loaded once at start-up; this only reads it (and loads it for a
-    // test that builds without `main`).
-    sparksmith_automation::load_materials();
     match job {
         Job::Project(ticket, project, cancel) => {
             let started = std::time::Instant::now();
@@ -264,7 +261,7 @@ impl Worker {
     fn start(ctx: egui::Context) -> Self {
         let (sender, jobs) = mpsc::channel::<Job>();
         let (results, receiver) = mpsc::channel();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let mut kept = Kept::default();
             // A request that came while a meshed board was made.
             let mut next: Option<Job> = None;
@@ -325,7 +322,7 @@ impl Worker {
                 }
                 ctx.request_repaint();
             }
-        });
+        }));
         Self { sender, receiver }
     }
 }
@@ -809,6 +806,7 @@ mod tests {
     /// it: an edited board's model is the edited board's.
     #[test]
     fn worker_makes_an_edited_board_from_the_last_one() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let worker = Worker::start(egui::Context::default());
         let project = Engine::demo()?.project().clone();
         let mut edited = project.clone();
@@ -867,6 +865,7 @@ mod tests {
     #[test]
     fn an_undo_is_made_from_the_last_model_and_keeps_no_other()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let project = Arc::new(Engine::showcase()?.project().clone());
         let mut edited = (*project).clone();
         let track = edited.tracks.first_mut().ok_or("a track")?;
@@ -922,6 +921,7 @@ mod tests {
     /// laminate is one body per slab, and a track edit keeps every other mesh.
     #[test]
     fn the_worker_meshes_the_boards_flat_bodies() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         use sparksmith_solidcraft::material::BodyKind;
         let project = Arc::new(Engine::showcase()?.project().clone());
         let mut edited = (*project).clone();
@@ -1009,6 +1009,7 @@ mod tests {
     #[test]
     fn an_earlier_requests_model_is_shown_while_a_newer_one_is_made()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut scene = SceneController::new(
             egui::Context::default(),
             crate::viewport::Viewport::detached(),
@@ -1073,6 +1074,7 @@ mod tests {
     /// next one: the view never waits forever ("Updating") on a dead worker.
     #[test]
     fn a_panicking_build_fails_and_the_worker_goes_on() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let worker = Worker::start(egui::Context::default());
         worker.sender.send(Job::Panic(1))?;
         let wait = std::time::Duration::from_secs(30);
@@ -1094,6 +1096,7 @@ mod tests {
     #[test]
     fn boards_queued_behind_a_build_are_skipped_but_the_newest()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let worker = Worker::start(egui::Context::default());
         let mut board = Engine::demo()?.project().clone();
         let flag = || Arc::new(AtomicBool::new(false));
@@ -1121,6 +1124,7 @@ mod tests {
 
     #[test]
     fn worker_builds_only_the_newest_request() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let worker = Worker::start(egui::Context::default());
         let project = Arc::new(Engine::demo()?.project().clone());
         let mut broken = (*project).clone();
@@ -1183,6 +1187,7 @@ mod open_tests {
     /// (an edit) keep the camera the person left.
     #[test]
     fn an_opened_project_is_framed_and_its_edits_keep_the_camera() -> Fallible<()> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut scene = SceneController::new(
             egui::Context::default(),
             crate::viewport::Viewport::detached(),
@@ -1218,6 +1223,7 @@ mod open_tests {
     /// arrives, and the previous project's result is dropped.
     #[test]
     fn an_opened_project_never_shows_the_previous_projects_model() -> Fallible<()> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut scene = SceneController::new(
             egui::Context::default(),
             crate::viewport::Viewport::detached(),
@@ -1304,6 +1310,7 @@ mod open_tests {
     /// and every showcase part.
     #[test]
     fn an_opened_board_shows_its_component_bodies_without_an_edit() -> Fallible<()> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let boards = [
             ("WROOM-3", super::fixtures::wroom_board()?),
             ("showcase", Engine::showcase()?),

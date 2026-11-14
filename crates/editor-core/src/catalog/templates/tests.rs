@@ -2010,6 +2010,7 @@ fn expected(
 /// molded and axial diode rows diodes.
 #[test]
 fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let mut seen = std::collections::BTreeSet::new();
     for starter in crate::library::templates::starter::rows().map_err(|e| e.to_owned())? {
         if !matches!(
@@ -2053,6 +2054,7 @@ fn two_terminal_starter_rows_draw_their_kinds() -> Fallible<()> {
 /// differs from the package's is refused with the document unchanged.
 #[test]
 fn prefix_explicit_symbol_and_conventions_choose_the_drawing() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let mut engine = Engine::profiled()?;
     let (diode, _) = starter_build(&mut engine, "Tantalum case A (3216-18)", Some("D"), None)?;
     assert_eq!(
@@ -2469,6 +2471,7 @@ fn chip_passives_carry_their_value_fields() -> Fallible<()> {
 /// the drawing's lands, and the typed colour and forward voltage fields.
 #[test]
 fn a_chip_led_is_found_drawn_marked_and_carries_its_fields() -> Fallible<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     for (name, land, gap) in [
         ("Chip LED 0603 (1608 metric)", [0.8, 0.8], 0.825),
         ("Chip LED 0805 (2012 metric)", [1.25, 1.1], 1.175),

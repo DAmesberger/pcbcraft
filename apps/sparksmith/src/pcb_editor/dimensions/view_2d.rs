@@ -66,7 +66,7 @@ impl Worker {
         let (outbox, done) = mpsc::channel();
         std::thread::Builder::new()
             .name("sparksmith-body-traces".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 while let Ok((project, placement)) = inbox.recv() {
                     let package = model::package_of(&project, placement);
                     let listed = model::body_faces(&project, evaluator, placement)
@@ -77,7 +77,7 @@ impl Worker {
                     }
                     ctx.request_repaint();
                 }
-            })
+            }))
             .ok()?;
         Some(Self { jobs, done })
     }

@@ -224,6 +224,7 @@ pub(crate) fn coincident(geometry: &[Geometry]) -> Vec<String> {
 /// the demo board: no part fights its seat for a face.
 #[test]
 fn no_two_bodies_of_a_built_board_share_a_face() -> Fallible<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let boards = [
         ("WROOM-3", super::fixtures::wroom_board()?.project().clone()),
         (
@@ -249,6 +250,7 @@ fn no_two_bodies_of_a_built_board_share_a_face() -> Fallible<()> {
 /// bottom face, as the finish once was.
 #[test]
 fn the_check_finds_a_face_shared_by_two_bodies() -> Fallible<()> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     use sparksmith_solidcraft::geom::Mesh;
     let slab = |z0: f64, z1: f64| -> Fallible<Geometry> {
         let project = crate::model_scene::tests::demo_project()?;

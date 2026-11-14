@@ -214,6 +214,7 @@ fn the_tools_carry_the_catalog_titles_and_annotations() -> Fallible<()> {
 fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
     let mut server = crate::mcp::Server::new(
         Session::new(showcase(
+            sparksmith_core::library::standards::Context::fixture()?,
             &sparksmith_core::StackupPresets::fixture()?,
             sparksmith_core::rules::fixtures::prototype()?,
         )?),
@@ -230,6 +231,7 @@ fn inline_and_linked_results_hold_on_the_showcase() -> Fallible<()> {
             .map_or(0, str::len)
     };
     let revision = showcase(
+        sparksmith_core::library::standards::Context::fixture()?,
         &sparksmith_core::StackupPresets::fixture()?,
         sparksmith_core::rules::fixtures::prototype()?,
     )?

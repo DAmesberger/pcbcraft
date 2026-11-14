@@ -241,6 +241,7 @@ mod tests {
 
     #[test]
     fn every_body_kind_s_look_lowers_and_keeps_its_base_response() -> Result<()> {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let fabrication = Fabrication::default();
         for kind in BodyKind::ALL {
             let look = material(kind, &fabrication, &crate::stack::Stack::standard()?).surface()?;
@@ -266,6 +267,7 @@ mod tests {
     #[test]
     fn looks_of_one_pattern_share_a_shape_so_a_board_compiles_at_most_one_per_pattern() -> Result<()>
     {
+        let _context = crate::looks::test_context().map(|c| c.enter());
         let fabrication = Fabrication::default();
         let mut shapes = HashSet::new();
         let mut patterns = HashSet::new();

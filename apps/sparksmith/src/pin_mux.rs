@@ -453,11 +453,11 @@ fn suggest(
     let (sender, receiver) = std::sync::mpsc::channel();
     let spawned = std::thread::Builder::new()
         .name("pin-mux-suggest".into())
-        .spawn(move || {
+        .spawn(sparksmith_core::library::standards::carried(move || {
             let report = sparksmith_core::pins::suggest(&project, id, &request)
                 .map_err(|e| refusal::shown_error(&e));
             let _ = sender.send(report);
-        });
+        }));
     match spawned {
         Ok(_) => {
             state.pending = Some(Pending {

@@ -297,6 +297,7 @@ fn band_edge(
 /// side, not in a hard-edged white shaft a few pixels wide.
 #[test]
 fn the_gloss_mask_sheen_has_soft_edges() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
@@ -349,6 +350,7 @@ fn middle_colour(rgba: &[u8], w: u32, h: u32, share: f64) -> [f64; 3] {
 /// salmon of freshly polished copper under the studio, and not white.
 #[test]
 fn bare_copper_reads_as_copper() -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
@@ -390,6 +392,7 @@ fn bare_copper_reads_as_copper() -> Result<(), Box<dyn std::error::Error>> {
 #[test]
 fn the_standard_look_shows_the_edge_as_laminate_and_pins_as_gold()
 -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let Some(mut gpu) = gpu_or_skip()? else {
         return Ok(());
     };
@@ -461,6 +464,7 @@ fn the_standard_look_shows_the_edge_as_laminate_and_pins_as_gold()
 #[test]
 fn a_click_on_a_part_follows_the_pad_under_it_or_keeps_the_net()
 -> Result<(), Box<dyn std::error::Error>> {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let (project, model, mut v) = esp32()?;
     let net_id = |name: &str| {
         project

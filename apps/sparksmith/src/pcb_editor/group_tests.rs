@@ -457,6 +457,7 @@ fn arrange_needs_enough_selected_parts() -> Fallible {
 /// group survives the switch between the views.
 #[test]
 fn a_group_is_the_same_in_layout_and_3d() -> Fallible {
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let engine = board(ROUTED)?;
     let (r1, r2) = (by(&engine, "R1")?, by(&engine, "R2")?);
     let track = engine.project().tracks.first().ok_or("no track")?.id;

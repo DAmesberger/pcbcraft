@@ -134,8 +134,14 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
     report.counts.footprints = board.footprints.len();
     report.counts.footprints_back = board.footprints.iter().filter(|f| f.back).count();
     report.add_n(Case::BoardObjects, board.other.values().sum());
+    let mut engine = Engine::new(setup.board);
+    // The host's context, current on the importing thread, is the
+    // imported project's.
+    if let Ok(context) = sparksmith_core::library::standards::Context::current() {
+        engine.set_context(context);
+    }
     let mut session = Session {
-        engine: Engine::new(setup.board),
+        engine,
         evaluators: setup.evaluators,
     };
     session.rules(&board, setup.profile, &mut report)?;

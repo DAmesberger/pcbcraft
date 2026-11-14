@@ -72,6 +72,7 @@ fn every_turn(project: &Project, what: &str) -> Result<()> {
 /// Generated package models (the demo's chips).
 #[test]
 fn generated_models_sit_where_the_exact_build_holds_them() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     every_turn(&demo()?, "generated chips")
 }
 
@@ -79,6 +80,7 @@ fn generated_models_sit_where_the_exact_build_holds_them() -> Result<()> {
 /// footprint datum moved and turned.
 #[test]
 fn envelopes_sit_where_the_exact_build_holds_them() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = envelope_demo()?;
     let package = &mut project.library.packages[0].definition;
     set_body(package, None);
@@ -93,6 +95,7 @@ fn envelopes_sit_where_the_exact_build_holds_them() -> Result<()> {
 /// A library model (the original glTF fixture).
 #[test]
 fn library_models_sit_where_the_exact_build_holds_them() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     every_turn(&library_demo()?, "library models")
 }
 
@@ -100,6 +103,7 @@ fn library_models_sit_where_the_exact_build_holds_them() -> Result<()> {
 /// `layout.place_part` on both sides at every turn.
 #[test]
 fn part_files_sit_where_the_exact_build_holds_them() -> crate::board::tests::Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use crate::board::package_datum_tests::{USB4105, spec};
     use crate::board::tests::apply;
     use sparksmith_core::layout::LayoutCommand;
@@ -136,6 +140,7 @@ fn part_files_sit_where_the_exact_build_holds_them() -> crate::board::tests::Fal
 /// The check sees a part drawn 2 µm off, one turned over, and one missing.
 #[test]
 fn the_placement_check_finds_a_moved_flipped_or_missing_part() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = turned(&demo()?, 33.0)?;
     let exact = build(&project)?;
     let live = meshed(&project)?;
@@ -187,6 +192,7 @@ fn part_bodies(model: &NativeModel, instance: Id) -> Vec<&Geometry> {
 /// one package revision, draw the same meshes, each placed where it lies.
 #[test]
 fn the_live_model_places_one_design_per_package_revision_and_no_board() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = demo()?;
     let live = meshed(&project)?;
     assert!(live.native().is_none(), "no native design of the board");
@@ -218,6 +224,7 @@ fn the_live_model_places_one_design_per_package_revision_and_no_board() -> Resul
 /// build of the edited board holds it.
 #[test]
 fn an_edit_evaluates_no_part_design_again() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = demo()?;
     let library = SourceCache::default();
     let live = build_flat(&project, &library, None, Flat::Meshed)?;

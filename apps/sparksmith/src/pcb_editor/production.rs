@@ -182,11 +182,11 @@ impl ProductionDialog {
         let repaint = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("sparksmith-preflight".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let report = preflight(&document, profile.as_ref(), &checks);
                 let _ = sender.send((revision, pick, report));
                 repaint.request_repaint();
-            });
+            }));
         match spawned {
             Ok(_) => self.checking = Some((wanted.0, wanted.1, receiver)),
             Err(error) => {
@@ -293,11 +293,11 @@ impl ProductionDialog {
         let repaint = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("sparksmith-production-picker".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let picked = pollster::block_on(future).map(|f| f.path().to_path_buf());
                 let _ = sender.send(picked);
                 repaint.request_repaint();
-            });
+            }));
         if spawned.is_ok() {
             self.picking = Some(receiver);
         }
@@ -333,7 +333,7 @@ impl ProductionDialog {
         let repaint = ctx.clone();
         let spawned = std::thread::Builder::new()
             .name("sparksmith-production".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let mut progress = |p: Progress| {
                     let _ = sender.send(ExportMessage::Progress(p));
                     repaint.request_repaint();
@@ -348,7 +348,7 @@ impl ProductionDialog {
                 .map_err(|e| export_error(&e));
                 let _ = sender.send(ExportMessage::Done(result));
                 repaint.request_repaint();
-            });
+            }));
         match spawned {
             Ok(_) => {
                 self.exporting = Some(receiver);

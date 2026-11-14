@@ -132,6 +132,7 @@ const RESISTOR_NAMES: [(&str, &[&str]); 4] = [
 /// another builder), so it needs a new builder revision (`family_rev`).
 #[test]
 fn a_generated_model_is_a_design_with_its_own_names() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let design = generated(&resistor())?;
     let got = names(design.state());
     let expected: Names = RESISTOR_NAMES
@@ -168,6 +169,7 @@ fn old_blend_names_read_as_the_current_ones() -> Fallible {
 /// cache gives the same design back without building it.
 #[test]
 fn a_named_design_has_the_same_names_on_every_build() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     assert_eq!(built_names()?, built_names()?);
     let package = resistor();
     let a = generated(&package)?;
@@ -183,6 +185,7 @@ const DUMP: &str = "SPARKSMITH_NAMED_DESIGN_DUMP";
 #[test]
 #[ignore = "run in a fresh process by a_named_design_has_the_same_names_in_a_fresh_process"]
 fn dump_named_design_names() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let path = std::env::var(DUMP)?;
     std::fs::write(path, serde_json::to_vec(&built_names()?)?)?;
     Ok(())
@@ -192,6 +195,7 @@ fn dump_named_design_names() -> Fallible {
 #[test]
 #[cfg(not(target_arch = "wasm32"))]
 fn a_named_design_has_the_same_names_in_a_fresh_process() -> Fallible {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let dir = tempfile::tempdir()?;
     let path = dir.path().join("names.json");
     let status = std::process::Command::new(std::env::current_exe()?)

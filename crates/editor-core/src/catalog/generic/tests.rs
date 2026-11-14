@@ -45,8 +45,10 @@ fn find_or_create(engine: &mut Engine, query: &str, candidate: Option<usize>) ->
 
 #[test]
 fn every_declared_pattern_parses_and_every_example_builds_a_valid_form() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let engine = Engine::default();
-    let grammar = &standards::get()?.generic;
+    let standards = standards::get()?;
+    let grammar = &standards.generic;
     check(grammar)?;
     assert_eq!(grammar.families.len(), 6, "every family declares patterns");
     for family in &grammar.families {
@@ -72,7 +74,9 @@ fn every_declared_pattern_parses_and_every_example_builds_a_valid_form() -> Resu
 
 #[test]
 fn a_bad_pattern_says_why() -> Result<()> {
-    let grammar = &standards::get()?.generic;
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
+    let standards = standards::get()?;
+    let grammar = &standards.generic;
     for bad in [
         "",
         "header {rows",
@@ -461,6 +465,7 @@ fn colour_reaches_the_placed_instance_through_the_outcome() -> Result<()> {
 /// chosen its Value is empty, never its description.
 #[test]
 fn an_empty_value_field_warns_and_an_leds_value_is_its_colour() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     use crate::fields::{PropertyEdit, PropertyInput};
     use crate::instances::NewInstance;
     use crate::{InstanceCommand, UnitId};

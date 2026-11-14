@@ -182,7 +182,7 @@ fn report(what: &str, list: &[&Record]) -> String {
 #[ignore = "board parity: run by `cargo xtask board-parity`"]
 fn example_boards_match_their_record_and_plan() {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let bless = std::env::var_os("SPARKSMITH_BLESS_PARITY").is_some();
     let boards = boards();
     assert!(!boards.is_empty(), "no example boards found");
@@ -289,7 +289,7 @@ fn example_boards_match_their_record_and_plan() {
 #[test]
 fn example_boards_mesh_as_their_plan() {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut failures = Vec::new();
     for (name, project) in &boards() {
         let plan = plan::of(project).unwrap();

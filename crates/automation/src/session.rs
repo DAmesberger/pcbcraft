@@ -1029,8 +1029,10 @@ impl Session {
     /// Execute one typed request.
     pub fn execute(&mut self, request: Request) -> Result<Value> {
         self.ensure_generators();
-        // Once per process; later calls only read it.
-        crate::load_materials();
+        // The host's standards and materials, current while it runs: what
+        // a 3D build or export reads. An engine without them refuses
+        // whatever needs them.
+        let _context = self.engine.enter_context();
         // The new-project defaults, once per process; a failure is kept and
         // returned, naming the file, by the request that needs them.
         let _ = sparksmith_io::new_project::shipped();
@@ -1687,10 +1689,11 @@ mod two_way_tests;
 /// SolidCraft's sketch engine: its sketched board, cutout, slot and
 /// edge-held header included, on `profile` and `presets`' stackups.
 pub fn showcase(
+    context: std::sync::Arc<sparksmith_core::library::standards::Context>,
     presets: &sparksmith_core::StackupPresets,
     profile: sparksmith_core::rules::RuleProfile,
 ) -> sparksmith_core::Result<sparksmith_core::Engine> {
-    sparksmith_core::Engine::showcase_hosted(hosted(), presets, profile)
+    sparksmith_core::Engine::showcase_hosted(context, hosted(), presets, profile)
 }
 
 /// The host evaluators every applied operation gets: SolidCraft's sketch

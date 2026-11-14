@@ -3010,6 +3010,7 @@ mod draft_tests {
     #[test]
     fn the_symbol_view_draws_and_picks_through_core_queries()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let ctx = egui::Context::default();
         fonts::setup_bundled_fonts(&ctx);
         let engine = Engine::demo()?;

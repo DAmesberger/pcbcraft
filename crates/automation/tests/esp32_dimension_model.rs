@@ -163,7 +163,7 @@ fn live(engine: &Engine, sources: &SourceCache) -> Fallible<NativeModel> {
 #[test]
 fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut engine = example()?;
     let sources = SourceCache::default();
     let mut model = Some(live(&engine, &sources)?);
@@ -204,7 +204,7 @@ fn the_model_follows_j1_moved_by_its_dimension_or_the_board_width() -> Fallible 
 #[ignore = "timing; run by hand"]
 fn esp32_edit_update_timings() -> Fallible {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let mut engine = example()?;
     let sources = SourceCache::default();
     let started = Instant::now();

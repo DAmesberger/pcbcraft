@@ -124,6 +124,7 @@ fn the_usb4105_part_file_declares_its_opening() -> Fallible<()> {
 /// seating plane, and its z points out of that face.
 #[test]
 fn a_usb_c_opening_reaches_every_placement_in_the_board_frame() -> Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut engine = Engine::demo()?;
     let spec = spec(USB4105)?;
     let part = part_file::evaluate(USB4105, &Default::default())?;

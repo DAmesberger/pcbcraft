@@ -143,6 +143,7 @@ fn near(actual: f64, expected: f64, tolerance: f64) {
 /// pour wears a display-only mask cap opened at its holes.
 #[test]
 fn fill_copper_is_one_saved_body_per_fill_on_its_layer() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let plain = showcase()?;
     let unfilled = build(&plain)?;
     assert!(
@@ -261,6 +262,7 @@ fn substrate(m: &NativeModel) -> f64 {
 /// mass is physical.
 #[test]
 fn an_inner_fill_lies_in_its_own_foil_level() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut plain = showcase()?;
     let layer = CopperLayer::Inner(1);
     let (lo, hi) = ([30.0, 1.0], [40.0, 4.0]);
@@ -345,6 +347,7 @@ fn an_inner_fill_lies_in_its_own_foil_level() -> Result<()> {
 /// Prints the build time with and without it.
 #[test]
 fn a_pour_with_many_clearances_is_built_in_tiles() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let plain = showcase()?;
     let start = std::time::Instant::now();
     build(&plain)?;

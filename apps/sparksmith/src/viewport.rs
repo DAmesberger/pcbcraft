@@ -232,7 +232,7 @@ impl Viewport {
         let preset = lighting::STUDIO;
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-studio".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let env = StudioEnvironment::bake(preset);
                 let mut renderer = rs.renderer.write();
                 if let Some(r) = renderer.callback_resources.get_mut::<Renderer>() {
@@ -240,7 +240,7 @@ impl Viewport {
                 }
                 drop(renderer);
                 ctx.request_repaint();
-            });
+            }));
         if let Err(error) = spawned {
             eprintln!("sparksmith: the 3D studio was not baked: {error}");
         }
@@ -527,12 +527,12 @@ impl Viewport {
         let look = fade.clone();
         let spawned = std::thread::Builder::new()
             .name("pcb-3d-repack".into())
-            .spawn(move || {
+            .spawn(sparksmith_core::library::standards::carried(move || {
                 let packed =
                     model_scene::pack_faded(&geometry, &decals, &view, &stack, look.as_deref())
                         .map(|(scene, _)| scene);
                 let _ = send.send(packed);
-            });
+            }));
         self.repack = match spawned {
             Ok(_) => Some(Repack {
                 generation: self.generation,
@@ -1650,6 +1650,7 @@ mod tests {
     #[test]
     fn a_click_picks_the_via_instance_under_the_pointer() -> Result<(), Box<dyn std::error::Error>>
     {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(40)?;
         let (w, h) = (800.0, 600.0);
         for index in [0, 17, 39] {
@@ -1673,6 +1674,7 @@ mod tests {
     #[test]
     fn a_layer_toggle_hides_instanced_vias_without_a_rebuild()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(40)?;
         let model = viewport.model.as_ref().ok_or("no model")?;
         let meshes: Vec<usize> = model
@@ -1725,6 +1727,7 @@ mod tests {
     /// (highlighted, not selected) get none.
     #[test]
     fn a_small_selected_via_gets_a_ring() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(40)?;
         let (w, h) = (800.0, 600.0);
         let (item, _, _) = above_via(&mut viewport, 5)?;
@@ -1763,6 +1766,7 @@ mod tests {
     /// out); a hidden layer's are left out.
     #[test]
     fn a_selected_via_highlights_its_own_placements() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(40)?;
         let (item, _, _) = above_via(&mut viewport, 5)?;
         let model = viewport.model.as_ref().ok_or("no model")?;
@@ -1811,6 +1815,7 @@ mod tests {
     /// (entry 0), so one via stands out among many on the same net.
     #[test]
     fn the_picked_via_stands_out_from_its_net() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = vias(40)?;
         let (item, _, _) = above_via(&mut viewport, 5)?;
         let model = viewport.model.as_ref().ok_or("no model")?;
@@ -1907,6 +1912,7 @@ mod tests {
     #[test]
     fn highlighting_recolours_cached_blocks_without_touching_the_model()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         let item = viewport
             .model
@@ -1929,6 +1935,7 @@ mod tests {
     #[test]
     fn hiding_the_substrate_republishes_the_model_but_no_new_blocks()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         let all: Vec<u64> = viewport
             .model
@@ -1963,6 +1970,7 @@ mod tests {
 
     #[test]
     fn a_theme_flip_rebuilds_only_the_shadows() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         let dark = theme::is_dark();
         let before = (viewport.key, viewport.hl_key, viewport.sketch_key);
@@ -2010,6 +2018,7 @@ mod tests {
     #[test]
     fn hiding_the_top_mask_reveals_and_picks_the_copper_under_it()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         let meshes: Vec<usize> = viewport
             .model
@@ -2056,6 +2065,7 @@ mod tests {
     /// highlight blocks and a hidden package's contact shadow are left out.
     #[test]
     fn hidden_layers_drop_their_highlight_and_shadows() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         let all: Vec<u64> = viewport
             .model
@@ -2093,6 +2103,7 @@ mod tests {
     /// hidden at once, its vertices moved in place, not packed again.
     #[test]
     fn a_new_model_keeps_the_hidden_layers() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let project = crate::model_scene::tests::demo_project()?;
         let model = sparksmith_solidcraft::project::build(&project)?;
         let scene = crate::model_scene::build(model.geometry, &model.stack)?;
@@ -2136,6 +2147,7 @@ mod tests {
     /// the view zoomed in on purpose) keeps the camera.
     #[test]
     fn a_board_grown_out_of_view_is_fitted_again() -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let (w, h) = (1500.0, 800.0);
         let built = |grow: f64| -> Result<ModelScene, Box<dyn std::error::Error>> {
             let mut project = crate::model_scene::tests::demo_project()?;
@@ -2176,6 +2188,7 @@ mod tests {
     #[test]
     fn fit_frames_the_whole_board_in_wide_and_narrow_views()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         for (w, h) in [
             (1500.0, 800.0),
@@ -2207,6 +2220,7 @@ mod tests {
     #[test]
     fn scrolling_zooms_toward_the_point_under_the_pointer() -> Result<(), Box<dyn std::error::Error>>
     {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         let (w, h) = (800.0, 600.0);
         let (x, y) = (610.0, 220.0);
@@ -2226,6 +2240,7 @@ mod tests {
     #[test]
     fn the_perspective_view_fits_and_picks_the_part_under_the_pointer()
     -> Result<(), Box<dyn std::error::Error>> {
+        let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
         let mut viewport = demo()?;
         assert!(viewport.camera.fov > 0.0);
         let (w, h) = (800.0, 600.0);

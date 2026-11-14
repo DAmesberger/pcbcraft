@@ -18,7 +18,7 @@ const EXAMPLE: &str = concat!(
 #[ignore = "measurement; run with --ignored --nocapture"]
 fn esp32_export_tiers_are_checked_against_the_plan() {
     // The 3D build reads the shipped material library.
-    sparksmith_automation::load_materials();
+    let _context = sparksmith_core::library::standards::Context::fixture().map(|c| c.enter());
     let project = sparksmith_io::read_project(Path::new(EXAMPLE))
         .unwrap()
         .into_document()

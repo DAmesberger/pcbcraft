@@ -146,6 +146,7 @@ fn raised_ink_keeps_pour_holes_and_the_caps_inside_them() {
 /// so the ink over it stands on the cap's crown, never under it.
 #[test]
 fn legend_over_a_track_stands_on_its_mask_cap() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = Engine::demo()
         .map_err(|e| crate::Error::Verification(e.to_string()))?
         .project()
@@ -188,6 +189,7 @@ fn legend_over_a_track_stands_on_its_mask_cap() -> Result<()> {
 /// silkscreen-to-pad clearance: a wider clearance prints less ink.
 #[test]
 fn the_legend_clears_mask_openings_by_the_rule() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::rules::{RuleKey, RuleOverride, RuleValue};
     let mut project = Engine::demo()
         .map_err(|e| crate::Error::Verification(e.to_string()))?
@@ -215,6 +217,7 @@ fn the_legend_clears_mask_openings_by_the_rule() -> Result<()> {
 
 #[test]
 fn a_side_without_silkscreen_prints_nothing() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut project = Engine::demo()
         .map_err(|e| crate::Error::Verification(e.to_string()))?
         .project()
@@ -236,6 +239,7 @@ fn a_side_without_silkscreen_prints_nothing() -> Result<()> {
 /// native build failing here).
 #[test]
 fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::layout::LayoutCommand;
     use sparksmith_core::{Layer, Operation};
     let fail = |e: sparksmith_core::Error| crate::Error::Verification(e.to_string());
@@ -280,6 +284,7 @@ fn a_moved_part_never_fails_the_build_through_its_legend() -> Result<()> {
 /// the text's new line and no further than its height.
 #[test]
 fn a_moved_designator_moves_its_legend_film() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::layout::LayoutCommand;
     use sparksmith_core::model::TextPlacement;
     use sparksmith_core::{InstanceCommand, Layer, Operation};
@@ -346,6 +351,7 @@ fn a_moved_designator_moves_its_legend_film() -> Result<()> {
 /// under the cap.
 #[test]
 fn a_designator_over_a_pour_stands_on_its_mask() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     use sparksmith_core::layout::{BoardDrawing, PlacedItem};
     use sparksmith_core::model::fill::{FilledCopper, FilledRegion};
     use sparksmith_core::{Layer, Project};

@@ -595,7 +595,7 @@ pub fn search(project: &Project, drafts: &Drafts, query: &str) -> Result<Generic
     let mut candidates: Vec<GenericCandidate> = Vec::new();
     for family in &grammar.families {
         for pattern in &family.patterns {
-            let Some(bounds) = read_pattern(standards, pattern, &words)? else {
+            let Some(bounds) = read_pattern(&standards, pattern, &words)? else {
                 continue;
             };
             let Some(found) = candidate(grammar, project, drafts, family.family, pattern, &bounds)

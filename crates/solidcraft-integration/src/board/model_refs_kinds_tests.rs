@@ -112,6 +112,7 @@ fn trace_x(engine: &Engine) -> Fallible<f64> {
 /// lies on the edge, and follows the edge when the board grows 10 mm.
 #[test]
 fn a_generated_models_end_face_holds_the_part_to_the_edge() -> Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut engine = sketched()?;
     let part = r1(&engine)?;
     let placement = engine
@@ -487,6 +488,7 @@ fn board_point(
 /// wider.
 #[test]
 fn a_3d_pick_on_a_generated_end_face_holds_r1_to_the_edge() -> Fallible<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let mut engine = sketched()?;
     let part = r1(&engine)?;
     let package = package_of(engine.project(), part)?;

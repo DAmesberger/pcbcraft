@@ -35,6 +35,7 @@ fn kinds(model: &NativeModel) -> Result<Vec<BodyKind>> {
 /// the one built: the track's copper is named, nothing else.
 #[test]
 fn an_export_that_does_not_fit_is_refused_unless_written_anyway() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let watch = Watch::new();
     let model = project::build_watched(&project, Arc::clone(&watch))?;
@@ -132,6 +133,7 @@ fn an_export_that_does_not_fit_is_refused_unless_written_anyway() -> Result<()> 
 /// the export refused.
 #[test]
 fn a_dropped_or_moved_laminate_hole_is_caught() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let watch = Watch::new();
     let model = project::build_watched(&project, Arc::clone(&watch))?;
@@ -235,6 +237,7 @@ fn a_dropped_or_moved_laminate_hole_is_caught() -> Result<()> {
 /// opens again, and the watch counted the commands and ended done.
 #[test]
 fn a_full_export_matches_its_plan_and_writes_the_file() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let dir = tempfile::tempdir()?;
     let path = path_in(&dir, "board.solidcraft");
@@ -278,6 +281,7 @@ fn a_full_export_matches_its_plan_and_writes_the_file() -> Result<()> {
 /// via or fill copper, and checked against the plan of that board.
 #[test]
 fn the_mechanical_tier_has_no_tracks_vias_or_fills() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     assert!(!project.tracks.is_empty() && !project.vias.is_empty() && !project.fills.is_empty());
     let board = section(&project, Tier::Mechanical)
@@ -336,6 +340,7 @@ fn the_export_refuses_the_interface_tier_and_an_existing_file() -> Result<()> {
 /// nothing, no temporary file either.
 #[test]
 fn a_cancelled_export_writes_nothing() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let dir = tempfile::tempdir()?;
     let path = path_in(&dir, "board.solidcraft");
@@ -372,6 +377,7 @@ fn a_cancelled_export_writes_nothing() -> Result<()> {
 /// A cancel during the check stops it between bodies.
 #[test]
 fn a_cancelled_check_stops() -> Result<()> {
+    let _context = crate::looks::test_context().map(|c| c.enter());
     let project = showcase()?;
     let watch = Watch::new();
     let model = project::build_watched(&project, Arc::clone(&watch))?;

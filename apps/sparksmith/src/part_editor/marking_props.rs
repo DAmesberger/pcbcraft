@@ -991,11 +991,11 @@ impl MarkingProps {
             .pick_file();
         let (sender, receiver) = std::sync::mpsc::channel();
         let ctx = ctx.clone();
-        std::thread::spawn(move || {
+        std::thread::spawn(sparksmith_core::library::standards::carried(move || {
             let picked = pollster::block_on(future).map(|h| h.path().to_path_buf());
             let _ = sender.send(picked);
             ctx.request_repaint();
-        });
+        }));
         self.pick = ArtworkPick::Picking(self.scope, receiver);
     }
 
@@ -1006,9 +1006,9 @@ impl MarkingProps {
             ArtworkPick::Picking(scope, receiver) => match receiver.try_recv() {
                 Ok(Some(path)) => {
                     let (sender, reading) = std::sync::mpsc::channel();
-                    std::thread::spawn(move || {
+                    std::thread::spawn(sparksmith_core::library::standards::carried(move || {
                         let _ = sender.send(read_artwork(&path));
-                    });
+                    }));
                     self.pick = ArtworkPick::Reading(scope, reading);
                     None
                 }

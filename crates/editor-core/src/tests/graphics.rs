@@ -541,6 +541,7 @@ fn set_grid_is_undoable_saved_and_never_moves_geometry() -> Result<()> {
 
 #[test]
 fn sample_symbols_are_drawn_on_grid_and_publish_without_lint() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let refs = SampleRefs {
         component: DefinitionId(1),
         symbol: SymbolRef::new(DefinitionId(2), Revision::FIRST),
@@ -679,6 +680,7 @@ fn pin_decorations_shorten_the_stub_and_sit_on_the_body() {
 
 #[test]
 fn placed_units_resolve_text_pins_and_numbers_in_sheet_coordinates() -> Result<()> {
+    let _context = crate::library::standards::Context::fixture().map(|c| c.enter());
     let mut engine = Engine::demo()?;
     let f = demo_fixture(&engine)?;
     let r1 = by_designator(&engine, "R1")?;

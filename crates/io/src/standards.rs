@@ -1,8 +1,8 @@
 //! The standards from the shipped library (`docs/shipped-library.md`): the
 //! standard fields, the marking-code tables, the generic-part search
 //! grammar and the schematic symbol drawings. They are read here, checked
-//! by the core's constructors and installed for the process, so every
-//! engine (desktop, CLI, MCP) uses the same data. A missing or broken file
+//! by the core's constructors and handed to every engine in a [`Context`],
+//! so every engine (desktop, CLI, MCP) of one host uses the same data. A missing or broken file
 //! is an error naming it.
 use crate::shipped::{Shelf, ShippedLibrary};
 use crate::{Error, Result};
@@ -12,10 +12,11 @@ use sparksmith_core::library::marking::codes::{
     ColourCode, Eia96Code, MarkingCodes, PreferredSeries, VoltageLetterTables,
 };
 use sparksmith_core::library::standard_fields::StandardFields;
-use sparksmith_core::library::standards::{self, Standards};
+use sparksmith_core::library::standards::{Context, Standards};
 use sparksmith_core::library::symbol_style::{
     KindDrawing, SymbolDrawings, SymbolKind, SymbolStyle,
 };
+use std::sync::Arc;
 
 /// The largest standards file read.
 const MAX_FILE_BYTES: u64 = 1 << 20;
@@ -116,16 +117,19 @@ pub fn load(shipped: &ShippedLibrary) -> Result<Standards> {
     )
 }
 
-/// Load the standards of `shipped` and install them for this process.
-pub fn install(shipped: &ShippedLibrary) -> Result<()> {
-    standards::install(load(shipped)?)?;
-    Ok(())
+/// The context of `shipped`: its standards, and its material library or
+/// why that failed to load (kept, so a host without 3D still runs).
+pub fn context(shipped: &ShippedLibrary) -> Result<Arc<Context>> {
+    let materials = crate::materials::load(shipped).map_err(|e| e.to_string());
+    Ok(Arc::new(
+        Context::new(load(shipped)?).with_materials(materials),
+    ))
 }
 
-/// Find the shipped library and install its standards: what each program
-/// does at startup, before any engine runs.
-pub fn install_shipped() -> Result<()> {
-    install(&ShippedLibrary::locate()?)
+/// Find the shipped library and make its context: what each program does
+/// at startup, before it makes an engine, and hands to every engine.
+pub fn shipped_context() -> Result<Arc<Context>> {
+    context(&ShippedLibrary::locate()?)
 }
 
 #[cfg(test)]
@@ -172,9 +176,9 @@ mod tests {
     #[test]
     fn the_shipped_standards_load_and_match_what_the_core_tests_use() -> Result<()> {
         let loaded = load(&repository()?)?;
-        assert_eq!(&loaded, standards::get()?);
-        // Installing the same standards again is a no-op.
-        install(&repository()?)?;
+        assert_eq!(&loaded, &**Context::fixture()?.standards());
+        // The context of the repository carries the same standards.
+        assert_eq!(&loaded, &**context(&repository()?)?.standards());
         Ok(())
     }
 
