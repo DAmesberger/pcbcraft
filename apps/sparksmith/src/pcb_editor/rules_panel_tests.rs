@@ -840,26 +840,42 @@ fn later_closes_the_question_and_a_profiled_board_is_not_asked() -> TestResult {
     Ok(())
 }
 
+/// One drawn text: its whole text, the characters it shows, whether it is
+/// monospace (a value field), its rect and its clip.
+struct Drawn {
+    text: String,
+    shown: String,
+    mono: bool,
+    rect: egui::Rect,
+    clip: egui::Rect,
+}
+
 /// At the Properties column's width every rule's value field shows its
-/// whole value with its unit ("0.1 mm", not "0.1 ı"; run-4 finding 15).
+/// whole value with its unit ("0.1 mm", not "0.1 ı"; run-4 finding 15),
+/// each rule's name shows at least its first two words ("Min track…", not
+/// "Min tr…") and its profile value shows whole ("0.15 mm", not "0.…").
 #[test]
 fn the_value_fields_show_their_whole_value_in_the_properties_column() -> TestResult {
-    fn walk(shape: &Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+    fn walk(shape: &Shape, clip: egui::Rect, out: &mut Vec<Drawn>) {
         match shape {
             Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, out)),
-            Shape::Text(t)
-                if t.galley
+            Shape::Text(t) => out.push(Drawn {
+                text: t.galley.text().to_owned(),
+                shown: t
+                    .galley
+                    .rows
+                    .iter()
+                    .flat_map(|r| r.row.glyphs.iter().map(|g| g.chr))
+                    .collect(),
+                mono: t
+                    .galley
                     .job
                     .sections
                     .first()
-                    .is_some_and(|s| s.format.font_id.family == egui::FontFamily::Monospace) =>
-            {
-                out.push((
-                    t.galley.text().to_owned(),
-                    t.galley.rect.translate(t.pos.to_vec2()),
-                    clip,
-                ));
-            }
+                    .is_some_and(|s| s.format.font_id.family == egui::FontFamily::Monospace),
+                rect: t.galley.rect.translate(t.pos.to_vec2()),
+                clip,
+            }),
             _ => {}
         }
     }
@@ -886,24 +902,63 @@ fn the_value_fields_show_their_whole_value_in_the_properties_column() -> TestRes
         output = Some(out);
     }
     let output = output.ok_or("no frame")?;
-    let mut fields = Vec::new();
+    let mut drawn = Vec::new();
     for shape in &output.shapes {
-        walk(&shape.shape, shape.clip_rect, &mut fields);
+        walk(&shape.shape, shape.clip_rect, &mut drawn);
     }
-    let with_unit: Vec<_> = fields.iter().filter(|(t, ..)| t.ends_with(" mm")).collect();
+    let visible = |d: &Drawn| d.clip.intersect(d.rect).area() > 0.0;
+    let fields: Vec<&Drawn> = drawn.iter().filter(|d| d.mono).collect();
     assert!(
-        !with_unit.is_empty(),
+        fields.iter().any(|d| d.text.ends_with(" mm")),
         "no value fields: {:?}",
         texts(&output)
     );
-    for (text, rect, clip) in fields {
-        if !clip.intersects(rect) {
-            continue;
-        }
+    for d in fields.iter().filter(|d| visible(d)) {
         assert!(
-            rect.right() <= clip.right() + 0.5,
-            "{text:?} at {rect:?} is clipped by {clip:?}"
+            d.rect.right() <= d.clip.right() + 0.5,
+            "{:?} at {:?} is clipped by {:?}",
+            d.text,
+            d.rect,
+            d.clip
         );
     }
+    // Each rule's name shows its first two words, and its profile value
+    // (drawn under the name) shows whole.
+    let report = rules::report(&engine.project().rules);
+    let mut checked = 0;
+    for row in &report.rows {
+        let name = sentence(&row.label);
+        let Some(label) = drawn
+            .iter()
+            .filter(|d| visible(d))
+            .find(|d| !d.mono && d.text == name)
+        else {
+            continue;
+        };
+        checked += 1;
+        let words: Vec<&str> = name.split(' ').take(2).collect();
+        let readable = words.join(" ");
+        assert!(
+            label.shown.starts_with(&readable) && label.rect.right() <= label.clip.right() + 0.5,
+            "rule {name:?} shows only {:?}",
+            label.shown
+        );
+        let profile = rule_text(row.key, row.profile);
+        let profile = match row.formula {
+            Some(_) => format!("ƒ {profile}"),
+            None => profile,
+        };
+        let shown = drawn
+            .iter()
+            .filter(|d| visible(d))
+            .find(|d| !d.mono && d.text == profile && d.rect.top() >= label.rect.top())
+            .ok_or_else(|| format!("no profile value {profile:?} under {name:?}"))?;
+        assert!(
+            shown.shown == profile && shown.rect.right() <= shown.clip.right() + 0.5,
+            "profile value of {name:?} shows only {:?}",
+            shown.shown
+        );
+    }
+    assert!(checked >= 3, "only {checked} rule names drawn");
     Ok(())
 }

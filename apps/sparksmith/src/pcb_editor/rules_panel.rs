@@ -1170,14 +1170,15 @@ fn option_rows(ui: &mut Ui, profile: &RuleProfile) -> Option<OptionChange> {
     change
 }
 
-/// The widths of a group table's Rule, Profile, Value and Reset columns
-/// in `ui`: Value fits the widest value as its field shows it and Reset
-/// its button, so neither clips at the Properties column's width; Rule and
-/// Profile share the rest, and cut text shows on hover.
-fn column_widths(ui: &Ui, rows: &[&RuleRow]) -> [f32; 4] {
+/// The widths of a group table's Rule, Value and Reset columns in `ui`:
+/// Value fits the widest value as its field shows it and Reset its button,
+/// so neither clips at the Properties column's width; Rule, which shows the
+/// profile value under the rule's name, takes the rest, and cut text shows
+/// on hover.
+fn column_widths(ui: &Ui, rows: &[&RuleRow]) -> [f32; 3] {
     let t = Tokens::get();
-    // The table's frame margin and the gaps between its four columns.
-    let width = (ui.available_width() - 2.0 * t.space_10 - 4.0 * t.space_4).max(0.0);
+    // The table's frame margin and the gaps between its three columns.
+    let width = (ui.available_width() - 2.0 * t.space_10 - 3.0 * t.space_4).max(0.0);
     let measure = |text: &str, font: egui::FontId| {
         ui.painter()
             .layout_no_wrap(text.to_owned(), font, t.form_ink)
@@ -1189,16 +1190,22 @@ fn column_widths(ui: &Ui, rows: &[&RuleRow]) -> [f32; 4] {
         .iter()
         .map(|row| measure(&value_text(row.value), mono.clone()))
         .fold(0.0, f32::max);
-    // The field's inset each side, and room for a menu's arrow.
-    let value = (widest + 2.0 * t.form_inset + t.space_16).min(width * 0.45);
+    // Room for a menu's arrow, when the group has a menu.
+    let arrow = if rows.iter().any(|row| numeric(row.key, row.value).is_none()) {
+        t.space_16
+    } else {
+        0.0
+    };
+    // The field's inset each side.
+    let value = (widest + 2.0 * t.form_inset + arrow).min(width * 0.45);
     let reset = (measure("Reset", egui::FontId::proportional(t.font_label)) + 2.0 * t.space_8)
         .min(width * 0.2);
-    let rest = (width - value - reset).max(0.0);
-    [rest * 3.0 / 4.6, rest * 1.6 / 4.6, value, reset]
+    [(width - value - reset).max(0.0), value, reset]
 }
 
-/// One group's table: Rule · Profile · Value · Reset. Returns the edit a
-/// field or menu committed and whether a field has focus.
+/// One group's table: Rule (the profile value under it) · Value · Reset.
+/// Returns the edit a field or menu committed and whether a field has
+/// focus.
 fn group_table(
     panel: &mut RulesPanel,
     ui: &mut Ui,
@@ -1207,15 +1214,11 @@ fn group_table(
     reveal: bool,
 ) -> (Option<(RulesCommand, Origin)>, bool) {
     let t = Tokens::get();
-    let [rule, profile, value, reset] = column_widths(ui, rows);
+    let [rule, value, reset] = column_widths(ui, rows);
     let columns = [
         kit::TableColumn {
-            title: "Rule",
+            title: "Rule · profile",
             weight: rule,
-        },
-        kit::TableColumn {
-            title: "Profile",
-            weight: profile,
         },
         kit::TableColumn {
             title: "Value",
@@ -1258,9 +1261,29 @@ fn group_table(
                         }
                     }
                     let ink = if overridden { t.form_ink } else { t.text };
-                    let label = ui.add(
-                        egui::Label::new(RichText::new(sentence(&row.label)).color(ink)).truncate(),
-                    );
+                    let profile = rule_text(key, row.profile);
+                    let profile = if row.formula.is_some() {
+                        format!("ƒ {profile}")
+                    } else {
+                        profile
+                    };
+                    // The name, and the profile value under it in the row.
+                    let label = ui
+                        .with_layout(egui::Layout::top_down(Align::Min), |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let label = ui.add(
+                                egui::Label::new(RichText::new(sentence(&row.label)).color(ink))
+                                    .truncate(),
+                            );
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(profile).size(t.font_small).color(t.form_dim),
+                                )
+                                .truncate(),
+                            );
+                            label
+                        })
+                        .inner;
                     let unset = if rule_text(key, row.value) == "Not checked" {
                         " · 0: not checked"
                     } else {
@@ -1280,15 +1303,6 @@ fn group_table(
                     label.on_hover_text(tip);
                 }
                 1 => {
-                    let text = rule_text(key, row.profile);
-                    let text = if row.formula.is_some() {
-                        format!("ƒ {text}")
-                    } else {
-                        text
-                    };
-                    ui.add(egui::Label::new(RichText::new(text).color(t.form_dim)).truncate());
-                }
-                2 => {
                     if let Some((number, unit, range)) = numeric(key, row.value) {
                         let mut value = panel.staged.get(&key).copied().unwrap_or(number);
                         let input =
