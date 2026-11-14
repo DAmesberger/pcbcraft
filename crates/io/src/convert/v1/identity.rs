@@ -15,7 +15,7 @@
 //! includes that file's own id; the copy cannot recompute it, so it keeps
 //! its old name and a later import of the converted file brings the
 //! lineage in again under its new name. The run lists those lineages.
-use crate::Result;
+use crate::convert::Result;
 use sparksmith_core::format::EditorFile;
 use sparksmith_core::ids::{DefinitionKind, DefinitionRef, LibraryId};
 use sparksmith_core::layout::dimensions::model::package_design_key;
@@ -269,7 +269,7 @@ mod tests {
     /// Every Part of the synthetic catalog imported into an empty project,
     /// with the origins import recorded.
     fn imported() -> Result<EditorFile> {
-        let board = sparksmith_io::new_project::shipped()?.board;
+        let board = crate::new_project::shipped()?.board;
         let source = sparksmith_core::catalog::synthetic::project_with_parts(4, &board)?.library;
         let mut file = EditorFile {
             version: sparksmith_core::format::FILE_VERSION,

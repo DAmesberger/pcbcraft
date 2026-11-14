@@ -7,7 +7,7 @@
 //! still names it; only content hashes change, and projects recompute the
 //! ones they remember when they are converted ([`super::identity`]).
 use super::library;
-use crate::Result;
+use crate::convert::Result;
 use serde_json::Value;
 use sparksmith_core::library::bundle::RevisionRecord;
 use std::fs;
@@ -27,10 +27,10 @@ pub struct Converted {
 
 /// Converts the library folder at `root` in place.
 pub fn convert(root: &Path, backup: &Path) -> Result<Converted> {
-    let folder = sparksmith_io::library_folder::open_folder(root)?;
+    let folder = crate::library_folder::open_folder(root)?;
     let mut rewritten: Vec<(PathBuf, Vec<u8>)> = Vec::new();
     let mut out = Converted::default();
-    for (relative, _, _) in sparksmith_io::library_folder::record_files(&folder)? {
+    for (relative, _, _) in crate::library_folder::record_files(&folder)? {
         let path = root.join(&relative);
         if fs::metadata(&path)?.len() > MAX_RECORD_BYTES {
             return Err(format!("{relative} exceeds {MAX_RECORD_BYTES} bytes").into());
@@ -58,10 +58,10 @@ pub fn convert(root: &Path, backup: &Path) -> Result<Converted> {
         copy_dir(root, backup)?;
     }
     for (path, bytes) in &rewritten {
-        sparksmith_io::persistence::atomic_write(path, bytes)?;
+        crate::persistence::atomic_write(path, bytes)?;
     }
     // Read back as the app does: every record parses and hashes.
-    sparksmith_io::library_folder::read_records(&folder)?;
+    crate::library_folder::read_records(&folder)?;
     Ok(out)
 }
 

@@ -1,10 +1,11 @@
 mod brand_crates;
 mod clean_room;
 mod connectivity;
-mod convert_rules;
-mod convert_v1;
+#[cfg(test)]
+mod convert_footprints;
 mod core_modules;
 mod f64_lengths;
+mod format_lock;
 mod generators;
 mod generic_terms;
 mod kicad_compare;
@@ -51,10 +52,10 @@ fn cargo(args: &[&str]) -> Result<()> {
 
 fn run() -> Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if let Some((command, files)) = args.split_first()
-        && command == "convert-v1"
+    if let Some((command, rest)) = args.split_first()
+        && command == "format-lock"
     {
-        return convert_v1::run(files);
+        return format_lock::run(rest);
     }
     if let Some((command, rest)) = args.split_first()
         && command == "generators"
@@ -78,6 +79,7 @@ fn run() -> Result<()> {
             core_modules::check()?;
             connectivity::check()?;
             f64_lengths::check()?;
+            format_lock::check()?;
             licences::check()?;
             brand_crates::check()?;
             clean_room::check()?;
@@ -138,7 +140,7 @@ fn run() -> Result<()> {
         _ => Err(
             "usage: cargo xtask ci | ci-native | board-parity | wasm | wasm-scripting | wasm-footprint | layers | core-modules | connectivity | f64-lengths \
              | licences --check | brand-crates | clean-room | no-builtin-data | generic-terms | ui-containers | ui-forms | raw-keys | generators build [--update-lock] | check | reproduce | measure \
-             | convert-v1 [--profile PROFILE.json] PATH… | kicad-compare [--design PATH]"
+             | format-lock [--update] | kicad-compare [--design PATH]"
                 .into(),
         ),
     }

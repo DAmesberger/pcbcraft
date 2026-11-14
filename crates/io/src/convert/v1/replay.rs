@@ -5,7 +5,7 @@
 //! `{"kind", "body"}`), which is converted as in a file. Lines that are not
 //! JSON objects are copied unchanged.
 use super::library;
-use crate::Result;
+use crate::convert::Result;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
@@ -81,6 +81,6 @@ pub fn convert(path: &Path, backup: &Path) -> Result<usize> {
     if !backup.exists() {
         fs::write(backup, &original)?;
     }
-    sparksmith_io::persistence::atomic_write(path, out.as_bytes())?;
+    crate::persistence::atomic_write(path, out.as_bytes())?;
     Ok(n)
 }

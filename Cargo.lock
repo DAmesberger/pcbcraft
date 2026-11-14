@@ -6957,7 +6957,6 @@ dependencies = [
  "sparksmith-solidcraft",
  "syn 2.0.119",
  "tempfile",
- "zip",
 ]
 
 [[package]]

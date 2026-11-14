@@ -1,8 +1,10 @@
 //! File effects for Sparksmith documents: bounded reads, atomic writes and crash
-//! recovery. Document meaning, versions and migrations stay in
-//! `sparksmith_core::format`; this crate only moves bytes safely.
+//! recovery. Document meaning and version rules stay in
+//! `sparksmith_core::format`; this crate moves bytes safely and holds the
+//! converter chain for older format versions ([`convert`]).
 pub mod artwork;
 pub mod assembly_link;
+pub mod convert;
 pub mod fab_drawings;
 pub mod fabrication;
 mod former_name;

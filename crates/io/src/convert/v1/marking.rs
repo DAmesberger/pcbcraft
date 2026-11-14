@@ -11,7 +11,7 @@
 //! `wrap_mdeg` (not reduced: 360° stays a full turn) and its height range
 //! `along_nm`. Laid-out elements are replies and never stored.
 use super::json::{angle, items, length, lengths, object, point, point_as, sweep};
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 
 /// One definition body of `kind`; the number of values changed.
