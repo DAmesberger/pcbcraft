@@ -110,6 +110,7 @@ pub extern "C" fn sparksmith_gen_describe() -> u64 {
     let description = Description {
         abi: v1::ABI,
         id_hint: "probe".into(),
+        version: 1,
         name: "Generator host probe".into(),
         families: Vec::new(),
         scopes: vec![Scope::Package],

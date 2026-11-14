@@ -2,8 +2,8 @@
 //! is a sentence a person can act on that says nothing ran or nothing
 //! changed, and the runtime keeps working for the next module.
 use sparksmith_generator_abi::v1::{
-    self, Footprint, Generation, Lead, Opening, Package, PackageGeometry, Pad, PadShape, Request,
-    Scope, Side,
+    self, Footprint, Generation, Lead, Model, Opening, Package, PackageGeometry, Pad, PadShape,
+    ParamValue, Request, Scope, Side,
 };
 use sparksmith_generator_abi::{Failure, GeneratorRuntime, codec};
 use sparksmith_generators::{Limits, WasmiRuntime};
@@ -17,6 +17,7 @@ fn description() -> v1::Description {
     v1::Description {
         abi: v1::ABI,
         id_hint: "fixture".into(),
+        version: 1,
         name: "Fixture".into(),
         families: Vec::new(),
         scopes: vec![Scope::Package],
@@ -68,10 +69,30 @@ fn generation() -> Generation {
             assembly: Vec::new(),
         },
         binding: Vec::new(),
-        model: None,
+        model: Some(model()),
         fields: Vec::new(),
         notes: Vec::new(),
     }
+}
+
+/// The fixture's model: a part file by its SHA-256, with one length.
+fn model() -> Model {
+    Model::PartFile {
+        asset: "ab".repeat(32),
+        values: [("side".to_string(), ParamValue::Int(500_000))]
+            .into_iter()
+            .collect(),
+    }
+}
+
+/// A fixture returning `generation` (canonical) as its part.
+fn returning(generation: &Generation) -> Result<Fixture, String> {
+    let bytes = codec::encode(generation).map_err(|e| e.to_string())?;
+    let mut fixture = Fixture::ok()?;
+    fixture.response = vec![v1::STATUS_OK];
+    fixture.response.extend(bytes);
+    fixture.generate = format!("i64.const {}", packed(RESPONSE_AT, fixture.response.len()));
+    Ok(fixture)
 }
 
 fn request() -> Request {
@@ -337,4 +358,66 @@ fn a_module_using_a_disabled_proposal_is_refused_before_it_runs() -> Result<(), 
     let failure = refused(&runtime, &fixture)?;
     assert_eq!(code(&failure), "generator.unsupported_feature");
     Ok(())
+}
+
+/// Each change to the fixture's model and the refusal it gets, word for
+/// word.
+#[test]
+fn missing_or_malformed_models_are_refused_in_plain_words() -> Result<(), String> {
+    let runtime = WasmiRuntime::new(Limits::DEFAULT);
+    type Edit = fn(&mut Generation);
+    let cases: Vec<(Edit, &str)> = vec![
+        (
+            |g| g.model = None,
+            "The generator made no 3D model; a part needs one.",
+        ),
+        (
+            |g| edit(g, |asset, _| *asset = "chip.solidcraft".into()),
+            "The generator names its 3D model's part file \"chip.solidcraft\", which is not a SHA-256 (64 lower-case hex digits).",
+        ),
+        (
+            |g| {
+                edit(g, |_, values| {
+                    values.insert("side".into(), ParamValue::Int(2_000_000_000));
+                })
+            },
+            "The generator sets the part file's \"side\" to 2000000000, beyond the 1 m bound.",
+        ),
+        (
+            |g| {
+                edit(g, |_, values| {
+                    values.insert("side".into(), ParamValue::Text("wide".into()));
+                })
+            },
+            "The generator sets the part file's \"side\" to something other than a whole number.",
+        ),
+        (
+            |g| {
+                edit(g, |_, values| {
+                    values.insert("2nd side".into(), ParamValue::Int(1));
+                })
+            },
+            "The generator gives a value to \"2nd side\", which cannot name a part-file parameter (1 to 64 ASCII letters, digits and underscores, not starting with a digit).",
+        ),
+    ];
+    for (change, message) in cases {
+        let mut g = generation();
+        change(&mut g);
+        let failure = refused(&runtime, &returning(&g)?)?;
+        assert_eq!(code(&failure), "generator.invalid_model", "{message}");
+        assert_eq!(
+            failure.to_string(),
+            format!("{message} Nothing was changed.")
+        );
+    }
+    Ok(())
+}
+
+fn edit(
+    g: &mut Generation,
+    change: impl FnOnce(&mut String, &mut std::collections::BTreeMap<String, ParamValue>),
+) {
+    if let Some(Model::PartFile { asset, values }) = &mut g.model {
+        change(asset, values);
+    }
 }

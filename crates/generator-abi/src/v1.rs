@@ -65,6 +65,8 @@ pub mod limits {
     pub const UNITS: usize = 64;
     /// Largest absolute coordinate or size, 1 m.
     pub const COORDINATE_NM: i64 = 1_000_000_000;
+    /// Most values a model gives its part file.
+    pub const MODEL_VALUES: usize = 256;
 }
 
 /// A point in nm.
@@ -93,6 +95,10 @@ pub struct Description {
     pub abi: u32,
     /// A short stable name for the generator lineage, e.g. `chip`.
     pub id_hint: String,
+    /// The generator's version within its `id_hint`: a whole number from 1,
+    /// raised whenever a release changes what the generator makes. A higher
+    /// version of the same `id_hint` is newer.
+    pub version: u32,
     /// A display name.
     pub name: String,
     /// Package families it covers.
@@ -303,8 +309,8 @@ pub struct Generation {
     pub footprint: Footprint,
     /// Package terminal to component terminal; empty in [`Scope::Package`].
     pub binding: Vec<BindingEntry>,
-    /// The 3D model description. Not produced in ABI 1 until the 3D script
-    /// lands (slice GP2); the host builds no model when it is absent.
+    /// The 3D model. Required: a part never exists without its model, so
+    /// the host refuses a generation without one (slice GP2).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<Model>,
     /// Derived field values, e.g. rated power from the size code.
@@ -580,8 +586,12 @@ pub struct BindingEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum Model {
-    /// A `.solidcraft` part file shipped with the generator revision, by
-    /// SHA-256, with its parameter values.
+    /// A `.solidcraft` part file of the generator's bundle, by the
+    /// lower-case hex SHA-256 of its bytes, with values for some of its
+    /// parameters: integers, nanometres for a length parameter,
+    /// millidegrees for an angle, the count itself for a unitless one (the
+    /// part file's parameter decides). The host evaluates the file at the
+    /// values through Solidcraft, as for any part file.
     PartFile {
         asset: String,
         values: BTreeMap<String, ParamValue>,
