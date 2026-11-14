@@ -460,3 +460,35 @@ pub fn description(d: &Description) -> Result<(), Failure> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::description;
+    use sparksmith_generator_abi::v1::{ABI, Description, Scope};
+
+    #[test]
+    fn a_generator_at_version_0_is_refused() {
+        let mut d = Description {
+            abi: ABI,
+            id_hint: "fixture".into(),
+            version: 1,
+            name: "Fixture".into(),
+            families: Vec::new(),
+            scopes: vec![Scope::Package],
+            params: Vec::new(),
+            rules: Vec::new(),
+            presets: Vec::new(),
+            grammar: Vec::new(),
+            instance_fields: Vec::new(),
+        };
+        assert!(description(&d).is_ok());
+        d.version = 0;
+        let refused = description(&d).err().map(|f| f.to_string());
+        assert!(
+            refused
+                .as_deref()
+                .is_some_and(|m| m.contains("version 0; versions count from 1")),
+            "{refused:?}"
+        );
+    }
+}
