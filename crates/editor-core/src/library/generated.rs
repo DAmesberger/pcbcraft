@@ -24,7 +24,8 @@
 pub mod expand;
 
 use super::bundle::PackedAsset;
-use super::{Definition, Library};
+use super::model3d::ModelFormat;
+use super::{Definition, Library, PackageModel};
 use crate::diagnostics::{Error, Result};
 use crate::ids::{
     BindingRef, ContentHash, DefinitionKind, DefinitionRef, FootprintRef, PackageRef, SymbolRef,
@@ -413,13 +414,15 @@ pub fn expansion_hash(definitions: &[(DefinitionRef, Definition)]) -> Result<Con
     Ok(ContentHash(hasher.finalize().into()))
 }
 
-/// The definitions `generation` expands to at the revisions `expansion`.
+/// The definitions `generation` expands to at the revisions `expansion`,
+/// its package holding `model`.
 pub fn expand_at(
     generation: &v1::Generation,
     refs: expand::Refs,
     expansion: &[DefinitionRef],
+    model: PackageModel,
 ) -> Result<Vec<(DefinitionRef, Definition)>> {
-    let made = expand::definitions(generation, refs)?;
+    let made = expand::definitions(generation, refs, model)?;
     if made.len() != expansion.len() {
         return Err(Error::Invalid(
             "generated.expansion: the generation makes a different set of definitions".into(),
@@ -495,7 +498,25 @@ pub fn compare(library: &Library, check: &Check<'_>, generated: &Generated) -> R
             part.from.result
         )));
     }
-    let expected = expand_at(&generated.generation, part.refs()?, &part.expansion)?;
+    // The model the stored package holds, checked against the generation:
+    // the part file it names (a Model revision of this project packing
+    // those bytes) at its values. What the host derived from evaluating
+    // the file is the stored package's own, rechecked by every board build.
+    let refs = part.refs()?;
+    let model = library
+        .package(refs.package)
+        .map(|p| p.definition.model.clone())
+        .ok_or_else(|| {
+            Error::Invalid(format!(
+                "generated.record: the package of {name} is not in the library"
+            ))
+        })?;
+    check_model(library, &generated.generation, &model).map_err(|e| {
+        Error::Invalid(format!(
+            "generated.expansion_changed: {name} stored in this project differs from what its generator makes from the recorded parameters: {e}. The project was not opened."
+        ))
+    })?;
+    let expected = expand_at(&generated.generation, refs, &part.expansion, model)?;
     let stored: Vec<(DefinitionRef, Definition)> = part
         .expansion
         .iter()
@@ -509,6 +530,35 @@ pub fn compare(library: &Library, check: &Check<'_>, generated: &Generated) -> R
         )));
     }
     Ok(())
+}
+
+/// Whether `model` is the part file `generation` names, as a published
+/// Model revision of `library` of format `solidcraft` packing those bytes,
+/// at the generation's values.
+pub fn check_model(
+    library: &Library,
+    generation: &v1::Generation,
+    model: &PackageModel,
+) -> Result<()> {
+    let (asset, values) = expand::part_file(generation)?;
+    let PackageModel::PartFile(part) = model else {
+        return Err(Error::Invalid(
+            "generated.model: its package's 3D model is not its generator's part file".into(),
+        ));
+    };
+    let held = library.model(part.model).ok_or_else(|| {
+        Error::Invalid(format!(
+            "generated.model: its part file {} is not in the library",
+            part.model
+        ))
+    })?;
+    if held.definition.format != ModelFormat::Solidcraft || held.definition.asset.hash != asset {
+        return Err(Error::Invalid(format!(
+            "generated.model: its package uses the model {}, not the generator's part file sha256 {asset}",
+            part.model
+        )));
+    }
+    expand::part_values_match(values, &part.values)
 }
 
 /// Every check run and compared, through `run` (the host's runtime, which

@@ -5,15 +5,19 @@
 //! never interprets it.
 use super::Outcome;
 use crate::diagnostics::{Error, Result};
+use crate::ids::ModelRef;
 use crate::ids::{
     BindingRef, ContentHash, DefinitionId, DefinitionRef, FootprintRef, PackageRef, Revision,
     SymbolRef,
 };
+use crate::library::PackageModel;
 use crate::library::bundle::{AssetBytes, MAX_ASSETS, PackedAsset};
 use crate::library::generated::{
     self, GeneratedFrom, GeneratedPart, GeneratorParams, GeneratorRuntime, GeneratorScope,
     MAX_MODULE_BYTES, MAX_PARAMS, MODULE_MEDIA_TYPE, ParamValue, PartKey, expand,
 };
+use crate::library::model3d::{self, ImportModel, ModelDefinition, ModelFormat};
+use crate::library::package_model::{PartDerived, PartFileModel, PartValue};
 use crate::library::symbol_style::ResistorStyle;
 use crate::library::{DefinitionMeta, MAX_LABEL, MAX_NOTE, drafts};
 use crate::model::Document;
@@ -46,6 +50,33 @@ pub struct Generate {
     /// with its impact listed. The usual way to take a changed module.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replaces: Option<DefinitionRef>,
+    /// The part's 3D model as the host evaluated it: the part file the
+    /// module names, at its values (slice GP2). Required: a part never
+    /// exists without its model, and the core never evaluates one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<GeneratedModel>,
+}
+
+/// A generated part's 3D model, from the host: the part file the module's
+/// generation names (by SHA-256) evaluated at its values. The core checks
+/// that it is that file and those values; the bounds and surfaces are the
+/// host's evaluation, rechecked by every board build.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GeneratedModel {
+    /// The Model the part file becomes when the project holds none of
+    /// those bytes yet: format `solidcraft`, its asset, bounds as the file
+    /// is, licence and provenance.
+    pub definition: ModelDefinition,
+    /// That Model's name.
+    pub name: String,
+    /// The part file's bytes, unless the project packs them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<AssetBytes>,
+    /// The generation's values in the part file's own units.
+    pub values: std::collections::BTreeMap<String, PartValue>,
+    /// What the part file evaluated to at those values.
+    pub derived: PartDerived,
 }
 
 /// A module by hash, with its bytes when they are not embedded yet.
@@ -151,13 +182,32 @@ fn context_value(document: &Document, param: &v1::Param) -> Option<v1::ParamValu
     }
 }
 
-/// `library.generate`.
-pub(crate) fn generate(
-    document: &mut Document,
-    request: Generate,
-    runtime: Option<&dyn GeneratorRuntime>,
-) -> Result<Outcome> {
-    let runtime = runtime.ok_or_else(runtime_needed)?;
+/// What `library.generate` will run: the module's bytes (and whether the
+/// project must embed them), its description and the complete request.
+struct Prepared {
+    bytes: AssetBytes,
+    embed: bool,
+    description: v1::Description,
+    wire: v1::Request,
+}
+
+/// The module bytes and complete request `request` runs on `document`:
+/// what the host evaluates the part's model from before it applies
+/// `library.generate` (the core never evaluates a part file).
+pub fn generator_request(
+    document: &Document,
+    request: &Generate,
+    runtime: &dyn GeneratorRuntime,
+) -> Result<(AssetBytes, v1::Request)> {
+    let prepared = prepare(document, request, runtime)?;
+    Ok((prepared.bytes, prepared.wire))
+}
+
+fn prepare(
+    document: &Document,
+    request: &Generate,
+    runtime: &dyn GeneratorRuntime,
+) -> Result<Prepared> {
     if request.params.len() > MAX_PARAMS {
         return Err(Error::Limit(format!(
             "generated.params: a request gives at most {MAX_PARAMS} parameters"
@@ -187,6 +237,27 @@ pub(crate) fn generate(
     }
     let wire = generated::complete(&description, request.scope.wire(), &given)
         .map_err(|f| generated::failure(&f))?;
+    Ok(Prepared {
+        bytes,
+        embed,
+        description,
+        wire,
+    })
+}
+
+/// `library.generate`.
+pub(crate) fn generate(
+    document: &mut Document,
+    request: Generate,
+    runtime: Option<&dyn GeneratorRuntime>,
+) -> Result<Outcome> {
+    let runtime = runtime.ok_or_else(runtime_needed)?;
+    let Prepared {
+        bytes,
+        embed,
+        description,
+        wire,
+    } = prepare(document, &request, runtime)?;
     let key = generated::key(request.module.hash, &wire)?;
     if let Some(existing) = generated::find(&document.project.library, &key) {
         return Ok(Outcome::Generated {
@@ -236,7 +307,73 @@ pub(crate) fn generate(
         .generate(&bytes, &wire)
         .map_err(|f| generated::failure(&f))?;
     let result = ContentHash(made.result_hash);
+    let (asset, part_values) = expand::part_file(&made.generation)?;
+    let supplied = request.model.as_ref().ok_or_else(|| {
+        Error::Invalid(format!(
+            "generated.model_unevaluated: the part's 3D model, the part file sha256 {asset}, was not evaluated by the host. Nothing was changed."
+        ))
+    })?;
+    expand::part_values_match(part_values, &supplied.values)?;
+    if supplied.definition.asset.hash != asset
+        || supplied.definition.format != ModelFormat::Solidcraft
+    {
+        return Err(Error::Invalid(format!(
+            "generated.model: the host evaluated the part file sha256 {}, but the generator names sha256 {asset}. Nothing was changed.",
+            supplied.definition.asset.hash
+        )));
+    }
+    // The part file as a Model of the project: the newest one packing
+    // those bytes, or a new lineage published with the part.
+    let held = document
+        .project
+        .library
+        .models
+        .iter()
+        .filter(|m| {
+            m.definition.format == ModelFormat::Solidcraft && m.definition.asset.hash == asset
+        })
+        .max_by_key(|m| (m.id, m.revision))
+        .map(|m| ModelRef::new(m.id, m.revision));
+    let new_model = match held {
+        Some(_) => None,
+        None => {
+            let import = ImportModel {
+                name: supplied.name.clone(),
+                assets: supplied
+                    .data
+                    .iter()
+                    .map(|data| PackedAsset {
+                        hash: asset,
+                        media_type: ModelFormat::Solidcraft.media_type().into(),
+                        data: data.clone(),
+                    })
+                    .collect(),
+                definition: Box::new(supplied.definition.clone()),
+                assign: None,
+            };
+            if let Some(data) = &supplied.data
+                && data.hash() != asset
+            {
+                return Err(Error::Invalid(format!(
+                    "generated.model: the part file's bytes hash to sha256 {}, not to sha256 {asset}. Nothing was changed.",
+                    data.hash()
+                )));
+            }
+            let (meta, definition) = model3d::import_model(&import)?;
+            let fresh = model3d::assets_to_pack(&document.project.library, &import)?;
+            Some((meta, definition, fresh))
+        }
+    };
     let project = Arc::make_mut(&mut document.project);
+    let model_ref = match (held, &new_model) {
+        (Some(held), _) => held,
+        (None, _) => ModelRef::new(DefinitionId(project.allocate()?), Revision::FIRST),
+    };
+    let package_model = PackageModel::PartFile(Box::new(PartFileModel {
+        model: model_ref,
+        values: supplied.values.clone(),
+        derived: supplied.derived.clone(),
+    }));
     let lineages: Vec<(DefinitionId, Option<Revision>)> = match &replaced {
         Some((lineages, _)) => lineages.clone(),
         None => {
@@ -290,9 +427,9 @@ pub(crate) fn generate(
             }
         }
     };
-    let ids: Vec<DefinitionId> = lineages.iter().map(|(id, _)| *id).collect();
+    let mut ids: Vec<DefinitionId> = lineages.iter().map(|(id, _)| *id).collect();
     let bases: Vec<Option<Revision>> = lineages.iter().map(|(_, base)| *base).collect();
-    let definitions = generated::expand_at(&made.generation, refs, &expansion)?;
+    let definitions = generated::expand_at(&made.generation, refs, &expansion, package_model)?;
     let base_name = request
         .name
         .clone()
@@ -333,6 +470,25 @@ pub(crate) fn generate(
             _ => "",
         }
     };
+    if let Some((meta, definition, fresh)) = new_model {
+        let project = Arc::make_mut(&mut document.project);
+        if project.library.assets.len() + fresh.len() > MAX_ASSETS {
+            return Err(Error::Limit(format!(
+                "a project packs at most {MAX_ASSETS} assets"
+            )));
+        }
+        project.library.assets.extend(fresh);
+        let drafts_mut = Arc::make_mut(&mut document.drafts);
+        drafts::create(
+            drafts_mut,
+            &project.library,
+            model_ref.id,
+            None,
+            meta,
+            definition,
+        )?;
+        ids.insert(0, model_ref.id);
+    }
     let library = &document.project.library;
     let drafts_mut = Arc::make_mut(&mut document.drafts);
     for ((r, definition), base) in definitions.into_iter().zip(bases) {

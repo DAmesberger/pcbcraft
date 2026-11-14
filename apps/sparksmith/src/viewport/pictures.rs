@@ -1417,3 +1417,109 @@ fn write_mechanical_board_pictures() -> Result<(), Box<dyn std::error::Error>> {
     save(&mut v, "mechanical-board-nut")?;
     Ok(())
 }
+
+/// The demo board with a chip capacitor package the shipped `chip`
+/// generator makes (GP2) through `library.generate_part`, its 3D model the
+/// generator's part file at its values; the demo's placed two-terminal
+/// package takes that model.
+fn generated_capacitor_board() -> Result<Project, Box<dyn std::error::Error>> {
+    use sparksmith_core::library::PackageModel;
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../library");
+    let mut session = sparksmith_automation::Session::new(sparksmith_core::Engine::demo()?);
+    session.set_shipped(sparksmith_io::shipped::ShippedLibrary::at(&root)?);
+    let revision = session.engine().revision();
+    let made = session.dispatch(serde_json::json!({
+        "command": "library.generate_part",
+        "params": {"generator": "chip", "scope": "package", "preset": "capacitor-0805",
+                   "params": {}, "expected_revision": revision},
+    }));
+    if made["ok"] != true {
+        return Err(format!("not made: {made}").into());
+    }
+    let mut project = session.engine().project().clone();
+    project.fabrication = Fabrication::default();
+    let generated = project
+        .library
+        .packages
+        .last()
+        .map(|p| p.definition.clone())
+        .ok_or("no package")?;
+    if !matches!(generated.model, PackageModel::PartFile(_)) {
+        return Err("the generated package has no part file".into());
+    }
+    let target = &mut project.library.packages[0].definition;
+    if target.terminals.len() != 2 {
+        return Err("the demo part is not two-terminal".into());
+    }
+    target.form = generated.form.clone();
+    target.envelope_nm = generated.envelope_nm;
+    target.model = generated.model.clone();
+    Ok(project)
+}
+
+/// GP2: a part a generator module made shows its own model in the 3D view.
+/// The live view's model (the board plan meshed, each part its own design)
+/// holds the generator's part-file bodies at the placement: the
+/// capacitor's ceramic body and both terminations, of the chip's size.
+/// With a GPU, the frame looking down on the part shows the body, not the
+/// board's mask.
+#[test]
+fn a_generated_part_shows_its_model_in_3d() -> Result<(), Box<dyn std::error::Error>> {
+    let project = generated_capacitor_board()?;
+    let model = sparksmith_solidcraft::project::build_flat(
+        &project,
+        &Default::default(),
+        None,
+        sparksmith_solidcraft::project::Flat::Meshed,
+    )?;
+    let size = |g: &sparksmith_solidcraft::scene::Geometry| {
+        [
+            g.max[0] - g.min[0],
+            g.max[1] - g.min[1],
+            g.max[2] - g.min[2],
+        ]
+    };
+    let bodies: Vec<_> = model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::ModelBody)
+        .collect();
+    let leads: Vec<_> = model
+        .geometry
+        .iter()
+        .filter(|g| g.kind == BodyKind::ModelLead)
+        .collect();
+    assert!(!bodies.is_empty(), "no model body in the 3D view");
+    assert_eq!(leads.len(), 2 * bodies.len(), "two terminations a part");
+    // 0805: 2.0 × 1.25 × 1.25 mm, the body between 0.5 mm terminations,
+    // in either orientation on the board.
+    let body = size(bodies[0]);
+    let mut plan = [body[0], body[1]];
+    plan.sort_by(f64::total_cmp);
+    assert!(
+        (plan[0] - 1.0).abs() < 1e-3 && (plan[1] - 1.25).abs() < 1e-3,
+        "{body:?}"
+    );
+    assert!((body[2] - 1.25).abs() < 1e-3, "{body:?}");
+
+    let Some(mut gpu) = Gpu::new() else {
+        if std::env::var_os("SPARKSMITH_REQUIRE_GPU").is_some() {
+            return Err("SPARKSMITH_REQUIRE_GPU is set but no GPU adapter was found".into());
+        }
+        eprintln!("no GPU adapter: skipped");
+        return Ok(());
+    };
+    let mut v = Viewport::detached();
+    v.set_model(crate::model_scene::build(model.geometry, &model.stack)?);
+    v.fit_to(4.0 / 3.0);
+    let chip = centre(&v, BodyKind::ModelBody).ok_or("no body")?;
+    aim(&mut v, chip, 6.0, 0.0, 89.0);
+    let (w, h) = (160, 120);
+    let rgba = gpu.draw(&mut v, w, h, 1.0).ok_or("no picture")?;
+    let at = ((h / 2 * w + w / 2) * 4) as usize;
+    let p = rgba.get(at..at + 4).ok_or("no centre pixel")?;
+    let mask_green = p[1] > p[0] + 10 && p[1] > p[2] + 10;
+    eprintln!("generated chip centre pixel: {p:?}");
+    assert!(!mask_green, "the board shows through the chip: {p:?}");
+    Ok(())
+}

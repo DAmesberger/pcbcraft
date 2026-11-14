@@ -10,7 +10,7 @@ pub(crate) mod model3d;
 pub(crate) mod pinout;
 pub(crate) mod templates;
 
-pub use generated::{Generate, GenerateReport, ModuleSource};
+pub use generated::{Generate, GenerateReport, GeneratedModel, ModuleSource, generator_request};
 pub use instance::InstanceCommand;
 pub(crate) use instance::apply_instance;
 pub use library::{LibraryCommand, parts_to_republish};

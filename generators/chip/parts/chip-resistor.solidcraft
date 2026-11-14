@@ -1,0 +1,545 @@
+{
+  "format": "solidcraft/52",
+  "format_pending": [
+    "3d-wire-point-nodes",
+    "frame-end-caps",
+    "joint-origin-inside",
+    "nested-face-name",
+    "opus-quality",
+    "render-indirect-clamp",
+    "render-quality-controls",
+    "revolve-axis-sketch",
+    "sheet-flange-segments",
+    "sketch-link-construction-point",
+    "two-sided-cut-cap-names"
+  ],
+  "name": "Chip resistor",
+  "units": "mm",
+  "params": [
+    {
+      "name": "length",
+      "expr": "1.6 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "width",
+      "expr": "0.8 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "0.45 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "termination",
+      "expr": "0.3 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "overcoat",
+      "expr": "0.03 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "body_round",
+      "expr": "0.04 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "end_round",
+      "expr": "0.0675 mm",
+      "unit": "mm",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "body",
+      "suppressed": false,
+      "body_names": [
+        "body"
+      ],
+      "param_names": [
+        "d1",
+        "d2",
+        "d3"
+      ],
+      "type": "box",
+      "corner": [
+        "- length / 2 + termination",
+        "- width / 2",
+        "0 mm"
+      ],
+      "length": "length - 2 * termination",
+      "width": "width",
+      "height": "height - overcoat",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "overcoat",
+      "suppressed": false,
+      "body_names": [
+        "overcoat"
+      ],
+      "param_names": [
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "type": "box",
+      "corner": [
+        "- length / 2 + termination",
+        "- width / 2 + (0.04 mm)",
+        "height - overcoat"
+      ],
+      "length": "length - 2 * termination",
+      "width": "width - 2 * (0.04 mm)",
+      "height": "overcoat",
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "termination 1",
+      "suppressed": false,
+      "body_names": [
+        "termination 1"
+      ],
+      "param_names": [
+        "d7",
+        "d8",
+        "d9"
+      ],
+      "type": "box",
+      "corner": [
+        "- length / 2",
+        "- width / 2",
+        "0 mm"
+      ],
+      "length": "termination",
+      "width": "width",
+      "height": "height",
+      "operation": "new_body"
+    },
+    {
+      "id": 4,
+      "name": "termination 2",
+      "suppressed": false,
+      "body_names": [
+        "termination 2"
+      ],
+      "param_names": [
+        "d10",
+        "d11",
+        "d12"
+      ],
+      "type": "box",
+      "corner": [
+        "length / 2 - termination",
+        "- width / 2",
+        "0 mm"
+      ],
+      "length": "termination",
+      "width": "width",
+      "height": "height",
+      "operation": "new_body"
+    },
+    {
+      "id": 5,
+      "name": "body round",
+      "suppressed": false,
+      "param_names": [
+        "d13"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.42000000000000004
+          ]
+        },
+        {
+          "dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.42000000000000004
+          ]
+        },
+        {
+          "dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.42000000000000004
+          ]
+        },
+        {
+          "dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.42000000000000004
+          ]
+        }
+      ],
+      "edge_names": [
+        "F1:-y|F1:-z",
+        "F1:+y|F1:-z",
+        "F1:+y|F1:+z",
+        "F1:+z|F1:-y"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          0.0,
+          -0.4,
+          0.0
+        ],
+        [
+          0.0,
+          0.4,
+          0.0
+        ],
+        [
+          0.0,
+          0.4,
+          0.42000000000000004
+        ],
+        [
+          0.0,
+          -0.4,
+          0.42000000000000004
+        ]
+      ],
+      "radius": "body_round",
+      "body": "body"
+    },
+    {
+      "id": 6,
+      "name": "termination 1 round",
+      "suppressed": false,
+      "param_names": [
+        "d14"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.45
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.45
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.45
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.45
+          ]
+        }
+      ],
+      "edge_names": [
+        "F3:-x|F3:-z",
+        "F3:+y|F3:-x",
+        "F3:+z|F3:-x",
+        "F3:-x|F3:-y"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          -0.8,
+          0.0,
+          0.0
+        ],
+        [
+          -0.8,
+          0.4,
+          0.225
+        ],
+        [
+          -0.8,
+          0.0,
+          0.45
+        ],
+        [
+          -0.8,
+          -0.4,
+          0.225
+        ]
+      ],
+      "radius": "end_round",
+      "body": "termination 1"
+    },
+    {
+      "id": 7,
+      "name": "termination 2 round",
+      "suppressed": false,
+      "param_names": [
+        "d15"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.45
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.45
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.45
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.45
+          ]
+        }
+      ],
+      "edge_names": [
+        "F4:+x|F4:-z",
+        "F4:+x|F4:+y",
+        "F4:+x|F4:+z",
+        "F4:+x|F4:-y"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          0.8,
+          0.0,
+          0.0
+        ],
+        [
+          0.8,
+          0.4,
+          0.225
+        ],
+        [
+          0.8,
+          0.0,
+          0.45
+        ],
+        [
+          0.8,
+          -0.4,
+          0.225
+        ]
+      ],
+      "radius": "end_round",
+      "body": "termination 2"
+    }
+  ],
+  "next_id": 8,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "body": {
+        "name": "alumina96",
+        "color": [
+          229,
+          227,
+          222
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.77
+        }
+      },
+      "overcoat": {
+        "name": "resistor-overcoat",
+        "color": [
+          44,
+          44,
+          46
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.3,
+          "dielectric_ior": 1.55
+        }
+      },
+      "termination 1": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      },
+      "termination 2": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      }
+    }
+  }
+}

@@ -5133,6 +5133,7 @@ dependencies = [
 name = "sparksmith-gen-chip"
 version = "0.1.0"
 dependencies = [
+ "sparksmith-generator-abi",
  "sparksmith-generator-sdk",
 ]
 
@@ -5219,6 +5220,7 @@ dependencies = [
  "solidcraft-engine",
  "solidcraft-viewport",
  "sparksmith-core",
+ "sparksmith-generators",
  "tempfile",
  "thiserror 2.0.21",
  "wasm-bindgen-test",

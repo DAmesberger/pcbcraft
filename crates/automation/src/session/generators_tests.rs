@@ -12,20 +12,37 @@ use std::path::{Path, PathBuf};
 
 type TestResult<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// The repository's built chip module (`cargo xtask generators build`
-/// keeps it equal to modules.lock).
+/// The repository's chip generator bundle (`cargo xtask generators build`
+/// keeps it equal to modules.lock and the crate's part files).
+const BUNDLE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../library/generators/chip");
+/// Its module.
+#[allow(dead_code)]
 const CHIP: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../../library/generators/chip.wasm"
+    "/../../library/generators/chip/chip.wasm"
 );
 
-/// A shipped library in `dir` holding only the chip module.
+/// A shipped library in `dir` holding only the chip generator's bundle.
 fn library(dir: &Path) -> TestResult<PathBuf> {
     let root = dir.join("library");
     std::fs::create_dir_all(root.join("generators"))?;
     std::fs::write(root.join(MARKER), "{\"format\":1}\n")?;
-    std::fs::copy(CHIP, root.join("generators/chip.wasm"))?;
+    copy_dir(Path::new(BUNDLE), &root.join("generators/chip"))?;
     Ok(root)
+}
+
+fn copy_dir(from: &Path, to: &Path) -> TestResult {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let path = entry?.path();
+        let target = to.join(path.file_name().ok_or("no file name")?);
+        if path.is_dir() {
+            copy_dir(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
 
 fn session(root: &Path) -> TestResult<Session> {

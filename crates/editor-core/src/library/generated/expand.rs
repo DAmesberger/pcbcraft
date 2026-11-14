@@ -10,6 +10,7 @@
 //! drawings (silkscreen, assembly, courtyard).
 use crate::diagnostics::{Error, Result};
 use crate::functions::{Direction, TerminalFunctions};
+use crate::ids::ContentHash;
 use crate::ids::{
     BindingRef, DefinitionId, FootprintRef, FunctionId, GraphicId, PackageRef, PackageTerminalId,
     PadId, SymbolRef, TerminalId, UnitId,
@@ -18,6 +19,7 @@ use crate::library::graphics::{
     self, FootprintGraphic, Graphic, HAlign, Item, Justify, Pin, PinDirection, Rotation, ShapeNm,
     TextContent, VAlign,
 };
+use crate::library::package_model::PartValue;
 use crate::library::templates::footprint::COURTYARD_STROKE_MM;
 use crate::library::{
     BindingDefinition, ComponentDefinition, CornerMask, Definition, DrawingLayer,
@@ -74,15 +76,18 @@ fn lookup(map: &BTreeMap<&str, u32>, key: &str, what: &str) -> Result<u32> {
         .ok_or_else(|| refused(format!("{what} \"{key}\" is not declared")))
 }
 
-/// The definitions of `generation` at `refs`, in order: component, symbol,
+/// The definitions of `generation` at `refs`, its package holding `model`
+/// (the generation's part file as a Model revision of the project, at the
+/// generation's values), in order: component, symbol,
 /// package, footprint, binding for a complete part; package and footprint
 /// for a package.
 pub fn definitions(
     generation: &v1::Generation,
     refs: Refs,
+    model: PackageModel,
 ) -> Result<Vec<(DefinitionId, Definition)>> {
     let package_terminals = numbered(generation.package.terminals.iter().map(String::as_str), 1)?;
-    let package = package(generation, &package_terminals)?;
+    let package = package(generation, &package_terminals, model)?;
     let footprint = footprint(generation, refs.package, &package_terminals)?;
     let mut out = Vec::with_capacity(5);
     match (refs.component, &generation.component, &generation.symbol) {
@@ -378,13 +383,70 @@ fn item(graphic: &v1::Graphic) -> Result<Item> {
     })
 }
 
+/// The part file a generation's model names, by its SHA-256, and the
+/// values it gives it; refused when the generation has no model.
+pub fn part_file(generation: &v1::Generation) -> Result<(ContentHash, &v1::Params)> {
+    match &generation.model {
+        Some(v1::Model::PartFile { asset, values }) => {
+            let hash = ContentHash::parse(asset).ok_or_else(|| {
+                refused(format!(
+                    "the generator names its part file \"{asset}\", which is not a SHA-256"
+                ))
+            })?;
+            Ok((hash, values))
+        }
+        None => Err(refused(
+            "the generator made no 3D model; a part needs one".into(),
+        )),
+    }
+}
+
+/// Whether `stored` are the generation's part-file `values`: the same
+/// names, each a length in mm equal to the nanometres, an angle in degrees
+/// equal to the millidegrees, or the count itself.
+pub fn part_values_match(values: &v1::Params, stored: &BTreeMap<String, PartValue>) -> Result<()> {
+    let differs = |name: &str| {
+        refused(format!(
+            "the part file's value \"{name}\" is not the generator's"
+        ))
+    };
+    if values.len() != stored.len() {
+        return Err(refused(
+            "the part file is given other values than the generator's".into(),
+        ));
+    }
+    for (name, value) in values {
+        let (Some(stored), v1::ParamValue::Int(int)) = (stored.get(name), value) else {
+            return Err(differs(name));
+        };
+        let same = match *stored {
+            PartValue::Mm(mm) => Nm::from_mm_f64_rounded(mm).is_ok_and(|n| n.get() == *int),
+            PartValue::Deg(deg) => deg.is_finite() && (deg * 1000.0).round() == *int as f64,
+            PartValue::Count(n) => i64::from(n) == *int,
+            PartValue::Number(_) => false,
+        };
+        if !same {
+            return Err(differs(name));
+        }
+    }
+    Ok(())
+}
+
 fn package(
     generation: &v1::Generation,
     terminals: &BTreeMap<&str, u32>,
+    model: PackageModel,
 ) -> Result<PackageDefinition> {
     let geometry = &generation.package.geometry;
     let [length, width, height] = geometry.envelope_nm;
-    Ok(PackageDefinition {
+    let (_, values) = part_file(generation)?;
+    let PackageModel::PartFile(part) = &model else {
+        return Err(refused(
+            "a generated package's 3D model is its generator's part file".into(),
+        ));
+    };
+    part_values_match(values, &part.values)?;
+    let package = PackageDefinition {
         next_local: local(terminals.len(), 1)?,
         terminals: generation
             .package
@@ -397,19 +459,20 @@ fn package(
                 })
             })
             .collect::<Result<_>>()?,
-        // The generated geometry is data the core holds as an authored
-        // envelope; leads and pin 1 stay in the generation for the 3D
-        // model (slice GP2).
+        // The envelope is the generation's; the model is the part file
+        // the generator names, at its values (slice GP2), resolved to a
+        // Model revision of this project by the caller.
         form: PackageForm::Generic,
         envelope_nm: [nm(length)?, nm(width)?, nm(height)?],
-        model: PackageModel::default(),
+        model,
         placement: ModelPlacement {
             translation_nm: [Nm::ZERO, Nm::ZERO, nm(geometry.seating_nm)?],
             rotation_mdeg: [Angle::ZERO; 3],
         },
         mechanical: None,
         datums: Vec::new(),
-    })
+    };
+    Ok(package)
 }
 
 fn pad_shape(shape: &v1::PadShape) -> Result<PadShape> {

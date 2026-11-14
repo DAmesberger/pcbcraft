@@ -4,8 +4,8 @@
 //! rules then apply as to any authored part (slice GP1).
 use sparksmith_generator_abi::Failure;
 use sparksmith_generator_abi::v1::{
-    Description, Footprint, Generation, Graphic, HoleShape, PadShape, ParamType, Point, Primitive,
-    Scope, Symbol, limits,
+    Description, Footprint, Generation, Graphic, HoleShape, Model, PadShape, ParamType, ParamValue,
+    Point, Primitive, Scope, Symbol, limits,
 };
 use std::collections::BTreeSet;
 
@@ -249,6 +249,71 @@ fn footprint(footprint: &Footprint, package_terminals: &BTreeSet<&str>) -> Resul
     graphics("assembly graphics", &footprint.assembly)
 }
 
+/// Longest part-file parameter name (as the document bounds it).
+const PART_PARAMETER: usize = 64;
+
+/// The 3D model: required, a part file named by its SHA-256 (64 lower-case
+/// hex digits), with at most [`limits::MODEL_VALUES`] whole-number values
+/// within the 1 m bound under part-file parameter names. Whether the file
+/// is in the generator's bundle, and how it evaluates, the host checks
+/// when it makes the part.
+fn model(g: &Generation) -> Result<(), Failure> {
+    let refuse = |message: String| {
+        Failure::one(
+            "generator.invalid_model",
+            format!("{message} Nothing was changed."),
+        )
+    };
+    let Some(Model::PartFile { asset, values }) = &g.model else {
+        return Err(refuse(
+            "The generator made no 3D model; a part needs one.".into(),
+        ));
+    };
+    let hex = asset.len() == 64
+        && asset
+            .bytes()
+            .all(|c| c.is_ascii_digit() || (b'a'..=b'f').contains(&c));
+    if !hex {
+        return Err(refuse(format!(
+            "The generator names its 3D model's part file \"{asset}\", which is not a SHA-256 (64 lower-case hex digits)."
+        )));
+    }
+    if values.len() > limits::MODEL_VALUES {
+        return Err(refuse(format!(
+            "The generator gives its part file {} values, more than the {} allowed.",
+            values.len(),
+            limits::MODEL_VALUES
+        )));
+    }
+    for (name, value) in values {
+        let mut chars = name.chars();
+        let named = name.len() <= PART_PARAMETER
+            && chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+        if !named {
+            return Err(refuse(format!(
+                "The generator gives a value to \"{name}\", which cannot name a part-file parameter (1 to {PART_PARAMETER} ASCII letters, digits and underscores, not starting with a digit)."
+            )));
+        }
+        match value {
+            ParamValue::Int(v) if v.checked_abs().is_some_and(|a| a <= limits::COORDINATE_NM) => {}
+            ParamValue::Int(v) => {
+                return Err(refuse(format!(
+                    "The generator sets the part file's \"{name}\" to {v}, beyond the 1 m bound."
+                )));
+            }
+            _ => {
+                return Err(refuse(format!(
+                    "The generator sets the part file's \"{name}\" to something other than a whole number."
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Check a generation for `scope`.
 pub fn generation(g: &Generation, scope: Scope) -> Result<(), Failure> {
     count(
@@ -282,6 +347,7 @@ pub fn generation(g: &Generation, scope: Scope) -> Result<(), Failure> {
         lead.contact.iter().try_for_each(|v| coordinate(*v))?;
     }
     footprint(&g.footprint, &package_terminals)?;
+    model(g)?;
     for note in &g.notes {
         text("note", note)?;
     }
@@ -360,6 +426,11 @@ pub fn description(d: &Description) -> Result<(), Failure> {
         return Err(bad("The generator offers no scope.".into()));
     }
     key("generator id", &d.id_hint).map_err(|f| bad(f.to_string()))?;
+    if d.version == 0 {
+        return Err(bad(
+            "The generator gives version 0; versions count from 1.".into()
+        ));
+    }
     let keys = unique("parameter", d.params.iter().map(|p| p.key.as_str()))
         .map_err(|f| bad(f.to_string()))?;
     for param in &d.params {

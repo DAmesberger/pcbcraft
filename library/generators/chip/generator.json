@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "module": {
+    "file": "chip.wasm",
+    "sha256": "e8ee159a07644986c5e8107a7c95baef4d254e05a11a965432f096a6df7695b1"
+  },
+  "name": "chip",
+  "parts": [
+    {
+      "file": "parts/chip-capacitor.solidcraft",
+      "licence": "MIT OR Apache-2.0",
+      "provenance": "Original work: the in-code chip builder's construction (crates/solidcraft-integration/src/models/chip.rs) of a 0603 chip, saved through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; the chip generator gives every parameter its value. Estimated edge rounds and overcoat, no vendor drawing or EDA/CAD library data copied.",
+      "sha256": "cfeaa0b8d6f875510cbb9e91ab594474baff6a2468bcacef849de7d7db5094e6",
+      "title": "Chip capacitor body"
+    },
+    {
+      "file": "parts/chip-ferrite.solidcraft",
+      "licence": "MIT OR Apache-2.0",
+      "provenance": "Original work: the in-code chip builder's construction (crates/solidcraft-integration/src/models/chip.rs) of a 0603 chip, saved through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; the chip generator gives every parameter its value. Estimated edge rounds and overcoat, no vendor drawing or EDA/CAD library data copied.",
+      "sha256": "785f6e80df992b3b8f99757fd980f1d88531e219d6988a00611bd669426e9397",
+      "title": "Chip inductor or ferrite bead body"
+    },
+    {
+      "file": "parts/chip-led.solidcraft",
+      "licence": "MIT OR Apache-2.0",
+      "provenance": "Original work: the in-code chip builder's construction (crates/solidcraft-integration/src/models/chip.rs) of a 0603 chip, saved through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; the chip generator gives every parameter its value. Estimated edge rounds and overcoat, no vendor drawing or EDA/CAD library data copied.",
+      "sha256": "6319658b704f34925eff39ccea5f5ebe76c5f10c385bccbcd10f7cf5399c7bec",
+      "title": "Chip LED body"
+    },
+    {
+      "file": "parts/chip-resistor.solidcraft",
+      "licence": "MIT OR Apache-2.0",
+      "provenance": "Original work: the in-code chip builder's construction (crates/solidcraft-integration/src/models/chip.rs) of a 0603 chip, saved through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; the chip generator gives every parameter its value. Estimated edge rounds and overcoat, no vendor drawing or EDA/CAD library data copied.",
+      "sha256": "0909b763f3bc0f9d2e53117bc86f84d3e2c63a156eeca3c188c59a309e8b6cf2",
+      "title": "Chip resistor body"
+    }
+  ]
+}

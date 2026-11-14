@@ -1,8 +1,8 @@
 # Generator modules
 
-A generator is a pure function in a WebAssembly module: typed parameters in, a complete part body out (symbol, package and footprint; the 3D model description arrives with slice GP2). Each directory here is one generator crate that builds to `wasm32-unknown-unknown`. The modules are loaded as data, never linked into the app; the host that runs them is `crates/generators` (`sparksmith-generators`).
+A generator is a pure function in a WebAssembly module: typed parameters in, a complete part body out (symbol, package, footprint, and the 3D model as one of its bundle's part files with values). Each directory here is one generator crate that builds to `wasm32-unknown-unknown`. The modules are loaded as data, never linked into the app; the host that runs them is `crates/generators` (`sparksmith-generators`).
 
-Status: slices GP0 and GP1. A part can be made from a module through the command engine (`library.generate`, `library.generate_part`); the project embeds the module and checks the part against it on every open ([generator plugins](../docs/generator-plugins.md)). The catalog, the gallery and the part editor do not use modules yet (GP5, GP7); the in-code templates stay until GP5. ABI 1 is open to change until the first release.
+Status: slices GP0, GP1 and GP2. A part can be made from a module through the command engine (`library.generate`, `library.generate_part`); the project embeds the module and checks the part against it on every open; the module names one of its bundle's `.solidcraft` part files and its values as the 3D model, which the host evaluates through Solidcraft like any part file ([generator plugins](../docs/generator-plugins.md)). The catalog, the gallery and the part editor do not use modules yet (GP5, GP7); the in-code templates stay until GP5. ABI 1 is open to change until the first release.
 
 ## Layout
 
@@ -12,9 +12,9 @@ Status: slices GP0 and GP1. A part can be made from a module through the command
 | `crates/generator-sdk` | `sparksmith-generator-sdk`: what a generator is written with: `Generator` and `export_generator!`, the module's allocator and panic handler, typed parameters, symbol drawing, footprint drawing (courtyard, silkscreen broken round the pads, assembly), and the golden-test harness. |
 | `crates/generators` | `sparksmith-generators`: the wasmi host, with `Limits` and the output checks. |
 | `crates/generators-probe` | A test module: the host itself built for wasm32, so the native tests can show the wasm32 build gives the same results. Never shipped. |
-| `generators/<name>/` | One generator: `Cargo.toml` (cdylib), `src/`, `presets.json`, `golden.json`. |
+| `generators/<name>/` | One generator: `Cargo.toml` (cdylib), `build.rs` (the part files' SHA-256 as constants), `src/`, `presets.json`, `golden.json`, `parts/` (its part files, each `<stem>.solidcraft` with a `<stem>.part.json` sidecar in the shipped part files' format: title, summary, licence, provenance). |
 | `generators/modules.lock` | Each module's SHA-256 per build host, committed. |
-| `library/generators/<name>.wasm` | The shipped module, committed: a build the lock records (`build --update-lock` writes it, `check` verifies it). |
+| `library/generators/<name>/` | The shipped **bundle**, committed: `generator.json` (the manifest), `<name>.wasm` (a build the lock records) and `parts/*.solidcraft`. `build --update-lock` writes it, `check` verifies it. |
 
 `cargo xtask layers` keeps it apart: a generator crate depends on the SDK and the ABI only, only generator crates depend on the SDK, nothing depends on a generator crate or on the probe, and the ABI crate depends on no workspace crate (so `sparksmith-core` can use its types and trait without an interpreter).
 
@@ -33,11 +33,37 @@ The host checks a module before anything runs (size, a valid core module of the 
 
 **Canonical JSON.** Object keys sorted by their UTF-8 bytes, each once; no whitespace; integers only (`i64`/`u64`, shortest form, so no floats, exponents or `-0`); strings as `serde_json` escapes them, otherwise literal UTF-8, and in Unicode NFC (checked by the host); absent optional fields omitted, never `null`. The decoder accepts only bytes the encoder would write. Lengths are integer nanometres and angles integer millidegrees.
 
+**Description.** What the module offers (parameters, presets, rules, search phrases), its lineage name `id_hint`, and its `version`: a whole number from 1, raised whenever a release changes what the generator makes; a higher `version` of the same `id_hint` is newer. The host refuses version 0.
+
 **Request.** `{abi: 1, scope: component | package, params: {key: value}}`. The parameters are complete: the host fills every default from the description first (`sparksmith_generators::params::complete`), so the part key never depends on a module's defaults. Parameters a project setting decides (the least chip land gap, the resistor symbol style) are declared as `context` parameters and frozen into the request.
 
 **Identity.** Module hash: SHA-256 of the module bytes. Result hash: SHA-256 of the canonical `Generation` bytes (after the status byte). Params hash: SHA-256 of the canonical `Request` (ABI, scope, complete parameters; `sparksmith_core::library::generated::key`). The part key is the module hash with the params hash ([generator plugins](../docs/generator-plugins.md)).
 
-**Refusals** are `{code, field?, message}` with a sentence a person can act on: `param.unknown`, `param.missing`, `param.type`, `param.out_of_range`, `param.inconsistent` and `param.scope` for parameters; `generator.too_large`, `generator.invalid_module`, `generator.unsupported_feature`, `generator.has_imports`, `generator.missing_export`, `generator.abi_mismatch`, `generator.out_of_fuel`, `generator.memory_limit`, `generator.trapped`, `generator.output_too_large`, `generator.request_refused` and `generator.invalid_output` from the host. Every host refusal ends in "It was not run." or "Nothing was changed."
+**Refusals** are `{code, field?, message}` with a sentence a person can act on: `param.unknown`, `param.missing`, `param.type`, `param.out_of_range`, `param.inconsistent` and `param.scope` for parameters; `generator.too_large`, `generator.invalid_module`, `generator.unsupported_feature`, `generator.has_imports`, `generator.missing_export`, `generator.abi_mismatch`, `generator.out_of_fuel`, `generator.memory_limit`, `generator.trapped`, `generator.output_too_large`, `generator.request_refused`, `generator.invalid_output`, `generator.invalid_model` and `generator.invalid_description` from the host. Every host refusal ends in "It was not run." or "Nothing was changed."
+
+## The 3D model and the bundle (GP2)
+
+A part never exists without its 3D model, so every generation carries `model`, and the host refuses one without it (`generator.invalid_model`). The model is one of the generator's own part files with values:
+
+```json
+"model":{"part_file":{"asset":"<sha256 of the part file>","values":{"body_round":40000,"end_round":67500,"height":450000,"length":1600000,"overcoat":30000,"termination":300000,"width":800000}}}
+```
+
+- **The part file** is an ordinary parametric `.solidcraft` design that follows the part-file conventions ([part templates §11](../docs/part-templates.md)); it ships in the generator's bundle and the module names it by its SHA-256 (the crate's `build.rs` writes the hashes of `parts/` as constants). The module never runs Solidcraft; it decides which file and which values.
+- **Values** are integers: nanometres for a length parameter, millidegrees for an angle, the count for a unitless one (the part file's parameter decides). The host refuses a value that is not a whole number, one beyond 1 m, or a name that cannot name a part parameter; at most 256 values.
+- **The host** (`library.generate_part`) finds the file in the bundle (or, for a module the project embeds, in the project), evaluates it at the values through the part-file path (`sparksmith_solidcraft::models::part_file`), and refuses a blocking finding, bounds more than 10 µm off the generation's envelope, or a lead contact under no body of a lead material. `library.generate` then stores the file as a Model of format `solidcraft` (one per file, shared by every part that uses it) and the package as `PackageModel::PartFile`, so the 3D view, the exact export, markings and the load check treat it like any part file.
+- **The bundle** (`library/generators/<name>/`) is the manifest `generator.json` (`format`, `name`, the module and each part file by path and SHA-256, with each part file's title, licence and provenance), the module and `parts/`. Its identity is the SHA-256 of the manifest's bytes (`library.generators` reports it as `bundle`), which names every other file by hash. `sparksmith_io::generator_bundle` reads a bundle and refuses a missing or changed file by name.
+
+The chip generator ships four part files (resistor, capacitor, ferrite or inductor, LED), saved from the in-code chip builder's construction (`cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`); evaluated at the module's values they equal the builder to 0 mm in bounds and volume for resistors and capacitors 0402–1206, a ferrite bead 0603 and an LED 0603 (`models::chip_part_tests`).
+
+## ABI 1 changes
+
+ABI 1 is open to change until the first release; each change is listed here, and module hashes and golden hashes are updated deliberately with it (`build --update-lock`).
+
+| Date | Slice | Change | Effect |
+| --- | --- | --- | --- |
+| 11 November 2026 | GP0 | First version. | — |
+| 14 November 2026 | GP2 | `Description.version` (required, from 1). `Generation.model` required; `Model::PartFile { asset, values }` defined (a bundled part file by SHA-256, integer values). Modules ship as bundles (`library/generators/<name>/`). New refusal codes `generator.invalid_model`, and `generator.invalid_description` for version 0. | A module built before GP2 is refused (no version, no model). The chip module's hash and every golden result hash changed; the lock was rewritten on macOS aarch64, which dropped the Linux x86_64 hash (the CI runner); record it again there. |
 
 ## Build and check
 
@@ -68,7 +94,7 @@ Measured with `cargo xtask generators measure` on an Apple M-series Mac, macOS, 
 
 | Module | Bytes | Features used |
 | --- | --- | --- |
-| chip | 281 021 (274 KiB) | sign-extension, bulk-memory, reference-types, floats |
+| chip | 281 021 (274 KiB); 283 970 naming its part files (GP2, 14 November 2026) | sign-extension, bulk-memory, reference-types, floats |
 | probe (host for wasm32, test only) | 1 772 010 | — |
 
 The feature list is measured: each allowed feature is switched off in turn and the module validated without it. Mutable globals, multi-value and saturating float-to-int are allowed but unused; SIMD, relaxed SIMD, threads, memory64, multi-memory, tail calls, extended constants, custom page sizes, wide arithmetic and GC are refused.

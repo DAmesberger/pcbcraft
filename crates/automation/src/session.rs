@@ -1696,6 +1696,7 @@ pub fn schemas() -> Value {
 mod assembly_link;
 pub mod discovery;
 mod firmware;
+mod generated_models;
 mod generators;
 mod interface;
 mod marking;
@@ -1720,6 +1721,8 @@ mod fabrication_tests;
 mod firmware_tests;
 #[cfg(test)]
 mod folder_tests;
+#[cfg(test)]
+mod generated_model_tests;
 #[cfg(test)]
 mod generators_tests;
 #[cfg(test)]

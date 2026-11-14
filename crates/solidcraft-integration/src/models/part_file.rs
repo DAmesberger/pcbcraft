@@ -302,9 +302,11 @@ pub fn material_of(appearance: &str) -> Option<MaterialId> {
 
 /// A part-file body's role, from its material: a body plated or made in a
 /// lead finish (gold, tin, solder, nickel, copper alloys, brass) is a
-/// termination, drawn and listed as a lead; every other body (mould,
-/// ceramic, board, a nickel-silver or aluminium can) is the body. Display
-/// only: terminals and pads stay the package's.
+/// termination, drawn and listed as a lead; clear or diffuse silicone is a
+/// lens and a resistor overcoat `other`, as the generated chip models give
+/// them; every other body (mould, ceramic, board, a nickel-silver or
+/// aluminium can) is the body. Display only: terminals and pads stay the
+/// package's.
 pub fn role_of(material: Option<MaterialId>) -> BodyRole {
     use MaterialId as M;
     match material {
@@ -318,6 +320,10 @@ pub fn role_of(material: Option<MaterialId>) -> BodyRole {
             | M::PhosphorBronze
             | M::Brass,
         ) => BodyRole::Termination,
+        // A clear or diffuse encapsulant over an emitter, and a resistor's
+        // overcoat on its body, as the generated models give them.
+        Some(M::SiliconeClear | M::SiliconeDiffuse) => BodyRole::Lens,
+        Some(M::ResistorOvercoat) => BodyRole::Other,
         _ => BodyRole::Body,
     }
 }
