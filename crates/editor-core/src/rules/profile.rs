@@ -20,7 +20,10 @@
 //! option (`chosen`; each option's `default` until one is chosen), and its
 //! resolved rules are those of its choices: a board pins the profile with
 //! its choices, and changing a choice is a profile change
-//! (`rules.set_fab_options`).
+//! (`rules.set_fab_options`). The defaults are data in the profile file.
+//! A choice may order outer copper ([`FabChoice::outer_copper_um`], a
+//! copper weight): the board's outer foils follow it, and a stackup edit
+//! that departs from it is refused.
 //!
 //! ```json
 //! {"format": 1, "fab_profile": {
@@ -149,7 +152,7 @@ pub struct RuleCase {
 
 /// A manufacturing option a profile offers: a choice the fabricator
 /// publishes different limits for.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FabOption {
     /// Stable id that rule cases and a board's choices name.
@@ -166,12 +169,18 @@ pub struct FabOption {
 }
 
 /// One choice of a [`FabOption`].
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct FabChoice {
     pub id: String,
     /// Shown name ("Black or white").
     pub name: String,
+    /// The finished outer copper foil this choice orders, in µm: the
+    /// board's top and bottom foils follow it. Either every choice of an
+    /// option sets it or none does, and at most one option of a profile
+    /// sets it (its copper weight).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outer_copper_um: Option<f64>,
 }
 
 /// Options a profile offers, and choices one option offers.
@@ -345,6 +354,24 @@ impl RuleProfile {
         Ok(next)
     }
 
+    /// The outer copper foil (µm) the board's choices order, when an option
+    /// of the profile sets it ([`FabChoice::outer_copper_um`]).
+    pub fn outer_copper_um(&self) -> Option<f64> {
+        self.options.iter().find_map(|o| {
+            self.chosen
+                .get(&o.id)
+                .and_then(|c| o.choice(c))
+                .and_then(|c| c.outer_copper_um)
+        })
+    }
+
+    /// The option whose choices set the outer copper foil, if any.
+    pub fn copper_option(&self) -> Option<&FabOption> {
+        self.options
+            .iter()
+            .find(|o| o.choices.iter().any(|c| c.outer_copper_um.is_some()))
+    }
+
     /// The shown name of the choice `option` takes ("" when the profile
     /// offers no such option).
     pub fn choice_name(&self, option: &str) -> &str {
@@ -396,12 +423,31 @@ impl RuleProfile {
                     return bad(format!("{}'s choices need distinct ids and names", o.name));
                 }
             }
+            let copper: Vec<f64> = o.choices.iter().filter_map(|c| c.outer_copper_um).collect();
+            if !copper.is_empty() && copper.len() != o.choices.len() {
+                return bad(format!(
+                    "either every choice of {} sets the outer copper or none does",
+                    o.name
+                ));
+            }
+            // The stackup's own bounds apply when the board takes it.
+            if copper.iter().any(|um| !(um.is_finite() && *um > 0.0)) {
+                return bad(format!("{}'s outer copper must be above 0 µm", o.name));
+            }
             if o.choice(&o.default).is_none() {
                 return bad(format!(
                     "{}'s default {} is not a choice",
                     o.name, o.default
                 ));
             }
+        }
+        let copper_options = self
+            .options
+            .iter()
+            .filter(|o| o.choices.iter().any(|c| c.outer_copper_um.is_some()))
+            .count();
+        if copper_options > 1 {
+            return bad("at most one option sets the outer copper".into());
         }
         if self.chosen.len() != self.options.len() || self.chosen.iter().any(|(o, c)| !offers(o, c))
         {

@@ -220,9 +220,9 @@ fn a_board_without_a_profile_asks_for_one() -> TestResult {
         "{shown:?}"
     );
     assert!(click(&mut editor, &engine, &ctx, "Choose a profile…")?.is_none());
-    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer 1 oz")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer")?.is_none());
     assert_eq!(editor.subject(), Subject::Review);
-    let switch = click(&mut editor, &engine, &ctx, "Switch to JLCPCB 2-layer 1 oz")?
+    let switch = click(&mut editor, &engine, &ctx, "Switch to JLCPCB 2-layer")?
         .ok_or("Switch did nothing")?;
     engine.apply(engine.revision(), switch)?;
     assert_eq!(
@@ -399,7 +399,7 @@ fn a_fab_option_is_previewed_then_one_undo_step() -> TestResult {
     assert!(
         shown
             .iter()
-            .any(|t| t.starts_with("JLCPCB values: Absolute minimum · 5 rules change")),
+            .any(|t| t.starts_with("JLCPCB values: Absolute minimum · 6 rules change")),
         "{shown:?}"
     );
     assert!(
@@ -591,6 +591,9 @@ fn impact_text_counts_changes_and_issues() -> TestResult {
         dropped_overrides: vec![RuleKey::MaskWebMin],
         new_issues: vec!["Clearance R1 ↔ R2".into()],
         resolved_issues: Vec::new(),
+        kept_choices: Vec::new(),
+        reset_choices: Vec::new(),
+        outer_copper_um: None,
         refusal: None,
     };
     let summary = impact_summary("Fine 4/4", &impact);
@@ -610,6 +613,34 @@ fn impact_text_counts_changes_and_issues() -> TestResult {
         "{:?}",
         groups[0].lines
     );
+    // A switch's review names the stackup change and the choices kept
+    // and set to the new profile's defaults.
+    let note = |label: &str| rules::ChoiceNote {
+        option: String::new(),
+        choice: String::new(),
+        label: label.into(),
+    };
+    let switch = ProfileImpact {
+        kept_choices: vec![note("Outer copper weight: 2 oz (70 µm)")],
+        reset_choices: vec![note("Solder mask colour: Green")],
+        outer_copper_um: Some((35.0, 70.0)),
+        ..impact
+    };
+    let groups = impact_groups(&switch);
+    let titles: Vec<_> = groups.iter().map(|g| g.title.as_str()).collect();
+    assert_eq!(
+        titles,
+        [
+            "Rules that change",
+            "Stackup",
+            "Choices kept",
+            "Choices set to the profile's defaults",
+            "Overrides dropped",
+            "New issues"
+        ]
+    );
+    assert_eq!(groups[1].lines, ["Top and bottom copper: 35 µm → 70 µm"]);
+    assert_eq!(groups[2].lines, ["Outer copper weight: 2 oz (70 µm)"]);
     Ok(())
 }
 
@@ -710,7 +741,7 @@ fn the_via_tools_start_tented_as_the_profile_says() -> TestResult {
 }
 
 /// Run 4, finding 1: a new project asks for its fab profile with the
-/// built-in JLCPCB 2-layer 1 oz preselected (the 4-layer one beside it);
+/// built-in JLCPCB 2-layer preselected (the 4-layer one beside it);
 /// Use profile sets it as one undo step and closes the panel. Edit shape
 /// then starts, and the Route card shows the profile's via size without
 /// an error.
@@ -736,19 +767,16 @@ fn a_new_project_asks_for_a_profile_with_jlcpcb_preselected() -> TestResult {
     editor.ask_for_profile();
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     let shown = texts(&output);
-    for text in ["Fab profile", "JLCPCB 2-layer 1 oz", "Use profile"] {
+    for text in ["Fab profile", "JLCPCB 2-layer", "Use profile"] {
         assert!(shown.iter().any(|t| t == text), "{text}: {shown:?}");
     }
     // The picker lists both built-ins.
-    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer 1 oz")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer")?.is_none());
     let (output, _) = frame(&mut editor, &engine, &ctx, vec![]);
     let shown = texts(&output);
-    assert!(
-        shown.iter().any(|t| t == "JLCPCB 4-layer 1 oz"),
-        "{shown:?}"
-    );
+    assert!(shown.iter().any(|t| t == "JLCPCB 4-layer"), "{shown:?}");
     // Clicking the choice again closes its list.
-    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer 1 oz")?.is_none());
+    assert!(click(&mut editor, &engine, &ctx, "JLCPCB 2-layer")?.is_none());
     let use_it =
         click(&mut editor, &engine, &ctx, "Use profile")?.ok_or("Use profile did nothing")?;
     assert_eq!(marked(&ctx), Some(Origin::Dialog(choose_id())));

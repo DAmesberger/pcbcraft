@@ -724,16 +724,45 @@ fn fab_options_choose_the_published_limits_and_default_to_the_base_values() -> R
     use CopperObject::{PthHole, Track};
     let p = fixtures::jlcpcb_example()?;
     let ids: Vec<_> = p.options().iter().map(|o| o.id.as_str()).collect();
-    assert_eq!(ids, ["limits", "mask_colour", "drill"]);
-    assert_eq!(p.rules(), jlcpcb_without_options()?.rules());
+    assert_eq!(ids, ["limits", "copper_weight", "mask_colour", "drill"]);
+    // At the defaults the rules are the base values, except the smallest
+    // drill: JLCPCB's preferred 0.2 mm via hole is the recommended value,
+    // its 0.15 mm the absolute minimum.
+    let mut base = jlcpcb_without_options()?.rules().clone();
+    assert_eq!(base.holes.drill_min, 0.15);
+    base.holes.drill_min = 0.2;
+    assert_eq!(p.rules(), &base);
     assert_eq!(
         p.chosen(),
         &choices(&[
+            ("copper_weight", "1oz"),
             ("drill", "standard"),
             ("limits", "recommended"),
             ("mask_colour", "green")
         ])
     );
+    assert_eq!(p.outer_copper_um(), Some(35.0));
+    let heavy = p.with_choices(&choices(&[("copper_weight", "2oz")]))?;
+    assert_eq!(heavy.outer_copper_um(), Some(70.0));
+    let r = heavy.rules();
+    assert_eq!(r.copper.track_width_min, 0.16);
+    assert_eq!(r.copper.clearance.get(Track, CopperObject::Track), 0.16);
+    assert_eq!(r.copper.clearance.get(Track, CopperObject::Pad), 0.16);
+    assert_eq!(
+        r.copper.clearance.get(CopperObject::Pad, CopperObject::Pad),
+        0.16
+    );
+    assert_eq!(r.holes.pth_annular_ring_min, 0.254);
+    assert_eq!(r.mask.web_min, 0.2);
+    // 2 oz takes its own ring and mask bridge under either value set and
+    // either mask colour.
+    let heavy_min = heavy.with_choices(&choices(&[
+        ("limits", "minimum"),
+        ("mask_colour", "black_white"),
+    ]))?;
+    assert_eq!(heavy_min.rules().holes.pth_annular_ring_min, 0.254);
+    assert_eq!(heavy_min.rules().mask.web_min, 0.2);
+    assert_eq!(heavy_min.rules().holes.drill_min, 0.15);
     let ring_and_pth = |p: &RuleProfile| {
         let r = p.rules();
         (
@@ -756,7 +785,8 @@ fn fab_options_choose_the_published_limits_and_default_to_the_base_values() -> R
     let black = p.with_choices(&choices(&[("mask_colour", "black_white")]))?;
     assert_eq!(black.rules().mask.web_min, 0.13);
     let fine = p.with_choices(&choices(&[("drill", "microvia")]))?;
-    assert_eq!(fine.rules().holes.drill_min, 0.1);
+    assert_eq!(fine.rules().holes.drill_min, 0.1, "ordered microvias win");
+    assert_eq!(min.rules().holes.drill_min, 0.15);
     assert_eq!(min.choice_name("limits"), "Absolute minimum");
     assert!(min.same_but_choices(&p));
     assert!(!min.same_but_choices(&fixtures::prototype()?));
@@ -813,6 +843,26 @@ fn fab_options_and_cases_are_checked() -> Result<()> {
             })?,
             "does not offer",
         ),
+        (
+            edit(&|p| {
+                if let Some(c) = p["options"][1]["choices"][1].as_object_mut() {
+                    c.remove("outer_copper_um");
+                }
+            })?,
+            "sets the outer copper or none does",
+        ),
+        (
+            edit(&|p| p["options"][2]["choices"][0]["outer_copper_um"] = 70.0.into())?,
+            "or none does",
+        ),
+        (
+            edit(&|p| {
+                for c in 0..2 {
+                    p["options"][2]["choices"][c]["outer_copper_um"] = 70.0.into();
+                }
+            })?,
+            "most one option sets the outer copper",
+        ),
     ];
     for (text, why) in cases {
         let refused = fixtures::parse(&text).map_err(|e| e.to_string());
@@ -835,7 +885,7 @@ fn fab_options_and_cases_are_checked() -> Result<()> {
             })
             .collect();
     }
-    assert_eq!(all.len(), 8);
+    assert_eq!(all.len(), 16);
     for picked in &all {
         p.with_choices(picked)?;
     }
@@ -879,9 +929,12 @@ fn the_engine_previews_and_applies_fab_options() -> Result<()> {
             "clearance_pad_pth_hole",
             "clearance_track_pth_hole",
             "clearance_via_pth_hole",
+            "drill_min",
             "pth_annular_ring_min"
         ]
     );
+    assert_eq!(impact.outer_copper_um, None, "the copper weight stays");
+    assert!(impact.kept_choices.is_empty() && impact.reset_choices.is_empty());
     assert_eq!(engine.revision(), rev, "a preview changes nothing");
     let refused = engine.apply(
         rev,
@@ -908,7 +961,7 @@ fn the_engine_previews_and_applies_fab_options() -> Result<()> {
         summary.chosen.get("limits").map(String::as_str),
         Some("minimum")
     );
-    assert_eq!(summary.options.len(), 3);
+    assert_eq!(summary.options.len(), 4);
     engine.undo()?;
     assert_eq!(
         engine
@@ -919,5 +972,138 @@ fn the_engine_previews_and_applies_fab_options() -> Result<()> {
             .pth_annular_ring_min,
         0.25
     );
+    Ok(())
+}
+
+/// The copper weight sets the stackup's outer foils in the same undo
+/// step; a stackup edit cannot depart from it; a profile switch carries
+/// the matching choices over and its preview says what was kept, what
+/// reset and how the copper changes.
+#[test]
+fn the_copper_weight_and_the_stackup_stay_together() -> Result<()> {
+    use crate::layout::LayoutCommand;
+    use crate::{Engine, Operation, Query, QueryResult};
+    let mut engine = Engine::demo()?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(set_profile_cmd(fixtures::jlcpcb_example()?, false)),
+    )?;
+    let outer = |e: &Engine| e.project().stackup.outer_copper_um();
+    assert_eq!(outer(&engine), Some((35.0, 35.0)));
+    let heavy = choices(&[("copper_weight", "2oz")]);
+    let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewOptions {
+        options: heavy.clone(),
+    })?
+    else {
+        return Err(Error::Invalid("not an impact".into()));
+    };
+    assert_eq!(impact.refusal, None);
+    assert_eq!(impact.outer_copper_um, Some((35.0, 70.0)));
+    assert!(
+        impact
+            .changes
+            .iter()
+            .any(|c| c.key == RuleKey::TrackWidthMin)
+    );
+    let inner_before = engine.project().stackup.copper.len();
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::SetOptions { options: heavy }),
+    )?;
+    assert_eq!(outer(&engine), Some((70.0, 70.0)));
+    assert_eq!(engine.project().stackup.copper.len(), inner_before);
+    assert_eq!(engine.project().rules.effective().mask.web_min, 0.2);
+
+    // The stackup cannot leave the copper weight.
+    let rev = engine.revision();
+    let thin = engine.project().stackup.with_outer_copper(35.0)?;
+    let refused = engine
+        .apply(rev, Operation::Layout(LayoutCommand::SetStackup(thin)))
+        .map_err(|e| e.to_string());
+    assert!(
+        refused.as_ref().is_err_and(
+            |e| e.contains("outer copper weight is 2 oz (70 µm)") && e.contains("stay 70 µm")
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(engine.revision(), rev, "a refusal changes nothing");
+    // Edits that keep the outer foils go through.
+    let mut thicker_core = engine.project().stackup.clone();
+    if let Some(d) = thicker_core.dielectrics.first_mut() {
+        d.thickness_mm += 0.1;
+    }
+    engine.apply(
+        rev,
+        Operation::Layout(LayoutCommand::SetStackup(thicker_core)),
+    )?;
+
+    // Switching to a profile that offers the same option keeps 2 oz; one
+    // without it keeps the foils as they are.
+    // Its mask colour choices differ: "dark" for "black_white".
+    let four = fixtures::parse(
+        &include_str!("../../../../library/profiles/jlcpcb-4-layer-1oz.json")
+            .replace("\"black_white\"", "\"dark\""),
+    )?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::SetOptions {
+            options: choices(&[("mask_colour", "black_white"), ("limits", "minimum")]),
+        }),
+    )?;
+    let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewProfile {
+        profile: Box::new(four.clone()),
+        keep_overrides: false,
+    })?
+    else {
+        return Err(Error::Invalid("not an impact".into()));
+    };
+    let ids = |notes: &[ChoiceNote]| -> Vec<String> {
+        notes
+            .iter()
+            .map(|n| format!("{}={}", n.option, n.choice))
+            .collect()
+    };
+    assert_eq!(
+        ids(&impact.kept_choices),
+        ["limits=minimum", "copper_weight=2oz", "drill=standard"]
+    );
+    assert_eq!(ids(&impact.reset_choices), ["mask_colour=green"]);
+    assert_eq!(
+        impact.reset_choices[0].label,
+        "Solder mask colour: Green, red, yellow, blue or purple"
+    );
+    assert_eq!(impact.outer_copper_um, None, "2 oz is kept");
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(set_profile_cmd(four, false)),
+    )?;
+    let p = engine
+        .project()
+        .rules
+        .profile
+        .clone()
+        .ok_or_else(|| Error::Invalid("no profile".into()))?;
+    assert_eq!(
+        p.chosen().get("copper_weight").map(String::as_str),
+        Some("2oz")
+    );
+    assert_eq!(
+        p.chosen().get("mask_colour").map(String::as_str),
+        Some("green")
+    );
+    assert_eq!(outer(&engine), Some((70.0, 70.0)));
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(set_profile_cmd(fixtures::prototype()?, false)),
+    )?;
+    assert_eq!(outer(&engine), Some((70.0, 70.0)), "no option, no change");
+    // Back to 1 oz by undo: the profile switches and the copper step go.
+    engine.undo()?;
+    engine.undo()?;
+    engine.undo()?;
+    engine.undo()?;
+    assert_eq!(outer(&engine), Some((70.0, 70.0)));
+    engine.undo()?;
+    assert_eq!(outer(&engine), Some((35.0, 35.0)), "one undo step");
     Ok(())
 }

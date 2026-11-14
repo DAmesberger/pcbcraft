@@ -645,6 +645,28 @@ pub fn impact_groups(impact: &ProfileImpact) -> Vec<ReviewGroup> {
             })
             .collect(),
     }];
+    if let Some((from, to)) = impact.outer_copper_um {
+        groups.push(ReviewGroup {
+            title: "Stackup".into(),
+            summary: String::new(),
+            lines: vec![format!("Top and bottom copper: {from} µm → {to} µm")],
+        });
+    }
+    for (title, notes) in [
+        ("Choices kept", &impact.kept_choices),
+        (
+            "Choices set to the profile's defaults",
+            &impact.reset_choices,
+        ),
+    ] {
+        if !notes.is_empty() {
+            groups.push(ReviewGroup {
+                title: title.into(),
+                summary: String::new(),
+                lines: notes.iter().map(|n| n.label.clone()).collect(),
+            });
+        }
+    }
     if !impact.dropped_overrides.is_empty() {
         groups.push(ReviewGroup {
             title: "Overrides dropped".into(),

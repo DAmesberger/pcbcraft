@@ -903,7 +903,7 @@ fn a_plated_mounting_hole_keeps_the_pth_annular_ring() -> Result<()> {
     assert_eq!(
         findings[0].message,
         "A plated mounting hole: annular ring 0.2 mm; needs at least 0.25 mm \
-         (JLCPCB 2-layer 1 oz: min PTH annular ring)"
+         (JLCPCB 2-layer: min PTH annular ring)"
     );
     assert!(ring(&mut project, Some(3.7)).is_empty());
     let findings = ring(&mut project, None);
@@ -959,7 +959,7 @@ fn a_plated_hole_keeps_the_plated_hole_clearance() -> Result<()> {
     assert!(
         findings[0]
             .message
-            .ends_with("needs 0.35 mm (JLCPCB 2-layer 1 oz: track to plated hole clearance)"),
+            .ends_with("needs 0.35 mm (JLCPCB 2-layer: track to plated hole clearance)"),
         "{}",
         findings[0].message
     );

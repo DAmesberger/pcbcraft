@@ -671,6 +671,30 @@ impl Step {
     }
 }
 
+/// The stackup's outer foils follow the fab profile's copper weight
+/// (`FabChoice::outer_copper_um`) after a rules change; the before and
+/// after top foil in µm when they changed. A stackup edit cannot depart
+/// from the choice (`stackup.outer_copper`).
+pub fn follow_outer_copper(project: &mut Project) -> Result<Option<(f64, f64)>> {
+    let Some(um) = project
+        .rules
+        .profile
+        .as_ref()
+        .and_then(|p| p.outer_copper_um())
+    else {
+        return Ok(None);
+    };
+    if project.stackup.outer_copper_is(um) {
+        return Ok(None);
+    }
+    let from = project
+        .stackup
+        .outer_copper_um()
+        .map_or(0.0, |(top, _)| top);
+    project.stackup = project.stackup.with_outer_copper(um)?;
+    Ok(Some((from, um)))
+}
+
 /// The name a project's first save gives it: a project still called
 /// [`UNTITLED`] takes the file's name ("usb-led.sparksmith" names it
 /// "usb-led"); a name someone chose is kept (`None`). `project` is the
@@ -1669,6 +1693,7 @@ impl Engine {
                 if next != candidate.project.rules {
                     let project = Arc::make_mut(&mut candidate.project);
                     project.rules = next;
+                    follow_outer_copper(project)?;
                     // A sketch board follows `board.outline_fit`.
                     layout::outline::refit(project, evaluators.board)?;
                 }
@@ -1836,6 +1861,48 @@ impl Engine {
         Ok(outcome)
     }
 
+    /// `rules.preview_fab_profile` / `rules.preview_fab_options`: the rule,
+    /// choice and outer copper changes of taking `profile`, and the board
+    /// issues that would appear or go.
+    fn preview_profile(
+        &self,
+        profile: rules::RuleProfile,
+        keep_overrides: bool,
+        carry: rules::ChoiceCarry,
+    ) -> Result<QueryResult> {
+        let current = &self.document.project;
+        let (next, refusal) = rules::preview_candidate(&current.rules, &profile, keep_overrides);
+        let mut impact = rules::rule_changes(&current.rules, &next);
+        impact.kept_choices = carry.kept;
+        impact.reset_choices = carry.reset;
+        if let Some(reason) = refusal {
+            impact.refusal = Some(reason);
+            return Ok(QueryResult::ProfileImpact(Box::new(impact)));
+        }
+        let mut candidate = current.as_ref().clone();
+        candidate.rules = next;
+        match follow_outer_copper(&mut candidate) {
+            Ok(change) => impact.outer_copper_um = change,
+            Err(error) => {
+                impact.refusal = Some(error.to_string());
+                return Ok(QueryResult::ProfileImpact(Box::new(impact)));
+            }
+        }
+        let scope = issues::IssueScope::All;
+        let rows = |p: &Project| -> Result<Vec<(String, String)>> {
+            issues::report(p, &self.document.drafts, &scope, &self.check_settings)?
+                .rows
+                .into_iter()
+                .map(|r| {
+                    let id = serde_json::to_string(&(&r.finding.code, &r.finding.objects))?;
+                    Ok((id, r.title))
+                })
+                .collect()
+        };
+        rules::diff_issues(&mut impact, rows(current)?, rows(&candidate)?);
+        Ok(QueryResult::ProfileImpact(Box::new(impact)))
+    }
+
     /// Answer a read-only query.
     pub fn query(&self, query: Query) -> Result<QueryResult> {
         self.query_with(query, &catalog::CatalogContext::default())
@@ -1950,38 +2017,15 @@ impl Engine {
             )),
             Query::PreviewOptions { options } => {
                 let profile = rules::with_options(&self.document.project.rules, &options)?;
-                self.query(Query::PreviewProfile {
-                    profile: Box::new(profile),
-                    keep_overrides: true,
-                })
+                self.preview_profile(profile, true, rules::ChoiceCarry::default())
             }
             Query::PreviewProfile {
                 profile,
                 keep_overrides,
             } => {
-                let current = &self.document.project;
-                let (next, refusal) =
-                    rules::preview_candidate(&current.rules, &profile, keep_overrides);
-                let mut impact = rules::rule_changes(&current.rules, &next);
-                if let Some(reason) = refusal {
-                    impact.refusal = Some(reason);
-                    return Ok(QueryResult::ProfileImpact(Box::new(impact)));
-                }
-                let mut candidate = current.as_ref().clone();
-                candidate.rules = next;
-                let scope = issues::IssueScope::All;
-                let rows = |p: &Project| -> Result<Vec<(String, String)>> {
-                    issues::report(p, &self.document.drafts, &scope, &self.check_settings)?
-                        .rows
-                        .into_iter()
-                        .map(|r| {
-                            let id = serde_json::to_string(&(&r.finding.code, &r.finding.objects))?;
-                            Ok((id, r.title))
-                        })
-                        .collect()
-                };
-                rules::diff_issues(&mut impact, rows(current)?, rows(&candidate)?);
-                Ok(QueryResult::ProfileImpact(Box::new(impact)))
+                let (profile, carry) =
+                    rules::carry_choices(&self.document.project.rules, *profile)?;
+                self.preview_profile(profile, keep_overrides, carry)
             }
             Query::NetClasses {} => {
                 let project = &self.document.project;

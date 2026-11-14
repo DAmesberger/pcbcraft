@@ -2,13 +2,13 @@
   "format": 1,
   "fab_profile": {
     "id": "jlcpcb-2-layer-1oz",
-    "name": "JLCPCB 2-layer 1 oz",
+    "name": "JLCPCB 2-layer",
     "source": {
       "publisher": "JLCPCB",
       "document": "PCB Manufacturing & Assembly Capabilities",
       "url": "https://jlcpcb.com/capabilities/pcb-capabilities",
       "date": "2026-11-14",
-      "notes": "Rigid FR-4, 2 layers (JLCPCB's 1-layer boards drill 0.3 mm and up and have their own rows). 1 oz outer copper. Each rule names the row it comes from; rules marked as the author's choice are defaults, not limits. The options are JLCPCB's choices that change a limit; their defaults (recommended values, green mask, 0.15 mm drill) give the values the profile had before it offered options. Re-read the page before ordering: JLCPCB changes it."
+      "notes": "Rigid FR-4, 2 layers (JLCPCB's 1-layer boards drill 0.3 mm and up and have their own rows). Each rule names the row it comes from; rules marked as the author's choice are defaults, not limits. The options are JLCPCB's choices that change a limit; their defaults (recommended values, 1 oz outer copper, green mask, standard drilling) live in this file. The id still says 1oz because boards pin it; the profile covers 1 oz and 2 oz outer copper (the Outer copper weight option). Under the recommended values the smallest drill is JLCPCB's preferred 0.2 mm via hole, so boards with 0.15–0.2 mm vias get a finding there and not under the absolute minimum. Re-read the page before ordering: JLCPCB changes it."
     },
     "drill_files": {
       "kind": "not_published",
@@ -29,7 +29,25 @@
             "name": "Absolute minimum"
           }
         ],
-        "source": "JLCPCB publishes a recommended value and a minimum for two rows (read 2026-11-14): Traces, \"PTH annular ring\": \"1 oz: Recommended 0.25 mm or above; absolute minimum 0.18 mm\"; \"PTH to Track\": \"0.35mm is recommended, minimum 0.28mm\". Every other row gives one value, used under both. Not an order option: which of JLCPCB's two values the board is held to. The default is the recommended value, as before."
+        "source": "JLCPCB publishes a recommended value and a minimum for three rows (read 2026-11-14): Traces, \"PTH annular ring\": \"1 oz: Recommended 0.25 mm or above; absolute minimum 0.18 mm\"; \"PTH to Track\": \"0.35mm is recommended, minimum 0.28mm\"; Drilling, \"Min. Via hole size/diameter\": \"0.15/0.25mm\", \"② Preferred Min. Via hole size: 0.2mm\". Every other row gives one value, used under both. Not an order option: which of JLCPCB's two values the board is held to. The default is the recommended value."
+      },
+      {
+        "id": "copper_weight",
+        "name": "Outer copper weight",
+        "default": "1oz",
+        "choices": [
+          {
+            "id": "1oz",
+            "name": "1 oz (35 µm)",
+            "outer_copper_um": 35.0
+          },
+          {
+            "id": "2oz",
+            "name": "2 oz (70 µm)",
+            "outer_copper_um": 70.0
+          }
+        ],
+        "source": "Finished Outer Layer Copper: \"2-layer: 1 oz / 2 oz / 2.5 oz / 3.5 oz / 4.5oz\" (read 2026-11-14). JLCPCB publishes track, annular ring and soldermask limits for 1 oz and 2 oz only (2.5–4.5 oz give track and spacing only), so only those two are offered. The page gives no thickness: 35 µm an ounce per square foot (IPC-4562 nominal 34.8 µm, rounded as fabricators quote it; library/stackups). The board's top and bottom foils follow the choice. The default is 1 oz, the standard order."
       },
       {
         "id": "mask_colour",
@@ -54,7 +72,7 @@
         "choices": [
           {
             "id": "standard",
-            "name": "0.15 mm"
+            "name": "Standard (0.15 mm and up)"
           },
           {
             "id": "microvia",
@@ -99,7 +117,16 @@
       },
       "clearance_fill_fill": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_fill_npth_hole": {
         "value": 0.2,
@@ -132,7 +159,16 @@
       },
       "clearance_pad_fill": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_pad_npth_hole": {
         "value": 0.2,
@@ -140,7 +176,16 @@
       },
       "clearance_pad_pad": {
         "value": 0.15,
-        "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\"."
+        "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"SMD pad to pad clearance (different nets)\": \"0.15mm\"; the larger 2 oz spacing applies: Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_pad_pth_hole": {
         "value": 0.35,
@@ -157,7 +202,16 @@
       },
       "clearance_pad_via": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_pad_via_hole": {
         "value": 0.2,
@@ -177,7 +231,16 @@
       },
       "clearance_track_fill": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_track_npth_hole": {
         "value": 0.2,
@@ -185,7 +248,16 @@
       },
       "clearance_track_pad": {
         "value": 0.1,
-        "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\"; \"Min. 0.1 mm (stay well above if possible)\"."
+        "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\"; \"Min. 0.1 mm (stay well above if possible)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Pad to track clearance (1oz)\": \"0.1mm\" has no 2 oz row; the 2 oz spacing applies: Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_track_pth_hole": {
         "value": 0.35,
@@ -202,11 +274,29 @@
       },
       "clearance_track_track": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_track_via": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_track_via_hole": {
         "value": 0.2,
@@ -218,7 +308,16 @@
       },
       "clearance_via_fill": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_via_hole_npth_hole": {
         "value": 0.45,
@@ -251,7 +350,16 @@
       },
       "clearance_via_via": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "clearance_via_via_hole": {
         "value": 0.2,
@@ -267,7 +375,7 @@
       },
       "drill_min": {
         "value": 0.15,
-        "source": "Drilling, \"Drill Diameter\": \"2-layer: 0.15 – 6.3 mm\".",
+        "source": "Drilling, \"Drill Diameter\": \"2-layer: 0.15 – 6.3 mm\"; \"Min. Via hole size/diameter\": \"0.15/0.25mm\". The absolute minimum.",
         "cases": [
           {
             "when": {
@@ -275,6 +383,13 @@
             },
             "value": 0.1,
             "source": "Drilling, \"Drill Diameter\": \"0.1mm microvias only available for board thickness ≤1mm; ENIG/OSP surface finish required\"; \"Min. drill diameter for 2- or more-layer PCBs is 0.1 mm (more costly!)\"."
+          },
+          {
+            "when": {
+              "limits": "recommended"
+            },
+            "value": 0.2,
+            "source": "Drilling, \"Min. Via hole size/diameter\": \"② Preferred Min. Via hole size: 0.2mm\" (read 2026-11-14); the recommended value. Ordered 0.1 mm microvias (first case) take precedence."
           }
         ]
       },
@@ -316,6 +431,13 @@
         "cases": [
           {
             "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.2,
+            "source": "Soldermask, \"Soldermask bridge\": \"2oz: Min. pad spacing: 0.20 mm (any color)\" (read 2026-11-14)."
+          },
+          {
+            "when": {
               "mask_colour": "black_white"
             },
             "value": 0.13,
@@ -343,6 +465,13 @@
         "value": 0.25,
         "source": "Traces, \"PTH annular ring\": \"≧0.20mm\"; under \"2-layer:\", \"1 oz: Recommended 0.25 mm or above; absolute minimum 0.18 mm\". The recommended value, chosen over the absolute minimum (0.18 mm).",
         "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.254,
+            "source": "Traces, \"PTH annular ring\": under \"2-layer:\", \"2 oz: 0.254 mm or above\" (read 2026-11-14)."
+          },
           {
             "when": {
               "limits": "minimum"
@@ -414,7 +543,16 @@
       },
       "track_width_min": {
         "value": 0.1,
-        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\"."
+        "source": "Traces, \"Min. track width and spacing (1 oz)\": \"0.10 / 0.10 mm (4 / 4 mil)\"; \"1- and 2-layer: 0.10 / 0.10 mm (4 / 4 mil)\".",
+        "cases": [
+          {
+            "when": {
+              "copper_weight": "2oz"
+            },
+            "value": 0.16,
+            "source": "Traces, \"Min. track width and spacing (2 oz)\": \"0.16 / 0.16 mm (6.5 / 6.5 mil)\"; \"2-layer: 0.16 / 0.16 mm (6.5 / 6.5 mil)\" (read 2026-11-14)."
+          }
+        ]
       },
       "via_annular_ring_min": {
         "formula": "(0.25 - 0.15) / 2.0",

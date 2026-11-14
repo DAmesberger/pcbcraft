@@ -425,7 +425,7 @@ fn file_new_opens_the_same_empty_project() -> Fallible {
 }
 
 /// Run 4, finding 1: File › New without a default fab profile (Settings)
-/// asks for the board's profile on the PCB, JLCPCB 2-layer 1 oz
+/// asks for the board's profile on the PCB, JLCPCB 2-layer
 /// preselected; one click on Use profile sets it. An opened file is not
 /// asked.
 #[test]

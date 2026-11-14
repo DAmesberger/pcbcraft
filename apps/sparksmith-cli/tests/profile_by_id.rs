@@ -199,12 +199,17 @@ fn a_session_previews_and_sets_fab_options() -> Fallible {
         .iter()
         .filter_map(|o| o["id"].as_str())
         .collect();
-    assert_eq!(options, ["limits", "mask_colour", "drill"], "{before}");
+    assert_eq!(
+        options,
+        ["limits", "copper_weight", "mask_colour", "drill"],
+        "{before}"
+    );
     assert_eq!(profile["chosen"]["limits"], "recommended", "{before}");
     let changes = preview["result"]["result"]["changes"]
         .as_array()
         .ok_or("changes")?;
-    assert_eq!(changes.len(), 5, "{preview}");
+    // The PTH ring, four PTH clearances and the smallest drill.
+    assert_eq!(changes.len(), 6, "{preview}");
     assert_eq!(applied["ok"], true, "{applied}");
     let after = &after["result"]["result"];
     assert_eq!(after["profile"]["chosen"]["limits"], "minimum", "{after}");

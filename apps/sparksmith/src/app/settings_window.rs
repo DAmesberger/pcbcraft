@@ -7,7 +7,7 @@
 //! engine's `require_waiver_reason` (kept in `UserSettings`). The Rules
 //! section's "Default fab profile" is the profile library entry a new
 //! board starts with (`UserSettings::default_rule_profile`); with none, a
-//! new project asks for one, JLCPCB 2-layer 1 oz preselected. Its
+//! new project asks for one, JLCPCB 2-layer preselected. Its
 //! "Impedance tolerance" checks impedance targets whose net class states
 //! none (`UserSettings::impedance_tolerance`, else the shipped
 //! `defaults/settings.json`) and is set on the engine at once.
