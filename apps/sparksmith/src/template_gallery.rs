@@ -1774,7 +1774,8 @@ fn preview(
                 kit::note(
                     ui,
                     &format!(
-                        "Replaces the package, the footprint's {pads} pads and the model; one undo step"
+                        "Replaces the package, the footprint's {} and the model; one undo step",
+                        crate::kit::counted(pads, "pad", "pads")
                     ),
                 );
             }

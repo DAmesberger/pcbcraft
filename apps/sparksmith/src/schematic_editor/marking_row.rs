@@ -87,7 +87,9 @@ pub fn layout_text(layout: &MarkingLayout) -> String {
                 }
                 .into(),
             ),
-            LaidElement::Bands { colours, .. } => words.push(format!("{} bands", colours.len())),
+            LaidElement::Bands { colours, .. } => {
+                words.push(kit::counted(colours.len(), "band", "bands"))
+            }
         }
     }
     words.join(" · ")
@@ -340,7 +342,7 @@ pub fn row(ui: &mut egui::Ui, engine: &Engine, instance: &ComponentInstance) -> 
             }
             None => {
                 let items = marking.replace.as_ref().map_or(0, |s| s.items.len());
-                let summary = format!("Custom marking · {items} items");
+                let summary = format!("Custom marking · {}", kit::counted(items, "item", "items"));
                 kit::row(ui, "Custom", |ui| {
                     ui.horizontal(|ui| {
                         ui.label(&summary);

@@ -1097,8 +1097,11 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
             .filter(|r| rules.override_of(r.key).is_some())
             .count();
         let summary = match overridden {
-            0 => format!("{} rules", rows.len()),
-            n => format!("{} rules · {n} overridden", rows.len()),
+            0 => kit::counted(rows.len(), "rule", "rules"),
+            n => format!(
+                "{} · {n} overridden",
+                kit::counted(rows.len(), "rule", "rules")
+            ),
         };
         let shown = kit::summary_section(
             ui,
@@ -1167,6 +1170,33 @@ fn option_rows(ui: &mut Ui, profile: &RuleProfile) -> Option<OptionChange> {
     change
 }
 
+/// The widths of a group table's Rule, Profile, Value and Reset columns
+/// in `ui`: Value fits the widest value as its field shows it and Reset
+/// its button, so neither clips at the Properties column's width; Rule and
+/// Profile share the rest, and cut text shows on hover.
+fn column_widths(ui: &Ui, rows: &[&RuleRow]) -> [f32; 4] {
+    let t = Tokens::get();
+    // The table's frame margin and the gaps between its four columns.
+    let width = (ui.available_width() - 2.0 * t.space_10 - 4.0 * t.space_4).max(0.0);
+    let measure = |text: &str, font: egui::FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font, t.form_ink)
+            .size()
+            .x
+    };
+    let mono = egui::FontId::monospace(t.font_label);
+    let widest = rows
+        .iter()
+        .map(|row| measure(&value_text(row.value), mono.clone()))
+        .fold(0.0, f32::max);
+    // The field's inset each side, and room for a menu's arrow.
+    let value = (widest + 2.0 * t.form_inset + t.space_16).min(width * 0.45);
+    let reset = (measure("Reset", egui::FontId::proportional(t.font_label)) + 2.0 * t.space_8)
+        .min(width * 0.2);
+    let rest = (width - value - reset).max(0.0);
+    [rest * 3.0 / 4.6, rest * 1.6 / 4.6, value, reset]
+}
+
 /// One group's table: Rule · Profile · Value · Reset. Returns the edit a
 /// field or menu committed and whether a field has focus.
 fn group_table(
@@ -1177,22 +1207,23 @@ fn group_table(
     reveal: bool,
 ) -> (Option<(RulesCommand, Origin)>, bool) {
     let t = Tokens::get();
+    let [rule, profile, value, reset] = column_widths(ui, rows);
     let columns = [
         kit::TableColumn {
             title: "Rule",
-            weight: 3.0,
+            weight: rule,
         },
         kit::TableColumn {
             title: "Profile",
-            weight: 1.6,
+            weight: profile,
         },
         kit::TableColumn {
             title: "Value",
-            weight: 1.8,
+            weight: value,
         },
         kit::TableColumn {
             title: "",
-            weight: 0.9,
+            weight: reset,
         },
     ];
     let focus_key = panel

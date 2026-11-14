@@ -839,3 +839,71 @@ fn later_closes_the_question_and_a_profiled_board_is_not_asked() -> TestResult {
     assert!(editor.rules.is_none(), "not asked");
     Ok(())
 }
+
+/// At the Properties column's width every rule's value field shows its
+/// whole value with its unit ("0.1 mm", not "0.1 ı"; run-4 finding 15).
+#[test]
+fn the_value_fields_show_their_whole_value_in_the_properties_column() -> TestResult {
+    fn walk(shape: &Shape, clip: egui::Rect, out: &mut Vec<(String, egui::Rect, egui::Rect)>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, out)),
+            Shape::Text(t)
+                if t.galley
+                    .job
+                    .sections
+                    .first()
+                    .is_some_and(|s| s.format.font_id.family == egui::FontFamily::Monospace) =>
+            {
+                out.push((
+                    t.galley.text().to_owned(),
+                    t.galley.rect.translate(t.pos.to_vec2()),
+                    clip,
+                ));
+            }
+            _ => {}
+        }
+    }
+    let engine = Engine::demo()?;
+    let ctx = context();
+    sparksmith_ui::theme::apply(&ctx);
+    let mut editor = PcbEditor::default();
+    click(&mut editor, &engine, &ctx, "Rules…")?;
+    let mut output = None;
+    for _ in 0..3 {
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    egui::vec2(262.0, 2400.0),
+                )),
+                ..Default::default()
+            },
+            |ui| {
+                editor.subject_slot(ui, &engine);
+            },
+        );
+        out.textures_delta.clear();
+        output = Some(out);
+    }
+    let output = output.ok_or("no frame")?;
+    let mut fields = Vec::new();
+    for shape in &output.shapes {
+        walk(&shape.shape, shape.clip_rect, &mut fields);
+    }
+    let with_unit: Vec<_> = fields.iter().filter(|(t, ..)| t.ends_with(" mm")).collect();
+    assert!(
+        !with_unit.is_empty(),
+        "no value fields: {:?}",
+        texts(&output)
+    );
+    for (text, rect, clip) in fields {
+        if !clip.intersects(rect) {
+            continue;
+        }
+        assert!(
+            rect.right() <= clip.right() + 0.5,
+            "{text:?} at {rect:?} is clipped by {clip:?}"
+        );
+    }
+    Ok(())
+}
