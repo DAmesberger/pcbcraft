@@ -7,15 +7,16 @@
 //!   the workspace and Cargo home remapped out of any embedded path. It
 //!   prints each module's size and SHA-256; `--update-lock` records the
 //!   hashes for this build host in `generators/modules.lock`, the only way
-//!   that file changes, and copies each module to the shipped library
-//!   (`library/generators/<name>.wasm`, committed). Bytes are reproducible
+//!   that file changes, and writes each generator's bundle to the shipped
+//!   library (`library/generators/<name>/`: `generator.json`, the module and
+//!   the crate's `parts/`, committed). Bytes are reproducible
 //!   per build host (see [`host_triple`]), so the lock keeps one hash per
 //!   host, and every host ships the one committed copy, so a part's key is
 //!   the same wherever it is made (docs/generator-plugins.md).
 //! - `check` (part of `cargo xtask ci`) builds, fails when a module's hash
 //!   differs from the hash `modules.lock` records for this host (a host
-//!   with none recorded gets a note) or a shipped module is not a locked
-//!   build of its generator, and runs the golden cases natively, under
+//!   with none recorded gets a note) or a shipped bundle is not a locked
+//!   build of its generator with the crate's part files, and runs the golden cases natively, under
 //!   wasmi natively, and under wasmi built for wasm32 (the probe module).
 //! - `reproduce` builds everything twice from empty target directories and
 //!   compares the bytes with each other and with the lock.
@@ -362,55 +363,168 @@ fn update_lock(built: &[Built], host: &str) -> Result<()> {
     Ok(())
 }
 
-/// Copy each built module from `target_dir` to the shipped library.
+/// The bundle of `generator` as it ships (`library/generators/<name>/`):
+/// each file's path inside the bundle and bytes, the manifest
+/// (`generator.json`) last. The part files and their licence and
+/// provenance come from the crate's `parts/` (`<stem>.solidcraft` with its
+/// `<stem>.part.json` sidecar, the shipped part files' format), the module
+/// from `module`.
+fn bundle(generator: &Generator, module: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    let source = root()?
+        .join("generators")
+        .join(&generator.name)
+        .join("parts");
+    let mut stems = Vec::new();
+    if source.is_dir() {
+        for entry in std::fs::read_dir(&source)? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.strip_suffix(".solidcraft") {
+                stems.push(stem.to_string());
+            }
+        }
+    }
+    stems.sort();
+    let module_file = format!("{}.wasm", generator.name);
+    let mut files = vec![(module_file.clone(), module.to_vec())];
+    let mut parts = Vec::new();
+    for stem in stems {
+        let bytes = std::fs::read(source.join(format!("{stem}.solidcraft")))?;
+        let sidecar_path = source.join(format!("{stem}.part.json"));
+        let sidecar: Value =
+            serde_json::from_slice(&std::fs::read(&sidecar_path).map_err(|e| {
+                format!(
+                    "{}: {e} (each part file needs its sidecar)",
+                    sidecar_path.display()
+                )
+            })?)?;
+        let text = |key: &str| -> Result<String> {
+            sidecar
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| format!("{}: no {key}", sidecar_path.display()).into())
+        };
+        let file = format!("parts/{stem}.solidcraft");
+        parts.push(json!({
+            "file": file,
+            "sha256": hex(&Sha256::digest(&bytes)),
+            "title": text("title")?,
+            "licence": text("licence")?,
+            "provenance": text("provenance")?,
+        }));
+        files.push((file, bytes));
+    }
+    let manifest = json!({
+        "format": 1,
+        "name": generator.name,
+        "module": {"file": module_file, "sha256": hex(&Sha256::digest(module))},
+        "parts": parts,
+    });
+    let mut text = serde_json::to_string_pretty(&manifest)?;
+    text.push('\n');
+    files.push(("generator.json".into(), text.into_bytes()));
+    Ok(files)
+}
+
+/// Write each built module's bundle from `target_dir` to the shipped
+/// library, replacing what was there.
 fn ship(target_dir: &Path) -> Result<()> {
     let shelf = root()?.join(SHIPPED);
     std::fs::create_dir_all(&shelf)?;
     for generator in generators()? {
-        let to = shelf.join(format!("{}.wasm", generator.name));
-        std::fs::copy(generator.artifact(target_dir), &to)?;
-        eprintln!("shipped {}", to.display());
+        let module = std::fs::read(generator.artifact(target_dir))?;
+        let dir = shelf.join(&generator.name);
+        if dir.is_dir() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        for (file, bytes) in bundle(&generator, &module)? {
+            let to = dir.join(&file);
+            if let Some(parent) = to.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&to, bytes)?;
+        }
+        eprintln!("shipped {}", dir.display());
     }
     Ok(())
 }
 
-/// Each shipped module is a build of its generator that the lock records
-/// (on any host), and nothing else ships.
+/// Each shipped bundle holds a build of its generator that the lock
+/// records (on any host), the crate's part files and the manifest naming
+/// them, and nothing else ships.
 fn review_shipped() -> Result<Vec<String>> {
     let lock = read_lock()?;
     let shelf = root()?.join(SHIPPED);
     let generators = generators()?;
     let mut failures = Vec::new();
     for generator in &generators {
-        let path = shelf.join(format!("{}.wasm", generator.name));
-        let Ok(bytes) = std::fs::read(&path) else {
-            failures.push(format!("{SHIPPED}/{}.wasm is missing", generator.name));
+        let dir = shelf.join(&generator.name);
+        let module_path = dir.join(format!("{}.wasm", generator.name));
+        let Ok(module) = std::fs::read(&module_path) else {
+            failures.push(format!(
+                "{SHIPPED}/{}/{}.wasm is missing",
+                generator.name, generator.name
+            ));
             continue;
         };
-        let hash = hex(&Sha256::digest(&bytes));
+        let hash = hex(&Sha256::digest(&module));
         let locked = recorded(&lock, &generator.name)
             .is_some_and(|hosts| hosts.values().any(|h| h.as_str() == Some(hash.as_str())));
         if !locked {
             failures.push(format!(
-                "{SHIPPED}/{}.wasm is sha256 {hash}, which {LOCK} does not record for {}",
-                generator.name, generator.name
+                "{SHIPPED}/{}/{}.wasm is sha256 {hash}, which {LOCK} does not record for {}",
+                generator.name, generator.name, generator.name
             ));
+        }
+        let expected = bundle(generator, &module)?;
+        for (file, bytes) in &expected {
+            match std::fs::read(dir.join(file)) {
+                Ok(shipped) if &shipped == bytes => {}
+                Ok(_) => failures.push(format!(
+                    "{SHIPPED}/{}/{file} differs from what generators/{} builds",
+                    generator.name, generator.name
+                )),
+                Err(_) => failures.push(format!("{SHIPPED}/{}/{file} is missing", generator.name)),
+            }
+        }
+        let mut shipped_files = Vec::new();
+        list_files(&dir, &dir, &mut shipped_files)?;
+        for file in shipped_files {
+            if !expected.iter().any(|(f, _)| *f == file) {
+                failures.push(format!(
+                    "{SHIPPED}/{}/{file} is not part of the generator's bundle",
+                    generator.name
+                ));
+            }
         }
     }
     if shelf.is_dir() {
         for entry in std::fs::read_dir(&shelf)? {
             let name = entry?.file_name().to_string_lossy().into_owned();
-            let known = name
-                .strip_suffix(".wasm")
-                .is_some_and(|stem| generators.iter().any(|g| g.name == stem));
-            if !known {
+            if !generators.iter().any(|g| g.name == name) {
                 failures.push(format!(
-                    "{SHIPPED}/{name} is not the module of a generator crate"
+                    "{SHIPPED}/{name} is not the bundle of a generator crate"
                 ));
             }
         }
     }
     Ok(failures)
+}
+
+/// Every file under `dir`, as paths relative to `base` with `/`.
+fn list_files(base: &Path, dir: &Path, out: &mut Vec<String>) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            list_files(base, &path, out)?;
+        } else if let Ok(relative) = path.strip_prefix(base) {
+            out.push(relative.to_string_lossy().replace('\\', "/"));
+        }
+    }
+    Ok(())
 }
 
 fn report(built: &[Built]) {

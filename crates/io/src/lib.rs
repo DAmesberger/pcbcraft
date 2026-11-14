@@ -7,6 +7,7 @@ pub mod fab_drawings;
 pub mod fabrication;
 mod former_name;
 pub mod generated;
+pub mod generator_bundle;
 pub mod interface;
 pub mod library_folder;
 pub mod library_folder_index;

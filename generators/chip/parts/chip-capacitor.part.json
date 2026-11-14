@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "chip-capacitor",
+  "title": "Chip capacitor body",
+  "summary": "Multilayer ceramic chip capacitor: barium-titanate body between two matte-tin wrapped terminations (length, width, height, termination, body_round, end_round).",
+  "use": "package_body",
+  "prefix": "C",
+  "lands": [],
+  "licence": "MIT OR Apache-2.0",
+  "provenance": "Original work: the in-code chip builder's construction (crates/solidcraft-integration/src/models/chip.rs) of a 0603 chip, saved through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; the chip generator gives every parameter its value. Estimated edge rounds and overcoat, no vendor drawing or EDA/CAD library data copied."
+}

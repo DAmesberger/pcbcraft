@@ -29,3 +29,7 @@ unreachable = "deny"
 # A generator depends on the SDK only; `cargo xtask layers` enforces it.
 [dependencies]
 sparksmith-generator-sdk.workspace = true
+
+# The part files' SHA-256 at build time (build.rs); the ABI crate is a leaf.
+[build-dependencies]
+sparksmith-generator-abi.workspace = true

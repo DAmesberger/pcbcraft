@@ -36,6 +36,8 @@ base64 = "0.22"
 [dev-dependencies]
 sparksmith-core = { workspace = true, features = ["test-fixtures"] }
 tempfile = "3"
+# The parity of a generator module's chip model with the in-code builder.
+sparksmith-generators.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "chip-led",
+  "title": "Chip LED body",
+  "summary": "Chip LED: white alumina substrate and matte-tin terminations under a clear silicone lens (length, width, height, termination, substrate, lens_round, body_round, end_round).",
+  "use": "package_body",
+  "prefix": "D",
+  "lands": [],
+  "licence": "MIT OR Apache-2.0",
+  "provenance": "Original work: the in-code chip builder's construction (crates/solidcraft-integration/src/models/chip.rs) of a 0603 chip, saved through SolidCraft's commands by `cargo test -p sparksmith-solidcraft --test author_parts -- --ignored`; the chip generator gives every parameter its value. Estimated edge rounds and overcoat, no vendor drawing or EDA/CAD library data copied."
+}

@@ -1,5 +1,6 @@
 //! The chip generator: two-terminal chip parts (resistors, capacitors,
-//! inductors, ferrite beads and LEDs) as a symbol, package and footprint.
+//! inductors, ferrite beads and LEDs) as a symbol, package, footprint and
+//! 3D model.
 //!
 //! Lands follow the host's estimate for chip packages (an original rule of
 //! thumb, not a land-pattern standard): a land of termination + 0.6 mm by
@@ -35,6 +36,10 @@ const PRESETS: &str = include_str!("../presets.json");
 const LAND_EXTRA_LENGTH_NM: i64 = 600_000;
 /// …and the body width plus this across it.
 const LAND_EXTRA_WIDTH_NM: i64 = 200_000;
+
+/// The generator's version (`Description::version`): 1, the first with a
+/// 3D model.
+const VERSION: u32 = 1;
 
 pub struct Chip;
 
@@ -174,6 +179,7 @@ fn description_with(presets: Vec<Preset>) -> Description {
     Description {
         abi: v1::ABI,
         id_hint: "chip".into(),
+        version: VERSION,
         name: "Chip passives and LEDs".into(),
         families: vec!["chip".into()],
         scopes: vec![Scope::Component, Scope::Package],
@@ -431,6 +437,88 @@ fn symbol(part: Part, resistor_style: &str) -> Symbol {
     }
 }
 
+/// Edge rounds (est.: tumbled ceramic chips and dipped terminations show
+/// 20–80 µm radii), capped by the chip's size in [`model`].
+const BODY_EDGE_NM: i64 = 60_000;
+const END_EDGE_NM: i64 = 80_000;
+/// The overcoat's thickness (est.: thick-film overcoats are 10–40 µm), at
+/// most a tenth of the chip height.
+const OVERCOAT_NM: i64 = 30_000;
+/// The overcoat stops this far in from the long edges (docs/materials.md).
+const OVERCOAT_INSET_NM: i64 = 40_000;
+/// A chip LED's substrate thickness (Kingbright's APT1608 and APT2012
+/// drawings both give 0.25 mm), at most half the height.
+const LED_SUBSTRATE_NM: i64 = 250_000;
+/// Round of the lens's top edges (est.), capped by the lens's size.
+const LENS_EDGE_NM: i64 = 100_000;
+
+/// `n / d` to the nearest nanometre (the divisors here are small and
+/// positive, so it never fails).
+fn part_of(n: i64, d: i64) -> i64 {
+    div_round(n, d).unwrap_or(0)
+}
+
+/// The SHA-256 of each part file in the bundle (`parts/`), written by the
+/// build script.
+mod parts {
+    include!(concat!(env!("OUT_DIR"), "/parts.rs"));
+}
+
+/// The chip's 3D model: the bundle's part file for the part (a ceramic or
+/// ferrite body between two wrapped end terminations; on a thick-film
+/// resistor a black overcoat raised on the alumina's top; on a chip LED a
+/// thin white substrate and terminations under a clear lens), with every
+/// parameter of the file given: the body, the termination length, and the
+/// overcoat, substrate and edge rounds the part's size decides. Each
+/// termination is centred on its lead's contact ((length − termination) / 2
+/// from the middle), lead 1 (pin 1) at −x.
+fn model(d: &Dims) -> v1::Model {
+    let overcoat = part_of(d.height, 10).min(OVERCOAT_NM);
+    let inset = OVERCOAT_INSET_NM.min(part_of(d.width, 4));
+    let substrate = LED_SUBSTRATE_NM.min(part_of(d.height, 2));
+    let (asset, resistor, led) = match d.part {
+        Part::Resistor => (parts::CHIP_RESISTOR, true, false),
+        Part::Capacitor => (parts::CHIP_CAPACITOR, false, false),
+        Part::Inductor | Part::Ferrite => (parts::CHIP_FERRITE, false, false),
+        Part::Led => (parts::CHIP_LED, false, true),
+    };
+    let mut values = v1::Params::new();
+    let mut set = |name: &str, nm: i64| {
+        values.insert(name.into(), ParamValue::Int(nm));
+    };
+    set("length", d.length);
+    set("width", d.width);
+    set("height", d.height);
+    set("termination", d.termination);
+    if resistor {
+        set("overcoat", overcoat);
+    }
+    if led {
+        set("substrate", substrate);
+        let radius = LENS_EDGE_NM
+            .min(part_of(part_of(d.width, 2), 2))
+            .min(part_of(d.height - substrate, 2));
+        set("lens_round", radius);
+    }
+    // The body's long edges stay below the overcoat's inset, so the
+    // overcoat sits on the flat; an LED's terminations wrap its substrate.
+    let end_top = if led { substrate } else { d.height };
+    let small = d.width.min(end_top);
+    let mut body_edge = BODY_EDGE_NM.min(part_of(small, 10));
+    if resistor {
+        body_edge = body_edge.min(inset);
+    }
+    set("body_round", body_edge);
+    let end_edge = END_EDGE_NM
+        .min(part_of(small * 3, 20))
+        .min(part_of(d.termination, 3));
+    set("end_round", end_edge);
+    v1::Model::PartFile {
+        asset: asset.into(),
+        values,
+    }
+}
+
 fn terminals(part: Part) -> Vec<Terminal> {
     let names = if part == Part::Led {
         ["K", "A"]
@@ -531,7 +619,7 @@ fn generate(request: &Request) -> Result<Generation, Vec<Problem>> {
         } else {
             Vec::new()
         },
-        model: None,
+        model: Some(model(&d)),
         fields: Vec::new(),
         notes,
     })

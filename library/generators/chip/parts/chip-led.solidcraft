@@ -1,0 +1,660 @@
+{
+  "format": "solidcraft/52",
+  "format_pending": [
+    "3d-wire-point-nodes",
+    "frame-end-caps",
+    "joint-origin-inside",
+    "nested-face-name",
+    "opus-quality",
+    "render-indirect-clamp",
+    "render-quality-controls",
+    "revolve-axis-sketch",
+    "sheet-flange-segments",
+    "sketch-link-construction-point",
+    "two-sided-cut-cap-names"
+  ],
+  "name": "Chip LED",
+  "units": "mm",
+  "params": [
+    {
+      "name": "length",
+      "expr": "1.6 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "width",
+      "expr": "0.8 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "height",
+      "expr": "0.75 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "termination",
+      "expr": "0.3 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "substrate",
+      "expr": "0.25 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "lens_round",
+      "expr": "0.1 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "body_round",
+      "expr": "0.025 mm",
+      "unit": "mm",
+      "model": false
+    },
+    {
+      "name": "end_round",
+      "expr": "0.0375 mm",
+      "unit": "mm",
+      "model": false
+    }
+  ],
+  "features": [
+    {
+      "id": 1,
+      "name": "body",
+      "suppressed": false,
+      "body_names": [
+        "body"
+      ],
+      "param_names": [
+        "d1",
+        "d2",
+        "d3"
+      ],
+      "type": "box",
+      "corner": [
+        "- length / 2 + termination",
+        "- width / 2",
+        "0 mm"
+      ],
+      "length": "length - 2 * termination",
+      "width": "width",
+      "height": "substrate",
+      "operation": "new_body"
+    },
+    {
+      "id": 2,
+      "name": "lens",
+      "suppressed": false,
+      "body_names": [
+        "lens"
+      ],
+      "param_names": [
+        "d4",
+        "d5",
+        "d6"
+      ],
+      "type": "box",
+      "corner": [
+        "- length / 2 + termination",
+        "- width / 2",
+        "substrate"
+      ],
+      "length": "length - 2 * termination",
+      "width": "width",
+      "height": "height - substrate",
+      "operation": "new_body"
+    },
+    {
+      "id": 3,
+      "name": "lens round",
+      "suppressed": false,
+      "param_names": [
+        "d7"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.25
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.75
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.25
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.75
+          ]
+        },
+        {
+          "dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.25
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.75
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.25
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.75
+          ]
+        }
+      ],
+      "edge_names": [
+        "F2:+z|F2:-y",
+        "F2:+x|F2:+z",
+        "F2:+y|F2:+z",
+        "F2:+z|F2:-x"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          0.0,
+          -0.4,
+          0.75
+        ],
+        [
+          0.5,
+          0.0,
+          0.75
+        ],
+        [
+          0.0,
+          0.4,
+          0.75
+        ],
+        [
+          -0.5,
+          0.0,
+          0.75
+        ]
+      ],
+      "radius": "lens_round",
+      "body": "lens"
+    },
+    {
+      "id": 4,
+      "name": "termination 1",
+      "suppressed": false,
+      "body_names": [
+        "termination 1"
+      ],
+      "param_names": [
+        "d8",
+        "d9",
+        "d10"
+      ],
+      "type": "box",
+      "corner": [
+        "- length / 2",
+        "- width / 2",
+        "0 mm"
+      ],
+      "length": "termination",
+      "width": "width",
+      "height": "substrate",
+      "operation": "new_body"
+    },
+    {
+      "id": 5,
+      "name": "termination 2",
+      "suppressed": false,
+      "body_names": [
+        "termination 2"
+      ],
+      "param_names": [
+        "d11",
+        "d12",
+        "d13"
+      ],
+      "type": "box",
+      "corner": [
+        "length / 2 - termination",
+        "- width / 2",
+        "0 mm"
+      ],
+      "length": "termination",
+      "width": "width",
+      "height": "substrate",
+      "operation": "new_body"
+    },
+    {
+      "id": 6,
+      "name": "body round",
+      "suppressed": false,
+      "param_names": [
+        "d14"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            -1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            1.0,
+            0.0,
+            0.0
+          ],
+          "min": [
+            -0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.5,
+            0.4,
+            0.25
+          ]
+        }
+      ],
+      "edge_names": [
+        "F1:-y|F1:-z",
+        "F1:+y|F1:-z",
+        "F1:+y|F1:+z",
+        "F1:+z|F1:-y"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          0.0,
+          -0.4,
+          0.0
+        ],
+        [
+          0.0,
+          0.4,
+          0.0
+        ],
+        [
+          0.0,
+          0.4,
+          0.25
+        ],
+        [
+          0.0,
+          -0.4,
+          0.25
+        ]
+      ],
+      "radius": "body_round",
+      "body": "body"
+    },
+    {
+      "id": 7,
+      "name": "termination 1 round",
+      "suppressed": false,
+      "param_names": [
+        "d15"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            -0.8,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            -0.5,
+            0.4,
+            0.25
+          ]
+        }
+      ],
+      "edge_names": [
+        "F4:-x|F4:-z",
+        "F4:+y|F4:-x",
+        "F4:+z|F4:-x",
+        "F4:-x|F4:-y"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          -0.8,
+          0.0,
+          0.0
+        ],
+        [
+          -0.8,
+          0.4,
+          0.125
+        ],
+        [
+          -0.8,
+          0.0,
+          0.25
+        ],
+        [
+          -0.8,
+          -0.4,
+          0.125
+        ]
+      ],
+      "radius": "end_round",
+      "body": "termination 1"
+    },
+    {
+      "id": 8,
+      "name": "termination 2 round",
+      "suppressed": false,
+      "param_names": [
+        "d16"
+      ],
+      "edge_refs": [
+        {
+          "dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.25
+          ]
+        },
+        {
+          "dir": [
+            0.0,
+            0.0,
+            1.0
+          ],
+          "min": [
+            0.5,
+            -0.4,
+            0.0
+          ],
+          "max": [
+            0.8,
+            0.4,
+            0.25
+          ]
+        }
+      ],
+      "edge_names": [
+        "F5:+x|F5:-z",
+        "F5:+x|F5:+y",
+        "F5:+x|F5:+z",
+        "F5:+x|F5:-y"
+      ],
+      "type": "fillet",
+      "edges": [
+        [
+          0.8,
+          0.0,
+          0.0
+        ],
+        [
+          0.8,
+          0.4,
+          0.125
+        ],
+        [
+          0.8,
+          0.0,
+          0.25
+        ],
+        [
+          0.8,
+          -0.4,
+          0.125
+        ]
+      ],
+      "radius": "end_round",
+      "body": "termination 2"
+    }
+  ],
+  "next_id": 9,
+  "next_component_color_index": 0,
+  "appearances": {
+    "bodies": {
+      "body": {
+        "name": "alumina96",
+        "color": [
+          229,
+          227,
+          222
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.55,
+          "dielectric_ior": 1.77
+        }
+      },
+      "lens": {
+        "name": "silicone-clear",
+        "color": [
+          243,
+          243,
+          243
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 0.0,
+          "roughness": 0.08,
+          "dielectric_ior": 1.41
+        }
+      },
+      "termination 1": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      },
+      "termination 2": {
+        "name": "tin-matte",
+        "color": [
+          229,
+          229,
+          231
+        ],
+        "opacity": 1.0,
+        "pbr": {
+          "metallic": 1.0,
+          "roughness": 0.32,
+          "dielectric_ior": 1.5
+        }
+      }
+    }
+  }
+}

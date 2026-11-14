@@ -204,3 +204,72 @@ fn refusals_name_the_field_in_plain_words() {
         vec![("param.out_of_range".into(), Some("part".into()))]
     );
 }
+
+/// The part file and values of a generation's model.
+fn part_file(g: &Generation) -> Result<(&str, &v1::Params), String> {
+    match &g.model {
+        Some(v1::Model::PartFile { asset, values }) => Ok((asset, values)),
+        None => Err("no model".into()),
+    }
+}
+
+#[test]
+fn every_preset_names_its_part_file_with_every_value() -> Result<(), String> {
+    for p in &description().presets {
+        for scope in [Scope::Component, Scope::Package] {
+            let g =
+                Chip::generate(&request(scope, &preset(&p.key))).map_err(|e| format!("{e:?}"))?;
+            let (asset, values) = part_file(&g)?;
+            let (file, extra): (&str, &[&str]) = match p.params.get("part") {
+                Some(ParamValue::Text(t)) if t == "resistor" => {
+                    (parts::CHIP_RESISTOR, &["overcoat"])
+                }
+                Some(ParamValue::Text(t)) if t == "capacitor" => (parts::CHIP_CAPACITOR, &[]),
+                Some(ParamValue::Text(t)) if t == "led" => {
+                    (parts::CHIP_LED, &["substrate", "lens_round"])
+                }
+                _ => (parts::CHIP_FERRITE, &[]),
+            };
+            assert_eq!(asset, file, "{}", p.key);
+            let mut names: Vec<&str> = values.keys().map(String::as_str).collect();
+            names.sort_unstable();
+            let mut expected = vec![
+                "body_round",
+                "end_round",
+                "height",
+                "length",
+                "termination",
+                "width",
+            ];
+            expected.extend(extra);
+            expected.sort_unstable();
+            assert_eq!(names, expected, "{}", p.key);
+            assert!(
+                values
+                    .values()
+                    .all(|v| matches!(v, ParamValue::Int(n) if *n > 0)),
+                "{}",
+                p.key
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn the_part_file_hashes_are_the_bundles_files() -> Result<(), String> {
+    for (stem, hash) in [
+        ("chip-resistor", parts::CHIP_RESISTOR),
+        ("chip-capacitor", parts::CHIP_CAPACITOR),
+        ("chip-ferrite", parts::CHIP_FERRITE),
+        ("chip-led", parts::CHIP_LED),
+    ] {
+        let path = format!("{}/parts/{stem}.solidcraft", env!("CARGO_MANIFEST_DIR"));
+        let bytes = std::fs::read(&path).map_err(|e| format!("{path}: {e}"))?;
+        assert_eq!(
+            sparksmith_generator_sdk::abi::hex(&sparksmith_generator_sdk::abi::sha256(&bytes)),
+            hash
+        );
+    }
+    Ok(())
+}

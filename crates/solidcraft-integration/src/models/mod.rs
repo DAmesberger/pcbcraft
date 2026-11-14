@@ -582,3 +582,7 @@ pub fn recorded(native: &Native) -> Result<BTreeMap<String, GeneratedBody>> {
 
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "chip_part_tests.rs"]
+mod chip_part_tests;

@@ -348,6 +348,81 @@ pub fn author_wroom3() -> Vec<u8> {
     solidcraft_engine::io::write_design(&part.doc)
 }
 
+/// A chip part file of the `chip` generator's bundle: the in-code chip
+/// builder's construction of a 0603 chip of `kind` (its parameters and
+/// body names are already plain in a standalone build), with each body's
+/// appearance named after its Sparksmith material. The generator gives
+/// every parameter a value, so the 0603 numbers are only the file's
+/// defaults.
+pub fn author_chip(kind: sparksmith_core::library::ChipKind, title: &str) -> Vec<u8> {
+    use sparksmith_core::library::ChipForm;
+    let form = PackageForm::Chip(Box::new(ChipForm {
+        kind,
+        length_nm: nm(1.6),
+        width_nm: nm(0.8),
+        height_nm: nm(if kind == sparksmith_core::library::ChipKind::Led {
+            0.75
+        } else {
+            0.45
+        }),
+        termination_nm: nm(0.3),
+    }));
+    let package = PackageDefinition {
+        next_local: 3,
+        terminals: (1..=2)
+            .map(|i| PackageTerminal {
+                id: PackageTerminalId(i),
+                designation: i.to_string(),
+            })
+            .collect(),
+        model: PackageModel::Generated {
+            family_rev: models::family_rev(&form).unwrap(),
+            materials: GeneratedMaterials::default(),
+        },
+        form,
+        ..PackageDefinition::default()
+    };
+    let mut native = Native::new(title).unwrap();
+    let bodies = models::build_standalone(&mut native, &package).unwrap();
+    let mut s = Session::default();
+    *s.doc_mut() = (*native.session().doc).clone();
+    s.refresh();
+    let mut by_material: BTreeMap<MaterialId, Vec<&str>> = BTreeMap::new();
+    for b in &bodies {
+        by_material.entry(b.material).or_default().push(&b.name);
+    }
+    for (material, names) in by_material {
+        assign_look(&mut s, &names, material);
+    }
+    s.refresh();
+    solidcraft_engine::io::write_design(&s.doc)
+}
+
+fn author_chip_resistor() -> Vec<u8> {
+    author_chip(
+        sparksmith_core::library::ChipKind::Resistor,
+        "Chip resistor",
+    )
+}
+
+fn author_chip_capacitor() -> Vec<u8> {
+    author_chip(
+        sparksmith_core::library::ChipKind::Capacitor,
+        "Chip capacitor",
+    )
+}
+
+fn author_chip_ferrite() -> Vec<u8> {
+    author_chip(
+        sparksmith_core::library::ChipKind::Inductor,
+        "Chip inductor or ferrite bead",
+    )
+}
+
+fn author_chip_led() -> Vec<u8> {
+    author_chip(sparksmith_core::library::ChipKind::Led, "Chip LED")
+}
+
 /// Give `bodies` the Solidcraft appearance named after `material`, with
 /// Sparksmith's opaque PBR projection of its look.
 fn assign_look(s: &mut Session, bodies: &[&str], material: MaterialId) {
@@ -921,7 +996,7 @@ pub fn author_usb4105() -> Vec<u8> {
 }
 
 #[test]
-#[ignore = "writes library/parts/*.solidcraft and the examples' part files"]
+#[ignore = "writes library/parts/*.solidcraft, the chip generator's part files and the examples' part files"]
 fn author_parts() {
     // The repository's shipped material library (the program loads it
     // through sparksmith-io at start-up).
@@ -936,7 +1011,20 @@ fn author_parts() {
     .unwrap();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     type Author = fn() -> Vec<u8>;
-    let parts: [(&str, &str, Author); 6] = [
+    let parts: [(&str, &str, Author); 10] = [
+        // The chip generator's bundle (`generators/chip/parts/`).
+        (
+            "generators/chip/parts",
+            "chip-resistor",
+            author_chip_resistor,
+        ),
+        (
+            "generators/chip/parts",
+            "chip-capacitor",
+            author_chip_capacitor,
+        ),
+        ("generators/chip/parts", "chip-ferrite", author_chip_ferrite),
+        ("generators/chip/parts", "chip-led", author_chip_led),
         ("library/parts", "esp32-s31-wroom-3", author_wroom3),
         ("library/parts", "smd-nut", author_smd_nut),
         ("library/parts", "round-spacer", author_round_spacer),
