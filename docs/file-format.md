@@ -194,7 +194,7 @@ Notes:
 
 ## 6. Library folders
 
-A user or team library folder, the project's `library/` snapshot and, with GP5, the shipped parts shelf share one layout. A library folder is a macOS package too.
+A user or team library folder, the project's `library/` snapshot and, with GP5, the shipped parts shelf share one layout. A user or team library folder is a macOS package too, named `<name>.sparklib`; the project's `library/` snapshot inside a project tree has no extension.
 
 ```text
 <library>/
