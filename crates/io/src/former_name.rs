@@ -107,7 +107,7 @@ mod tests {
     use crate::settings::UserDirs;
     use std::ffi::OsString;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     fn write(path: &Path, text: &str) -> crate::Result<()> {
         if let Some(parent) = path.parent() {
@@ -116,34 +116,59 @@ mod tests {
         Ok(fs::write(path, text)?)
     }
 
-    /// The folders of a home directory, as the platform names them.
-    fn folders(home: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
-        if cfg!(target_os = "macos") {
-            let support = home.join("Library/Application Support");
-            (support.join("pcbcraft"), support.join("sparksmith"))
-        } else {
-            (
-                home.join(".config/pcbcraft"),
-                home.join(".config/sparksmith"),
-            )
+    /// The variables of a user whose home is `home`: `HOME`, and on Windows
+    /// the roaming and local application data folders below it.
+    fn home_vars(home: &Path) -> impl Fn(&str) -> Option<OsString> + Copy + '_ {
+        move |name: &str| match name {
+            "HOME" => Some(home.into()),
+            "APPDATA" if cfg!(windows) => Some(home.join("AppData").join("Roaming").into()),
+            "LOCALAPPDATA" if cfg!(windows) => Some(home.join("AppData").join("Local").into()),
+            _ => None,
         }
     }
 
-    #[cfg(not(windows))]
+    /// The former and current config folders of a home directory, as the
+    /// platform names them.
+    fn folders(home: &Path) -> (PathBuf, PathBuf) {
+        let base = if cfg!(target_os = "macos") {
+            home.join("Library").join("Application Support")
+        } else if cfg!(windows) {
+            home.join("AppData").join("Roaming")
+        } else {
+            home.join(".config")
+        };
+        (base.join("pcbcraft"), base.join("sparksmith"))
+    }
+
+    /// The former recovery folder of a home directory.
+    fn former_recovery(home: &Path) -> PathBuf {
+        if cfg!(target_os = "macos") {
+            // A case-sensitive volume keeps the two recovery folders apart.
+            home.join("Library")
+                .join("Application Support")
+                .join("Pcbcraft")
+                .join("Recovery")
+        } else if cfg!(windows) {
+            home.join("AppData")
+                .join("Local")
+                .join("Pcbcraft")
+                .join("Recovery")
+        } else {
+            home.join(".local")
+                .join("state")
+                .join("pcbcraft")
+                .join("recovery")
+        }
+    }
+
     #[test]
     fn the_former_config_folder_is_copied_once_and_kept() -> crate::Result<()> {
         let home = tempfile::tempdir()?;
-        let vars = |name: &str| (name == "HOME").then(|| OsString::from(home.path()));
+        let vars = home_vars(home.path());
         let (former, current) = folders(home.path());
         write(&former.join("settings.json"), "{\"format\": 1}")?;
-        write(&former.join("fab-profiles/house.json"), "profile")?;
-        let state = if cfg!(target_os = "macos") {
-            // A case-sensitive volume keeps the two recovery folders apart.
-            home.path()
-                .join("Library/Application Support/Pcbcraft/Recovery")
-        } else {
-            home.path().join(".local/state/pcbcraft/recovery")
-        };
+        write(&former.join("fab-profiles").join("house.json"), "profile")?;
+        let state = former_recovery(home.path());
         write(&state.join("snapshot.pcbcraft"), "zip")?;
 
         let adopted = UserDirs::adopt_former_from_vars(vars);
@@ -154,7 +179,7 @@ mod tests {
             "{\"format\": 1}"
         );
         assert_eq!(
-            fs::read_to_string(current.join("fab-profiles/house.json"))?,
+            fs::read_to_string(current.join("fab-profiles").join("house.json"))?,
             "profile"
         );
         let recovery = UserDirs::recovery_from_vars(vars)?;
@@ -181,12 +206,11 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(windows))]
     #[test]
     fn nothing_is_copied_without_a_former_folder_or_with_an_override() -> crate::Result<()> {
         let home = tempfile::tempdir()?;
         let (former, current) = folders(home.path());
-        let plain = |name: &str| (name == "HOME").then(|| OsString::from(home.path()));
+        let plain = home_vars(home.path());
         assert!(UserDirs::adopt_former_from_vars(plain).is_empty());
         assert!(
             !current.exists(),
@@ -196,9 +220,8 @@ mod tests {
         write(&former.join("settings.json"), "x")?;
         let elsewhere = home.path().join("elsewhere");
         let overridden = |name: &str| match name {
-            "HOME" => Some(OsString::from(home.path())),
             "SPARKSMITH_CONFIG_DIR" | "SPARKSMITH_RECOVERY_DIR" => Some(elsewhere.clone().into()),
-            _ => None,
+            _ => plain(name),
         };
         assert!(UserDirs::adopt_former_from_vars(overridden).is_empty());
         assert!(!current.exists() && !elsewhere.exists());

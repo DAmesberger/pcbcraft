@@ -543,6 +543,8 @@ fn saving_without_a_path_counts_as_naming_the_current_file() -> Fallible {
     Ok(())
 }
 
+/// Unix only: making a symbolic link on Windows needs a privilege or
+/// Developer Mode that an ordinary account lacks.
 #[cfg(unix)]
 #[test]
 fn a_link_cannot_lead_out_of_an_allowed_folder() -> Fallible {
