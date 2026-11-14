@@ -3,8 +3,10 @@
     "pad_fill_overrides",
     "parts_without_terminals",
     "board_only_parts",
-    "project_rule_source"
+    "project_rule_source",
+    "pins_added_by_import",
+    "net_disagreements"
   ],
-  "schema_sha256": "50d19931e61279dfc1d2676baa6324a3e027cc18ca379efe8f9eba372f27a04b",
+  "schema_sha256": "f4ac3c68676628a831afdc66cae7c9654e168625c7d9661ea968ba278362d6c3",
   "version": 3
 }

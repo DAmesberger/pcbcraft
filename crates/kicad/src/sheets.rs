@@ -90,8 +90,8 @@ fn mm(p: PointNm) -> [f64; 2] {
 /// Our symbol for a KiCad library symbol: a unit per KiCad unit, each pin
 /// where KiCad has it (so wires drawn where KiCad draws them meet it),
 /// tied to the terminal its number names, and a body of its rectangles
-/// (else round its pins). A terminal no pin names gets a pin inside the
-/// body of the first unit, where no wire meets it.
+/// (else round its pins). A terminal no pin names (an unmapped pad) gets a
+/// visible pin on the first unit, marked added by import ([`added_pins`]).
 pub(crate) fn kicad_symbol(
     component: DefinitionId,
     lib: &LibSymbol,
@@ -161,21 +161,9 @@ pub(crate) fn kicad_symbol(
                 .map(|(t, _)| *t)
                 .filter(|t| !pinned.contains(t))
                 .collect();
-            for (j, t) in missing.into_iter().enumerate() {
-                *unpinned += 1;
-                let step = 0.5;
-                let at = [
-                    body.min[0] + step * (1.0 + (j % 8) as f64),
-                    body.min[1] + step * (1.0 + (j / 8) as f64),
-                ];
-                pinned.insert(t);
-                pins.push(Pin::new(
-                    t,
-                    OurPoint::from_mm_f64_rounded(at)?,
-                    PinDirection::Right,
-                    Nm::from_mm_f64_rounded(0.1)?,
-                ));
-            }
+            added_pins(&mut pins, &mut body, &missing)?;
+            *unpinned += missing.len();
+            pinned.extend(missing);
         }
         let gap = 1.0;
         let graphics = vec![
@@ -216,6 +204,65 @@ pub(crate) fn kicad_symbol(
         pin_text_height_nm: graphics::PIN_TEXT_HEIGHT,
         units: out,
     })
+}
+
+/// Length of a pin added by import, and the step between such pins, mm.
+const ADDED_PIN_MM: f64 = 2.54;
+
+/// Pins for `missing` terminals on the body's right side, one step apart
+/// from the top down, each clear of the unit's other pins, marked added by
+/// import; the body grows down when its side is full. No wire meets them:
+/// the source schematic leaves these pads unconnected.
+fn added_pins(
+    pins: &mut Vec<Pin>,
+    body: &mut Bounds,
+    missing: &[TerminalId],
+) -> sparksmith_core::Result<()> {
+    let step = ADDED_PIN_MM;
+    let x = body.max[0] + ADDED_PIN_MM;
+    // The other pins' stubs, mm: connection end and body end.
+    let stubs: Vec<([f64; 2], [f64; 2])> = pins
+        .iter()
+        .map(|p| {
+            let a = p.position_mm();
+            let v = p.direction.vector();
+            let l = p.length_mm();
+            (a, [a[0] + v[0] * l, a[1] + v[1] * l])
+        })
+        .collect();
+    let right = body.max[0];
+    let clear = |y: f64| {
+        let (a, b) = ([x, y], [right, y]);
+        let d = sparksmith_core::geometry::segment_distance;
+        stubs.iter().all(|(p, q)| {
+            d(*p, a, b)
+                .min(d(*q, a, b))
+                .min(d(a, *p, *q))
+                .min(d(b, *p, *q))
+                > step / 2.0 - 1e-9
+        })
+    };
+    let mut k = 0usize;
+    for t in missing {
+        let y = loop {
+            k += 1;
+            let y = body.max[1] - step * k as f64;
+            // Past the body's side every place is clear: the body grows.
+            if y < body.min[1] + step / 2.0 || clear(y) {
+                break y;
+            }
+        };
+        body.min[1] = body.min[1].min(y - step / 2.0);
+        let mut pin = Pin::new(
+            *t,
+            OurPoint::from_mm_f64_rounded([x, y])?,
+            PinDirection::Left,
+            Nm::from_mm_f64_rounded(ADDED_PIN_MM)?,
+        );
+        pin.added_by_import = true;
+        pins.push(pin);
+    }
+    Ok(())
 }
 
 fn refused(step: &'static str, e: impl std::fmt::Display) -> ImportError {

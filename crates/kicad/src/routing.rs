@@ -22,6 +22,9 @@ use sparksmith_core::geometry::{Point, distance};
 use sparksmith_core::layout::posture::MIN_SEGMENT_MM;
 use sparksmith_core::layout::{LayoutCommand, RouteEditSet, RouteRequest, ViaRequest};
 use sparksmith_core::model::LabelKind;
+use sparksmith_core::model::import_review::{
+    DisagreementKind, MAX_DISAGREEMENTS, MAX_TERMINALS, NetDisagreement,
+};
 use sparksmith_core::schematic::SchematicCommand;
 use sparksmith_core::{
     CopperLayer, Endpoint, Id, Operation, PackageTerminalId, TerminalId, ViaSpan,
@@ -163,45 +166,115 @@ pub(crate) fn connect(
     }
     report.counts.nets = out.len();
     if labelled.is_some() {
-        compare_nets(project, &terminal_net, report);
+        let disagreements = compare_nets(project, &terminal_net, report);
+        if !disagreements.is_empty() {
+            session.apply(
+                "schematic.set_net_disagreements",
+                Operation::Schematic(SchematicCommand::SetNetDisagreements { disagreements }),
+            )?;
+        }
     }
     Ok(out)
 }
 
-/// Whether the schematic's nets equal the board's, net for net: a board
-/// net is equal when all its pad terminals are on one schematic net (or,
-/// alone, on none) that holds no terminal of another board net.
+/// Where a terminal is: on a net, or alone (on none).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Place<N> {
+    Net(N),
+    Alone(Endpoint),
+}
+
+/// Groups of `ends` by `place`, in order.
+fn grouped<N: Ord>(ends: &[Endpoint], place: impl Fn(Endpoint) -> Place<N>) -> Vec<Vec<Endpoint>> {
+    let mut groups: BTreeMap<Place<N>, Vec<Endpoint>> = BTreeMap::new();
+    for end in ends {
+        groups.entry(place(*end)).or_default().push(*end);
+    }
+    groups.into_values().collect()
+}
+
+/// Whether the schematic's nets equal the board's, net for net, and where
+/// they disagree. A board net is equal when all its pad terminals are on
+/// one schematic net (or, a lone pad, on none) that holds no terminal of
+/// another board net; split when the schematic has its terminals apart
+/// (the board joins them); joined when their schematic net holds another
+/// board net's too. The schematic wins: each disagreement is returned for
+/// the project to keep as a finding, a board net the schematic splits and
+/// a schematic net the board splits (its terminals on several board nets,
+/// or on none).
 fn compare_nets(
     project: &sparksmith_core::Project,
     terminal_net: &BTreeMap<Endpoint, u32>,
     report: &mut Report,
-) {
+) -> Vec<NetDisagreement> {
     let mut members: BTreeMap<u32, Vec<Endpoint>> = BTreeMap::new();
     for (end, net) in terminal_net {
         members.entry(*net).or_default().push(*end);
     }
-    let ours = |e: &Endpoint| project.net_of(*e).map(|n| n.id);
-    let mut boards_of: BTreeMap<Id, BTreeSet<u32>> = BTreeMap::new();
-    for (end, net) in terminal_net {
-        if let Some(id) = ours(end) {
-            boards_of.entry(id).or_default().insert(*net);
-        }
-    }
+    let ours = |e: Endpoint| {
+        project
+            .net_of(e)
+            .map_or(Place::Alone(e), |n| Place::Net(n.id))
+    };
+    let board = |e: Endpoint| {
+        terminal_net
+            .get(&e)
+            .map_or(Place::Alone(e), |n| Place::Net(*n))
+    };
+    let mut out = Vec::new();
     for ends in members.values() {
-        let mine: BTreeSet<Option<Id>> = ends.iter().map(ours).collect();
-        let equal = match mine.iter().collect::<Vec<_>>().as_slice() {
-            [Some(id)] => boards_of.get(id).is_some_and(|b| b.len() == 1),
-            [None] => ends.len() == 1,
-            _ => false,
+        let groups = grouped(ends, ours);
+        let alone = ends.len() == 1;
+        let place = groups.first().and_then(|g| g.first()).map(|e| ours(*e));
+        if groups.len() > 1 {
+            report.counts.schematic_nets_split += 1;
+            out.push(NetDisagreement {
+                kind: DisagreementKind::BoardJoins,
+                groups,
+            });
+            continue;
+        }
+        let equal = match place {
+            Some(Place::Net(id)) => project
+                .nets
+                .iter()
+                .find(|n| n.id == id)
+                .is_some_and(|n| grouped(&n.terminals, board).len() == 1),
+            _ => alone,
         };
         if equal {
             report.counts.schematic_nets_equal += 1;
-        } else if mine.len() > 1 {
-            report.counts.schematic_nets_split += 1;
         } else {
             report.counts.schematic_nets_merged += 1;
         }
     }
+    for net in project.nets.iter() {
+        let groups = grouped(&net.terminals, board);
+        if groups.len() > 1 {
+            out.push(NetDisagreement {
+                kind: DisagreementKind::BoardSplits,
+                groups,
+            });
+        }
+    }
+    // Within the project's bounds: the first ones, the rest counted.
+    let mut terminals = 0usize;
+    let mut kept = Vec::with_capacity(out.len());
+    for d in out {
+        let n: usize = d.groups.iter().map(Vec::len).sum();
+        let case = match d.kind {
+            DisagreementKind::BoardJoins => Case::BoardJoinsNets,
+            DisagreementKind::BoardSplits => Case::BoardSplitsNet,
+        };
+        if kept.len() < MAX_DISAGREEMENTS && terminals + n <= MAX_TERMINALS {
+            terminals += n;
+            kept.push(d);
+            report.add(case);
+        } else {
+            report.add(Case::NetDisagreementOverLimit);
+        }
+    }
+    kept
 }
 
 /// The copper layer a KiCad layer name is, by its place in the board's

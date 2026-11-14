@@ -150,3 +150,300 @@ fn occurrence_symbol(
 ) -> Fallible<sparksmith_core::DefinitionId> {
     Ok(project.instance(instance).ok_or("instance")?.representation)
 }
+
+/// A two-pin resistor symbol, pins 1 (up) and 2 (down) 3.81 mm from its
+/// origin, inside a body from (−1, −2.54) to (1, 2.54).
+const TWO_PIN: &str = "(symbol \"Synthetic:R2\" (in_bom yes) (on_board yes)
+      (symbol \"R2_0_1\" (rectangle (start -1 2.54) (end 1 -2.54)))
+      (symbol \"R2_1_1\"
+        (pin passive line (at 0 3.81 270) (length 1.27) (name \"~\") (number \"1\"))
+        (pin passive line (at 0 -3.81 90) (length 1.27) (name \"~\") (number \"2\"))))";
+
+/// A root sheet of `TWO_PIN` symbols (`(reference, "x y angle")`) and
+/// further items.
+fn sheet(symbols: &[(&str, &str)], items: &str) -> String {
+    let placed: String = symbols
+        .iter()
+        .map(|(reference, at)| {
+            format!(
+                "(symbol (lib_id \"Synthetic:R2\") (at {at}) (unit 1)
+                   (property \"Reference\" \"{reference}\" (at 0 0 0))
+                   (property \"Value\" \"1k\" (at 0 0 0))
+                   (instances (project \"synthetic\" (path \"/00000000-0000-4000-8000-000000000002\" (reference \"{reference}\") (unit 1)))))\n"
+            )
+        })
+        .collect();
+    format!(
+        "(kicad_sch (version 20231120) (generator \"sparksmith_test\")
+  (uuid \"00000000-0000-4000-8000-000000000002\")
+  (paper \"A4\")
+  (lib_symbols {TWO_PIN})
+  {placed}
+  {items}
+)"
+    )
+}
+
+/// One part of [`row_board`]: its reference and pads (number, net).
+type Part<'a> = (&'a str, &'a [(&'static str, Option<(u32, &'a str)>)]);
+
+/// Resistors in a row on the board, each pad on the net given (or none).
+fn row_board(parts: &[Part<'_>]) -> Board {
+    let mut nets = BTreeMap::new();
+    let footprints = parts
+        .iter()
+        .enumerate()
+        .map(|(k, (reference, pads))| {
+            let pads = pads
+                .iter()
+                .enumerate()
+                .map(|(j, (number, net))| {
+                    let pad =
+                        Pad::smd(number, "rect", [j as f64 * 2.0 - 1.0, 0.0, 0.0], [0.8, 0.6]);
+                    match net {
+                        Some((n, name)) => {
+                            nets.insert(*n, *name);
+                            pad.with(&format!("(net {n} \"{name}\")"))
+                        }
+                        None => pad,
+                    }
+                })
+                .collect();
+            Footprint::new(reference, [10.0 + 8.0 * k as f64, 10.0, 0.0], false, pads)
+        })
+        .collect();
+    let mut items: String = nets
+        .iter()
+        .map(|(n, name)| format!("  (net {n} \"{name}\")"))
+        .collect();
+    items.push_str(
+        "\n  (gr_rect (start 0 0) (end 60 20) (stroke (width 0.1) (type default)) (layer \"Edge.Cuts\"))\n",
+    );
+    Board {
+        copper: 2,
+        origin: None,
+        setup: "(pad_to_mask_clearance 0)".into(),
+        footprints,
+        items,
+    }
+}
+
+fn import_sheet(board: &Board, sheet: String) -> Fallible<sparksmith_kicad::Imported> {
+    let mut files = BTreeMap::new();
+    files.insert("synthetic.kicad_sch".to_owned(), sheet.into_bytes());
+    Ok(support::import_with_schematic(
+        board.text().as_bytes(),
+        None,
+        Some(("synthetic.kicad_sch", &files)),
+    )?)
+}
+
+/// The net of `designator`'s terminal named `number`.
+fn net_of(
+    project: &sparksmith_core::Project,
+    designator: &str,
+    number: &str,
+) -> Option<sparksmith_core::Id> {
+    let instance = project.instance_by_designator(designator)?;
+    let terminal = project
+        .library
+        .component(instance.component)?
+        .definition
+        .terminals
+        .iter()
+        .find(|t| t.name == number)?
+        .id;
+    project
+        .net_of(sparksmith_core::Endpoint {
+            instance: instance.id,
+            terminal,
+        })
+        .map(|n| n.id)
+}
+
+/// Each Issues row's code and title.
+fn issue_rows(project: &sparksmith_core::Project) -> Fallible<Vec<(String, String)>> {
+    let report = sparksmith_core::issues::report(
+        project,
+        &sparksmith_core::library::Drafts::default(),
+        &sparksmith_core::issues::IssueScope::All,
+        &Default::default(),
+    )?;
+    Ok(report
+        .rows
+        .iter()
+        .map(|r| (r.finding.code.clone(), r.title.clone()))
+        .collect())
+}
+
+/// Four wire ends meeting at one point with a junction (left, right, up
+/// and down, each to a pin) are one net, as in KiCad: our wires are drawn
+/// as strokes, and the second stroke through the point must end on the
+/// first there, never cross it (crossing wires do not join).
+#[test]
+fn four_wire_ends_at_one_point_are_one_net() -> Fallible<()> {
+    let sig = Some((5, "SIG"));
+    let board = row_board(&[
+        ("R1", &[("1", Some((1, "A"))), ("2", sig)]),
+        ("R2", &[("1", sig), ("2", Some((2, "B")))]),
+        ("R3", &[("1", Some((3, "C"))), ("2", sig)]),
+        ("R4", &[("1", sig), ("2", Some((4, "D")))]),
+    ]);
+    // Centre (70, 70): R1.2 above at (70, 63.81), R2.1 below at
+    // (70, 76.19); R3 and R4 turned a quarter, R3.2 left at (63.81, 70)
+    // and R4.1 right at (76.19, 70).
+    let schematic = sheet(
+        &[
+            ("R1", "70 60 0"),
+            ("R2", "70 80 0"),
+            ("R3", "60 70 90"),
+            ("R4", "80 70 90"),
+        ],
+        "(wire (pts (xy 63.81 70) (xy 70 70)))
+  (wire (pts (xy 70 70) (xy 76.19 70)))
+  (wire (pts (xy 70 63.81) (xy 70 70)))
+  (wire (pts (xy 70 70) (xy 70 76.19)))
+  (junction (at 70 70))",
+    );
+    let imported = import_sheet(&board, schematic)?;
+    let project = imported.engine.project();
+    let c = &imported.report.counts;
+    assert_eq!(
+        (
+            c.schematic_nets_equal,
+            c.schematic_nets_split,
+            c.schematic_nets_merged
+        ),
+        (5, 0, 0)
+    );
+    let sig = net_of(project, "R1", "2");
+    assert!(sig.is_some());
+    for (d, n) in [("R2", "1"), ("R3", "2"), ("R4", "1")] {
+        assert_eq!(net_of(project, d, n), sig, "{d}.{n}");
+    }
+    assert!(project.net_disagreements.is_empty());
+    Ok(())
+}
+
+/// Where the board and its schematic disagree, the schematic wins and each
+/// disagreement is a finding: the board joins R1.2 and R2.1 (SIG) that the
+/// schematic leaves apart, and the schematic joins R1.1 and R2.2, which
+/// the board has on two nets (GND and OUT).
+#[test]
+fn board_and_schematic_disagreements_are_findings() -> Fallible<()> {
+    let sig = Some((2, "SIG"));
+    let board = row_board(&[
+        ("R1", &[("1", Some((1, "GND"))), ("2", sig)]),
+        ("R2", &[("1", sig), ("2", Some((3, "OUT")))]),
+    ]);
+    // R1.1 at (50, 46.19) wired to R2.2 at (60, 53.81).
+    let schematic = sheet(
+        &[("R1", "50 50 0"), ("R2", "60 50 0")],
+        "(wire (pts (xy 50 46.19) (xy 55 46.19) (xy 55 53.81) (xy 60 53.81)))",
+    );
+    let imported = import_sheet(&board, schematic)?;
+    let project = imported.engine.project();
+    let report = &imported.report;
+    let c = &report.counts;
+    assert_eq!(
+        (
+            c.schematic_nets_equal,
+            c.schematic_nets_split,
+            c.schematic_nets_merged
+        ),
+        (0, 1, 2)
+    );
+    // The schematic's nets are kept.
+    assert!(net_of(project, "R1", "1").is_some());
+    assert_eq!(net_of(project, "R1", "1"), net_of(project, "R2", "2"));
+    assert_ne!(net_of(project, "R1", "2"), net_of(project, "R2", "1"));
+    assert_eq!(report.count(Case::BoardJoinsNets), 1);
+    assert_eq!(report.count(Case::BoardSplitsNet), 1);
+    assert_eq!(project.net_disagreements.len(), 2);
+    let rows = issue_rows(project)?;
+    let joined = rows
+        .iter()
+        .find(|(code, _)| code == "import.board_joins_nets")
+        .ok_or("no finding for the nets the board joins")?;
+    assert!(
+        joined.1.ends_with("joined on the imported board") && joined.1.contains(" and "),
+        "{}",
+        joined.1
+    );
+    let split = rows
+        .iter()
+        .find(|(code, _)| code == "import.board_splits_net")
+        .ok_or("no finding for the net the board splits")?;
+    assert!(
+        split.1.ends_with("split on the imported board"),
+        "{}",
+        split.1
+    );
+    Ok(())
+}
+
+/// A pad whose number matches no pin of its KiCad symbol gets a visible
+/// pin outside the body, marked added by import, and an unmapped-pad
+/// finding.
+#[test]
+fn an_unmapped_pad_gets_a_visible_pin_added_by_import() -> Fallible<()> {
+    let board = row_board(&[(
+        "R1",
+        &[
+            ("1", Some((1, "GND"))),
+            ("2", Some((2, "SIG"))),
+            ("3", Some((3, "EXTRA"))),
+        ],
+    )]);
+    let schematic = sheet(&[("R1", "50 50 0")], "");
+    let imported = import_sheet(&board, schematic)?;
+    let project = imported.engine.project();
+    assert_eq!(imported.report.count(Case::TerminalWithoutPin), 1);
+    let r1 = project.instance_by_designator("R1").ok_or("R1")?;
+    let terminal = project
+        .library
+        .component(r1.component)
+        .ok_or("component")?
+        .definition
+        .terminals
+        .iter()
+        .find(|t| t.name == "3")
+        .ok_or("terminal 3")?
+        .id;
+    let symbol = project
+        .library
+        .symbol(sparksmith_core::SymbolRef::new(
+            occurrence_symbol(project, r1.id)?,
+            sparksmith_core::Revision::FIRST,
+        ))
+        .ok_or("symbol")?;
+    let pins: Vec<_> = symbol
+        .definition
+        .units
+        .iter()
+        .flat_map(|u| &u.pins)
+        .collect();
+    assert_eq!(pins.len(), 3);
+    let added = pins
+        .iter()
+        .find(|p| p.terminal == terminal)
+        .ok_or("no pin for pad 3")?;
+    assert!(added.added_by_import);
+    assert_eq!(pins.iter().filter(|p| p.added_by_import).count(), 1);
+    // Outside the body's right side (x = 1), pointing into it, clear of
+    // the other pins.
+    let at = added.position.to_mm_f64();
+    assert!((at[0] - 3.54).abs() < 1e-9 && at[1].abs() < 1e-9, "{at:?}");
+    assert_eq!(
+        added.direction,
+        sparksmith_core::library::graphics::PinDirection::Left
+    );
+    let rows = issue_rows(project)?;
+    assert!(
+        rows.iter()
+            .any(|(code, title)| code == "instance.unmapped_pad"
+                && title == "R1 pin 3: pin added by import"),
+        "{rows:?}"
+    );
+    Ok(())
+}

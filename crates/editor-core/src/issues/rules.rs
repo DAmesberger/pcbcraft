@@ -140,6 +140,9 @@ pub fn group_title(code: &str) -> String {
         "erc.hierarchy_mismatch" => "Sheet pins and labels that do not match",
         "erc.label_conflict" => "Nets with conflicting labels",
         "erc.power_port_undriven" => "Power nets without a source",
+        "import.board_joins_nets" => "Nets the imported board joined",
+        "import.board_splits_net" => "Nets the imported board split",
+        "instance.unmapped_pad" => "Pins added by import for unmapped pads",
         NO_PART => "No Part chosen",
         CHECK_FAILED => "Instances that cannot be checked",
         "part.stale_component" => "Part for an older revision",
@@ -279,6 +282,10 @@ pub(super) fn fix(code: &str) -> Option<&'static str> {
         "erc.hierarchy_mismatch" => "Add the missing pin or hierarchical label",
         "erc.label_conflict" => "Rename the labels to one name",
         "erc.power_port_undriven" => "Connect a supply to the net",
+        "import.board_joins_nets" | "import.board_splits_net" => {
+            "Check the net in the schematic; waive this to keep the schematic's"
+        }
+        "instance.unmapped_pad" => "Keep, move or delete the pin added on the Symbol tab",
         _ => return None,
     })
 }
@@ -433,6 +440,23 @@ pub(super) fn title(names: &Names<'_>, findings: &[&Finding]) -> String {
         "instance.unit_unplaced" => format!(
             "{} is neither placed nor marked unused",
             names_of(names, findings, |_| true).join(", ")
+        ),
+        "import.board_joins_nets" => format!(
+            "{} joined on the imported board",
+            list(&names_of(names, findings, |o| {
+                matches!(o, ObjectRef::Net { .. } | ObjectRef::Terminal { .. })
+            }))
+        ),
+        "import.board_splits_net" => format!(
+            "{} split on the imported board",
+            list(&names_of(names, findings, |o| matches!(
+                o,
+                ObjectRef::Net { .. }
+            )))
+        ),
+        "instance.unmapped_pad" => format!(
+            "{}: pin added by import",
+            list(&names_of(names, findings, |_| true))
         ),
         "instance.terminal_unaccounted" => format!(
             "{} unconnected",
@@ -624,12 +648,15 @@ pub const KNOWN_CODES: &[&str] = &[
     "assembly.unexported_face",
     "impedance.mismatch",
     "impedance.no_tolerance",
+    "import.board_joins_nets",
+    "import.board_splits_net",
     "instance.field_required",
     "instance.no_connect_connected",
     "instance.no_physical_choice",
     "instance.required_terminal_no_connect",
     "instance.terminal_unaccounted",
     "instance.unit_unplaced",
+    "instance.unmapped_pad",
     "interface.datum_inexact",
     "interface.datum_lost",
     "keepout.pad",

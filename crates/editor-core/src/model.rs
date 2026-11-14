@@ -16,6 +16,7 @@ pub mod assembly_link;
 pub mod board;
 pub mod dimension;
 pub mod fill;
+pub mod import_review;
 pub mod interface;
 pub mod production;
 pub mod sheet;
@@ -540,6 +541,10 @@ pub struct Project {
     /// snapshot (`interface::assembly_link`); `None` until `assembly.link`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub assembly_link: Option<Box<assembly_link::AssemblyLink>>,
+    /// Where an imported board and its schematic disagreed about nets
+    /// (the schematic's kept); findings while they still disagree.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub net_disagreements: Vec<import_review::NetDisagreement>,
 }
 
 /// The item of `items` with identity `id`. Collections are kept in
@@ -649,6 +654,7 @@ impl Project {
             production: production::Production::default(),
             interface: Shared::default(),
             assembly_link: None,
+            net_disagreements: Vec::new(),
         }
     }
 }

@@ -421,6 +421,14 @@ pub enum SchematicCommand {
     /// adds no undo step.
     #[serde(rename = "project.rename")]
     RenameProject { name: String },
+    /// Record where an imported board and its schematic disagree on nets.
+    ///
+    /// Replaces the list (empty clears it). The schematic's nets stay; each
+    /// disagreement is a finding while the schematic still disagrees.
+    #[serde(rename = "schematic.set_net_disagreements")]
+    SetNetDisagreements {
+        disagreements: Vec<crate::model::import_review::NetDisagreement>,
+    },
     /// Number designators across sheets; existing annotated designators
     /// stay unless `mode` is `all`.
     #[serde(rename = "schematic.annotate")]
@@ -500,6 +508,7 @@ declare_entries!(SchematicCommand in schematic {
     RemoveDrawing "drawing.remove" Edit "Remove a drawing",
     SetProperties "project.set_properties" Edit "Set project properties" [in project],
     RenameProject "project.rename" Edit "Rename the project" [in project],
+    SetNetDisagreements "schematic.set_net_disagreements" Edit "Record net disagreements" [since(0, 2)],
     Annotate "schematic.annotate" Edit "Annotate designators",
     Paste "schematic.paste" Edit "Paste schematic objects",
 });
@@ -767,6 +776,21 @@ fn apply_command(
         C::RemoveDrawing { drawing } => none(sheets::remove_drawing(project, drawing)),
         C::SetProperties { properties } => none(sheets::set_properties(project, properties)),
         C::RenameProject { name } => none(sheets::rename_project(project, &name)),
+        C::SetNetDisagreements { disagreements } => {
+            crate::model::import_review::check(&disagreements)?;
+            for end in disagreements.iter().flat_map(|d| d.groups.iter().flatten()) {
+                let known = project
+                    .instance(end.instance)
+                    .and_then(|i| project.library.component(i.component))
+                    .and_then(|c| c.definition.terminal(end.terminal))
+                    .is_some();
+                if !known {
+                    return Err(not_found("Unknown terminal in a net disagreement."));
+                }
+            }
+            project.net_disagreements = disagreements;
+            Ok(Applied::None)
+        }
         C::Annotate {
             order,
             mode,

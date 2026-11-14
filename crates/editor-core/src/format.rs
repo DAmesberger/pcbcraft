@@ -43,6 +43,8 @@ pub const FEATURES: &[&str] = &[
     PARTS_WITHOUT_TERMINALS,
     BOARD_ONLY_PARTS,
     PROJECT_RULE_SOURCE,
+    PINS_ADDED_BY_IMPORT,
+    NET_DISAGREEMENTS,
 ];
 /// A placed part or pad overrides how fills join it
 /// (`Placement::fill_override`, `pad_fill_overrides`).
@@ -53,6 +55,12 @@ pub const PARTS_WITHOUT_TERMINALS: &str = "parts_without_terminals";
 pub const BOARD_ONLY_PARTS: &str = "board_only_parts";
 /// The project's own rule set names its source (`ProjectRules::source`).
 pub const PROJECT_RULE_SOURCE: &str = "project_rule_source";
+/// A symbol pin an import added for an unmapped pad
+/// (`Pin::added_by_import`).
+pub const PINS_ADDED_BY_IMPORT: &str = "pins_added_by_import";
+/// Where an imported board and its schematic disagreed on nets
+/// (`Project::net_disagreements`).
+pub const NET_DISAGREEMENTS: &str = "net_disagreements";
 pub const EXTENSION: &str = "sparksmith";
 /// The extension before the rename from Pcbcraft (docs/rename-phase-b.md).
 /// Such a file holds this same format, so it opens through the same reader
@@ -134,6 +142,24 @@ pub fn features_used(file: &EditorFile) -> Vec<&'static str> {
     }
     if project.rules.source.is_some() {
         out.push(PROJECT_RULE_SOURCE);
+    }
+    let added = |symbol: &crate::library::SymbolDefinition| {
+        symbol
+            .units
+            .iter()
+            .flat_map(|u| &u.pins)
+            .any(|p| p.added_by_import)
+    };
+    let draft_added = file
+        .drafts
+        .items
+        .iter()
+        .any(|d| matches!(&d.definition, crate::library::Definition::Symbol(s) if added(s)));
+    if library.symbols.iter().any(|s| added(&s.definition)) || draft_added {
+        out.push(PINS_ADDED_BY_IMPORT);
+    }
+    if !project.net_disagreements.is_empty() {
+        out.push(NET_DISAGREEMENTS);
     }
     out
 }
@@ -356,6 +382,26 @@ mod tests {
             object.remove("features");
         }
         assert!(refusal(&unlisted)?.contains("project_rule_source"));
+        Ok(())
+    }
+
+    /// Net disagreements an import recorded are a named feature too.
+    #[test]
+    fn net_disagreements_are_a_named_feature() -> Result<()> {
+        use crate::model::import_review::{DisagreementKind, NetDisagreement};
+        let end = |terminal: u32| crate::ids::Endpoint {
+            instance: 1,
+            terminal: crate::ids::TerminalId(terminal),
+        };
+        let mut document = Document::default();
+        std::sync::Arc::make_mut(&mut document.project).net_disagreements = vec![NetDisagreement {
+            kind: DisagreementKind::BoardJoins,
+            groups: vec![vec![end(1)], vec![end(2)]],
+        }];
+        let file = EditorFile::from_document(&document);
+        let value: serde_json::Value = serde_json::from_slice(&encode(&file)?)?;
+        assert_eq!(value["features"], serde_json::json!([NET_DISAGREEMENTS]));
+        assert_eq!(refusal(&value)?, "accepted");
         Ok(())
     }
 

@@ -14,7 +14,7 @@ Four founder requests are built here: configurable manufacturing parameters with
 
 - **Core** (`rules.rs`, `rules/profile.rs`, `rules/formula.rs`): `ProjectRules` holds a snapshot of the chosen profile (none until one is chosen), per-project overrides, net classes, class assignments and patterns, and class-to-class clearances.
   - Values resolve in this order: profile, then override, then net class, then class pair. A `Region` source is reserved and has an explicit precedence.
-  - The overrides, net classes and pairs are the project's own rule set. `ProjectRules::source` says where it comes from in the user's words ("From the KiCad project" after an import; none when it was set in the project), set with `rules.set_project_source` and shown in the Rules panel as "Project rules". The fab profile stays attached for the fab limits; the KiCad importer leaves out any KiCad limit looser than the profile's and counts it.
+  - The overrides, net classes and pairs are the project's own rule set. `ProjectRules::source` says where it comes from in the user's words ("From the KiCad project" after an import; none when it was set in the project), set with `rules.set_project_source` and shown in the Rules panel as "Project rules". The fab profile stays attached for the fab limits; the KiCad importer leaves out any KiCad limit looser than the profile's, and its report says how many ("N KiCad rules looser than the fab profile were not taken").
   - `RuleSource::describe()` names the source in messages, for example "Fine 4/4" or "net class Power".
   - `rules::apply` is atomic. It names the rule in every bounds refusal.
   - `rules.set_fab_profile` takes any valid, sourced profile and refuses kept overrides that break it (`rules.override_conflict`).

@@ -17,15 +17,16 @@ fn names(family: &str) -> Vec<&'static str> {
 }
 
 #[test]
-fn the_catalog_has_its_264_entries() {
+fn the_catalog_has_its_265_entries() {
     assert_eq!(names("command").len(), Request::ENTRIES.len());
     assert_eq!(names("operation").len(), Operation::entries().count());
     assert_eq!(names("query").len(), Query::ENTRIES.len());
     // The three tables above keep the per-family counts honest; this total
     // changes with every new request, operation or query. 262 after the fab
     // profile options; then fill.set_pad_override, component.place_board_only
-    // and rules.set_project_source joined, and library.generate_pads went.
-    assert_eq!(metadata::entries().len(), 264);
+    // and rules.set_project_source joined, and library.generate_pads went;
+    // then schematic.set_net_disagreements joined.
+    assert_eq!(metadata::entries().len(), 265);
 }
 
 /// A title is short, says more than the wire name, and is unique within its

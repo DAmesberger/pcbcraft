@@ -488,6 +488,11 @@ impl PartEditor {
                 kit::check_row(ui, "Clock (wedge)", &mut pin.decorations.clock);
                 kit::check_row(ui, "Show name", &mut pin.name.visible);
                 kit::check_row(ui, "Show number", &mut pin.number.visible);
+                // An import's pin for an unmapped pad: clearing the mark
+                // keeps the pin (moving or deleting it are the other ways).
+                if pin.added_by_import {
+                    kit::check_row(ui, "Added by import", &mut pin.added_by_import);
+                }
             });
         }
     }

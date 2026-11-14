@@ -20,14 +20,16 @@ pub use sparksmith_generator_abi::surface::{
 /// cut-over every module is `0.x` (`docs/design/decisions-2026-11-14.md`);
 /// `cargo xtask surface --check` holds each against `surface.lock`.
 pub const MODULES: &[ModuleDecl] = &[
-    module(
+    module_at(
         "project",
+        (0, 2),
         "Project",
         "The open design: inspect, properties, undo, redo, bill of materials.",
     ),
     module("files", "Files", "New, open and save a project file."),
-    module(
+    module_at(
         "schematic",
+        (0, 2),
         "Schematic",
         "Sheets, symbols, wires, labels, placed components and their pins.",
     ),
@@ -41,8 +43,9 @@ pub const MODULES: &[ModuleDecl] = &[
         "Rules",
         "Design rules, fab profiles, net classes and impedance.",
     ),
-    module(
+    module_at(
         "library",
+        (0, 2),
         "Library",
         "Component definitions, drafts, publishing, folders, updates and pinout import.",
     ),
@@ -69,9 +72,20 @@ pub const MODULES: &[ModuleDecl] = &[
 ];
 
 const fn module(id: &'static str, title: &'static str, summary: &'static str) -> ModuleDecl {
+    module_at(id, (0, 1), title, summary)
+}
+
+/// A module at `version`, raised from 0.1 by a change the lock records
+/// (0.2: net disagreements and pins added by import).
+const fn module_at(
+    id: &'static str,
+    version: Version,
+    title: &'static str,
+    summary: &'static str,
+) -> ModuleDecl {
     ModuleDecl {
         id,
-        version: (0, 1),
+        version,
         title,
         summary,
         needs: Needs::NONE,
