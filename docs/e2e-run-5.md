@@ -37,7 +37,7 @@ The board: a USB-C receptacle (J1), an LDO in SOT-23-5 (U1), two 1 µF capacitor
 2. **Provenance text shows an internal file name.** The USB-C part reads "[built-in starter table usb_c.json format 1]" in its card.
 3. **Board parameter fields need a double-click to edit.** A single or triple click on `width` in the Board card does nothing visible; other number fields take a click.
 4. **Saved projects are readable by their owner only (mode 0600).** The atomic save keeps the temporary file's permissions, so a project saved on a shared drive or in a repository can't be read by other users.
-5. **Power port labels crowd on short pins.** On a SOT-23-5 symbol, the VBUS and GND labels on pins 1–3 overlap each other.
+5. **Not reproduced: power port labels crowding.** At low zoom the VBUS, GND and VBUS ports on pins 1–3 of U1 looked stacked. Measured in core geometry with the same sequence, the closest pair keeps 0.40 mm, the minimum label spacing, and none touch, across rotations, mirrors and port styles.
 6. **The 2D board shows the "J1 opening" interface datum by default**, with lines reaching past the board edge. 3D hides the board interface unless asked (run 4 finding 18); 2D should match.
 
 ## Speed
