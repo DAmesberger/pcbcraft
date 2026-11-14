@@ -505,6 +505,7 @@ fn collect(
         }
     }
     schematic.extend(erc::checks(project));
+    schematic.extend(crate::model::import_review::findings(project));
     out.extend(
         merge::schematic(schematic)
             .into_iter()

@@ -136,6 +136,14 @@ pub enum Case {
     NetRenamed,
     /// Pads of one terminal on two nets: the first net kept.
     TerminalOnTwoNets,
+    /// Board nets whose terminals the schematic keeps apart: the
+    /// schematic's nets kept, each a finding.
+    BoardJoinsNets,
+    /// Schematic nets whose terminals the board has on several nets (or
+    /// on none): the schematic's net kept, each a finding.
+    BoardSplitsNet,
+    /// Disagreements past the project's bound, not recorded.
+    NetDisagreementOverLimit,
     /// No schematic, or one that could not be read: pins labelled.
     SchematicUnreadable,
     /// Sheet symbols drawn (one per sheet instance).
@@ -160,7 +168,8 @@ pub enum Case {
     /// Labels named as the net KiCad's wires join them into (KiCad lets
     /// one net carry several names; ours carry one).
     LabelAlias,
-    /// Terminals no pin of their KiCad symbol names: a pin inside the body.
+    /// Terminals no pin of their KiCad symbol names (unmapped pads): a
+    /// visible pin added by import, each a finding.
     TerminalWithoutPin,
     /// Units the engine refused to place or turn.
     UnitRefused,
@@ -397,7 +406,7 @@ impl Case {
             Self::RuleLooserThanFab => (
                 "D1",
                 Report,
-                "KiCad limits looser than the fab profile's (the fab limit kept)",
+                "KiCad rules looser than the fab profile, not taken (the fab limit kept)",
             ),
             Self::NetRenamed => (
                 "N1",
@@ -408,6 +417,21 @@ impl Case {
                 "N1",
                 Refused,
                 "pads of one terminal on two nets (first net kept)",
+            ),
+            Self::BoardJoinsNets => (
+                "N2",
+                Report,
+                "board nets the schematic keeps apart (schematic kept; each a finding)",
+            ),
+            Self::BoardSplitsNet => (
+                "N2",
+                Report,
+                "schematic nets the board has apart (schematic kept; each a finding)",
+            ),
+            Self::NetDisagreementOverLimit => (
+                "N2",
+                Refused,
+                "net disagreements past the project's bound, not recorded as findings",
             ),
             Self::SchematicUnreadable => (
                 "K5",
@@ -455,7 +479,7 @@ impl Case {
             Self::TerminalWithoutPin => (
                 "K5",
                 Report,
-                "pads without a pin of their number on the KiCad symbol (a pin inside the body)",
+                "unmapped pads: no pin of their number on the KiCad symbol (a pin added by import)",
             ),
             Self::UnitRefused => (
                 "K5",
@@ -655,6 +679,17 @@ impl Report {
             out.push_str(&format!(
                 "  schematic: {} sheets; board nets equal {}, split {}, joined with another {}\n",
                 c.sheets, c.schematic_nets_equal, c.schematic_nets_split, c.schematic_nets_merged
+            ));
+        }
+        let looser = self.count(Case::RuleLooserThanFab);
+        if looser > 0 {
+            let (rules, were) = if looser == 1 {
+                ("rule", "was")
+            } else {
+                ("rules", "were")
+            };
+            out.push_str(&format!(
+                "  {looser} KiCad {rules} looser than the fab profile {were} not taken\n"
             ));
         }
         let mut rows = self.rows();

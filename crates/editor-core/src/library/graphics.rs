@@ -407,6 +407,11 @@ pub struct Pin {
     /// Shows the designations the instance's binding maps to the terminal.
     #[params]
     pub number: PinText,
+    /// Added by an import for a pad no pin of the source symbol named: an
+    /// unmapped pad the person keeps, moves or deletes (a finding until
+    /// then). Clearing it keeps the pin.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub added_by_import: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -858,6 +863,7 @@ impl Pin {
             decorations: Decorations::default(),
             name: PinText::default(),
             number: PinText::default(),
+            added_by_import: false,
         }
     }
 

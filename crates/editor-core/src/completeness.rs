@@ -184,6 +184,33 @@ pub fn instance(project: &Project, id: Id) -> Result<InstanceReport> {
             ));
         }
     }
+    // Pins an import added for pads no pin of the source symbol named.
+    for pin in symbol
+        .units
+        .iter()
+        .flat_map(|u| &u.pins)
+        .filter(|p| p.added_by_import)
+    {
+        let name = resolved
+            .component
+            .definition
+            .terminal(pin.terminal)
+            .map(|t| t.name.clone())
+            .unwrap_or_else(|| pin.terminal.to_string());
+        findings.push(Finding::new(
+            "instance.unmapped_pad",
+            format!(
+                "{} pad ‘{name}’ matched no pin on its imported symbol; a pin was added by import.",
+                item.designator
+            ),
+            vec![ObjectRef::Terminal {
+                endpoint: Endpoint {
+                    instance: id,
+                    terminal: pin.terminal,
+                },
+            }],
+        ));
+    }
     for terminal in &functions.unresolved {
         let name = resolved
             .component

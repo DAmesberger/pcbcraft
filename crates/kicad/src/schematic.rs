@@ -18,7 +18,7 @@
 //! rules is assumed.
 use crate::board::{Nm, PointNm};
 use crate::sexpr::{self, Node};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Most sheet instances in one hierarchy.
 pub const MAX_SHEETS: usize = 512;
@@ -555,8 +555,9 @@ pub fn inside(p: PointNm, a: PointNm, b: PointNm) -> bool {
 /// point lies on them, then joined into strokes. Each stroke runs between
 /// key points (`key`), through any other point; a point of three or more
 /// wires that is not key is passed through by the first stroke that
-/// reaches it, so every stroke end is a key point or lies on an earlier
-/// stroke.
+/// reaches it and ends every later one (four ends meeting at a point are
+/// two strokes, the second ending on the first, not crossing it), so
+/// every stroke end is a key point or lies on an earlier stroke.
 pub fn strokes(
     wires: &[[PointNm; 2]],
     extra: &[PointNm],
@@ -601,7 +602,10 @@ pub fn strokes(
         let (a, b) = edges[k];
         if a == p { b } else { a }
     };
-    let mut out = Vec::new();
+    // Points an earlier stroke runs through: a later stroke ends there
+    // (on that stroke), never crosses it, since crossing wires do not join.
+    let mut passed: BTreeSet<PointNm> = BTreeSet::new();
+    let mut out: Vec<Vec<PointNm>> = Vec::new();
     for start in 0..edges.len() {
         if used[start] {
             continue;
@@ -618,7 +622,7 @@ pub fn strokes(
                 } else {
                     (path[0], path[1])
                 };
-                if is_key(end) {
+                if is_key(end) || passed.contains(&end) {
                     break;
                 }
                 let free: Vec<usize> = adjacent
@@ -644,7 +648,11 @@ pub fn strokes(
                 }
             }
         }
-        out.push(path.into_iter().collect());
+        let path: Vec<PointNm> = path.into_iter().collect();
+        if path.len() > 2 {
+            passed.extend(path[1..path.len() - 1].iter().copied());
+        }
+        out.push(path);
     }
     out
 }

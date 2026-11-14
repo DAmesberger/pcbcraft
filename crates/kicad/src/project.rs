@@ -242,6 +242,11 @@ mod tests {
         let mut report = Report::default();
         let overrides = overrides(&rules, &profile, &mut report);
         assert_eq!(report.count(Case::RuleLooserThanFab), 1);
+        assert!(
+            report
+                .summary()
+                .contains("1 KiCad rule looser than the fab profile was not taken")
+        );
         assert!(!overrides.iter().any(|(k, _)| *k == RuleKey::DrillMin));
         assert!(overrides.contains(&(
             RuleKey::Clearance {
