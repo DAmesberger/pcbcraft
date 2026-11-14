@@ -1,8 +1,9 @@
 //! KiCad footprints and pads in Sparksmith's frame.
 //!
 //! **Axes.** KiCad's y grows downward and ours upward: a board point
-//! becomes `(x − ox, −(y − oy))` mm about the auxiliary origin `o` (or the
-//! file origin when none is set), and a footprint- or pad-local vector
+//! becomes `(x − ox, −(y − oy))` mm about the origin `o` (the outline's
+//! lower-left corner, else the auxiliary origin, else the file origin;
+//! `Board::origin`), and a footprint- or pad-local vector
 //! `(x, y)` becomes `(x, −y)`. Angles keep their value: both count
 //! counter-clockwise as seen on screen.
 //!
@@ -75,9 +76,9 @@ fn snap_angle(deg: f64) -> f64 {
     if r >= 360.0 { 0.0 } else { r }
 }
 
-/// A KiCad board point in our board frame, mm.
+/// A KiCad board point in our board frame, mm (about [`Board::origin`]).
 pub fn board_point(board: &Board, p: PointNm) -> Point {
-    let o = board.aux_origin.unwrap_or_default();
+    let o = board.origin;
     [mm(p[0] - o[0]), -mm(p[1] - o[1])]
 }
 

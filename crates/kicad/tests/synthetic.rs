@@ -238,6 +238,7 @@ fn one_footprint(pads: Vec<Pad>) -> Board {
         origin: None,
         setup: "(pad_to_mask_clearance 0)".into(),
         footprints: vec![Footprint::new("U1", [10.0, 10.0, 0.0], false, pads)],
+        items: String::new(),
     }
 }
 
@@ -326,6 +327,7 @@ fn a_definition_frame_is_independent_of_placement() -> Fallible<()> {
             Footprint::new("R1", [10.0, 10.0, 0.0], false, pads(0.0)),
             Footprint::new("R2", [20.0, 10.0, 90.0], false, pads(90.0)),
         ],
+        items: String::new(),
     };
     let imported = import(board.text().as_bytes())?;
     assert_eq!(imported.report.counts.definitions, 1);

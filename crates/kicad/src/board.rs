@@ -63,9 +63,15 @@ pub struct Board {
     pub copper: Vec<String>,
     /// The auxiliary (drill and place) origin, when set.
     pub aux_origin: Option<PointNm>,
+    /// Where our board frame's origin lies in KiCad's: the lower-left
+    /// corner of the outline's box (our board outline lies right of and
+    /// above its origin), else the auxiliary origin, else the file origin.
+    pub origin: PointNm,
     pub setup: Setup,
     pub footprints: Vec<Footprint>,
-    /// Board-level objects this slice does not import, by keyword.
+    /// The outline, stackup, nets, tracks, vias and zones.
+    pub items: crate::items::Items,
+    /// Board-level objects the importer does not import, by keyword.
     pub other: std::collections::BTreeMap<String, usize>,
 }
 
@@ -75,6 +81,9 @@ pub struct Setup {
     pub mask_margin: Nm,
     pub paste_margin: Nm,
     pub paste_ratio: f64,
+    /// The plot setting that leaves vias out of the mask (`viasonmask`),
+    /// when written.
+    pub vias_on_mask: Option<bool>,
 }
 
 /// Local overrides of the mask and paste margins (a footprint's or a
@@ -102,6 +111,8 @@ pub struct Footprint {
     /// Other drawings and texts (silkscreen, courtyard, fabrication).
     pub drawings: usize,
     pub models: usize,
+    /// Drawings on `Edge.Cuts` (not imported).
+    pub edge_cuts: usize,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -191,6 +202,8 @@ pub struct KPad {
     /// Primitives this importer cannot draw (arcs, curves).
     pub unsupported_primitives: usize,
     pub fiducial: bool,
+    /// The pad's net number and name (`None`: no net).
+    pub net: Option<(u32, String)>,
     /// Per-pad zone connection or clearance overrides.
     pub zone_overrides: bool,
     /// Tokens this importer does not know, by path.
@@ -252,6 +265,14 @@ pub fn read(bytes: &[u8], report: &mut Report) -> Result<Board> {
         if let Some(origin) = setup.child("aux_axis_origin") {
             board.aux_origin = Some(point(origin, 0, "setup/aux_axis_origin")?);
         }
+        board.setup.vias_on_mask = setup
+            .child("pcbplotparams")
+            .and_then(|p| p.child("viasonmask"))
+            .and_then(|v| v.arg(0))
+            .map(|v| matches!(v, "yes" | "true"));
+        if let Some(stackup) = setup.child("stackup") {
+            board.items.stackup = crate::items::stackup(stackup)?;
+        }
     }
     for item in root.args() {
         let Some(head) = item.head() else { continue };
@@ -262,12 +283,50 @@ pub fn read(bytes: &[u8], report: &mut Report) -> Result<Board> {
                 }
                 board.footprints.push(footprint(item, report)?);
             }
+            "net" => {
+                let (n, name) = crate::items::net(item)?;
+                board.items.nets.insert(n, name);
+            }
+            "segment" | "arc" => {
+                if board.items.tracks.len() >= crate::items::MAX_TRACKS {
+                    return Err(BoardError::Limit("too many tracks"));
+                }
+                board.items.tracks.push(crate::items::track(item)?);
+            }
+            "via" => {
+                if board.items.vias.len() >= crate::items::MAX_VIAS {
+                    return Err(BoardError::Limit("too many vias"));
+                }
+                board.items.vias.push(crate::items::via(item)?);
+            }
+            "zone" => {
+                if board.items.zones.len() >= crate::items::MAX_ZONES {
+                    return Err(BoardError::Limit("too many zones"));
+                }
+                board.items.zones.push(crate::items::zone(item)?);
+            }
+            h if h.starts_with("gr_") && crate::items::on_edge(item) => {
+                if board.items.edges.len() >= crate::items::MAX_EDGE_ITEMS {
+                    return Err(BoardError::Limit("too many outline drawings"));
+                }
+                match crate::items::edge(item)? {
+                    Some(edge) => board.items.edges.push(edge),
+                    None => board.items.edge_curves += 1,
+                }
+            }
             "version" | "generator" | "generator_version" | "general" | "paper" | "title_block"
-            | "layers" | "setup" | "property" | "net" | "net_class" | "embedded_fonts"
+            | "layers" | "setup" | "property" | "net_class" | "embedded_fonts"
             | "embedded_files" => {}
             other => *board.other.entry(other.to_owned()).or_default() += 1,
         }
     }
+    board.items.footprint_edges = board.footprints.iter().map(|f| f.edge_cuts).sum();
+    board.origin = match crate::items::edge_bounds(&board.items.edges) {
+        // KiCad's y grows downward: the lower-left corner has the
+        // largest y.
+        Some([min, max]) => [min[0], max[1]],
+        None => board.aux_origin.unwrap_or_default(),
+    };
     Ok(board)
 }
 
@@ -380,7 +439,9 @@ fn footprint(node: &Node, report: &mut Report) -> Result<Footprint> {
                     .child("layer")
                     .and_then(|l| l.arg(0))
                     .unwrap_or_default();
-                if fab_layer(layer) {
+                if layer == "Edge.Cuts" {
+                    fp.edge_cuts += 1;
+                } else if fab_layer(layer) {
                     fp.fab_graphics += 1;
                 } else {
                     fp.drawings += 1;
@@ -506,9 +567,14 @@ fn pad(node: &Node) -> Result<KPad> {
             | "thermal_gap"
             | "thermal_bridge_width"
             | "thermal_bridge_angle" => pad.zone_overrides = true,
+            "net" => {
+                let n = item.arg(0).and_then(|a| a.parse::<u32>().ok());
+                pad.net = n
+                    .filter(|n| *n != 0)
+                    .map(|n| (n, item.arg(1).unwrap_or_default().to_owned()));
+            }
             "at"
             | "size"
-            | "net"
             | "pinfunction"
             | "pintype"
             | "die_length"

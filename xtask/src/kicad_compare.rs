@@ -106,6 +106,8 @@ pub fn compare_design(design: &Path) -> Result<(String, bool)> {
                 passed &= ok;
             }
             Err(e) => {
+                // The full error stays in the board's local folder.
+                let _ = std::fs::write(dir.join("error.txt"), e.to_string());
                 // Errors name a step or a token path, never file content.
                 let _ = writeln!(summary, "board {}: not compared: {}", k + 1, kind_of(&*e));
                 passed = false;
@@ -121,15 +123,20 @@ pub fn compare_design(design: &Path) -> Result<(String, bool)> {
 
 /// The leading code of an error (`kicad.version`, `kicad.refused: …`),
 /// without the core's free text, which may quote a name.
-fn kind_of(e: &dyn std::error::Error) -> String {
+fn kind_of(e: &(dyn std::error::Error + 'static)) -> String {
+    // A refused step is named (a fixed command name), its reason is not.
+    if let Some(sparksmith_kicad::ImportError::Refused { step, .. }) =
+        e.downcast_ref::<sparksmith_kicad::ImportError>()
+    {
+        return format!("kicad.refused at {step}");
+    }
     let text = e.to_string();
     text.split(':').next().unwrap_or("error").to_owned()
 }
 
 fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
     let bytes = std::fs::read(board)?;
-    let defaults = sparksmith_io::new_project::shipped()?;
-    let imported = sparksmith_kicad::import(&bytes, &defaults.board, &defaults.presets)?;
+    let imported = import(&bytes)?;
     let project = board.with_extension("kicad_pro");
     let project = project.is_file().then_some(project);
     let copper = imported.report.counts.copper_layers;
@@ -155,6 +162,7 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
         std::fs::write(ours_dir.join(&f.name), &f.bytes)?;
     }
     let judge = Judge {
+        shift_nm: imported.plot_shift_nm(),
         tolerance_nm: TOLERANCE_NM,
         arc_tolerance_nm: ARC_TOLERANCE_NM,
         arcs: imported
@@ -177,7 +185,10 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
         })
         .collect();
     let diff = compare_sets(&ours, &theirs, Scope::Pads, &judge)?;
-    let (text, ok, rows) = summarize(&imported.report, &diff, &judge, &pads);
+    let (mut text, ok, rows) = summarize(&imported.report, &diff, &judge, &pads);
+    let (line, outline_ok) = outline_line(&imported, &theirs, judge.shift_nm)?;
+    text.push_str(&line);
+    let ok = ok && outline_ok;
     let local = serde_json::json!({
         "kicad_cli": reference::version(),
         "board_sha256": format!("{:x}", Sha256::digest(&bytes)),
@@ -185,6 +196,151 @@ fn compare_board(board: &Path, dir: &Path) -> Result<(String, bool)> {
         "pieces": rows,
     });
     std::fs::write(dir.join("report.json"), serde_json::to_vec_pretty(&local)?)?;
+    Ok((text, ok))
+}
+
+/// Import a board onto the shipped new board and fab profile. The gates
+/// never build Solidcraft, so only with the `sketch` feature is there a
+/// board sketch engine (the outline imports as a sketch, as in the app and
+/// the CLI); without it the outline is the rectangle around it.
+fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported> {
+    let defaults = sparksmith_io::new_project::shipped()?;
+    let profile = sparksmith_io::rule_profiles::for_new_board_from_env(None)?;
+    Ok(sparksmith_kicad::import(
+        bytes,
+        &sparksmith_kicad::Setup {
+            board: &defaults.board,
+            presets: &defaults.presets,
+            profile: Some(&profile),
+            evaluators: evaluators(),
+        },
+    )?)
+}
+
+#[cfg(feature = "sketch")]
+fn evaluators() -> sparksmith_core::Evaluators<'static> {
+    sparksmith_core::Evaluators {
+        footprint: Some(&sparksmith_solidcraft::footprint::SketchEvaluator),
+        board: Some(&sparksmith_solidcraft::board::SketchBoardEvaluator),
+    }
+}
+
+#[cfg(not(feature = "sketch"))]
+fn evaluators() -> sparksmith_core::Evaluators<'static> {
+    sparksmith_core::Evaluators::default()
+}
+
+/// Most points the outline check samples on one reference curve.
+const MAX_SAMPLES: usize = 4096;
+/// Sample spacing on the reference outline, mm.
+const SAMPLE_MM: f64 = 0.05;
+
+/// The board outline against KiCad's `Edge.Cuts` plot: our solved outline
+/// (outer and cutouts) and the widest distance of KiCad's drawn centre
+/// lines from it, with both lengths, and whether it is within the
+/// tolerance. Aggregate numbers only.
+fn outline_line(
+    imported: &sparksmith_kicad::Imported,
+    theirs: &[File],
+    shift: [i64; 2],
+) -> Result<(String, bool)> {
+    use sparksmith_fabcheck::gerber::{self, Kind};
+    let board = imported.engine.project().board().into_owned();
+    let tol = 1e-4;
+    let mut rings = vec![board.outer.flatten(tol)];
+    rings.extend(board.cutouts.iter().map(|c| c.outline.flatten(tol)));
+    let ours_len: f64 = rings
+        .iter()
+        .map(|r| {
+            (0..r.len())
+                .map(|k| sparksmith_core::geometry::distance(r[k], r[(k + 1) % r.len()]))
+                .sum::<f64>()
+        })
+        .sum();
+    let near = |p: [f64; 2]| {
+        rings
+            .iter()
+            .flat_map(|r| {
+                (0..r.len()).map(move |k| {
+                    sparksmith_core::geometry::segment_distance(p, r[k], r[(k + 1) % r.len()])
+                })
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    let Some(file) = theirs.iter().find_map(|f| {
+        let parsed = gerber::parse(std::str::from_utf8(&f.bytes).ok()?).ok()?;
+        let function = parsed.file_attribute(".FileFunction")?;
+        (function.first().map(String::as_str) == Some("Profile")).then_some(parsed)
+    }) else {
+        return Ok(("  outline          no KiCad Edge.Cuts plot\n".into(), true));
+    };
+    let d = [shift[0] as f64 / 1e6, shift[1] as f64 / 1e6];
+    let moved = |p: [f64; 2]| [p[0] + d[0], p[1] + d[1]];
+    let (mut worst, mut theirs_len, mut samples) = (0.0f64, 0.0, 0usize);
+    for object in &file.objects {
+        let points: Vec<[f64; 2]> = match &object.kind {
+            Kind::Draw { from, to } => {
+                let (a, b) = (moved(*from), moved(*to));
+                let len = sparksmith_core::geometry::distance(a, b);
+                theirs_len += len;
+                let n = ((len / SAMPLE_MM).ceil() as usize).clamp(1, MAX_SAMPLES);
+                (0..=n)
+                    .map(|k| {
+                        let t = k as f64 / n as f64;
+                        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+                    })
+                    .collect()
+            }
+            Kind::Arc {
+                from,
+                to,
+                center,
+                clockwise,
+            } => {
+                let (a, b, c) = (moved(*from), moved(*to), moved(*center));
+                let r = sparksmith_core::geometry::distance(a, c);
+                let a0 = (a[1] - c[1]).atan2(a[0] - c[0]);
+                let a1 = (b[1] - c[1]).atan2(b[0] - c[0]);
+                let tau = std::f64::consts::TAU;
+                let mut sweep = if *clockwise {
+                    -(a0 - a1).rem_euclid(tau)
+                } else {
+                    (a1 - a0).rem_euclid(tau)
+                };
+                if sweep.abs() < 1e-12 {
+                    sweep = if *clockwise { -tau } else { tau };
+                }
+                theirs_len += r * sweep.abs();
+                let n = ((r * sweep.abs() / SAMPLE_MM).ceil() as usize).clamp(1, MAX_SAMPLES);
+                (0..=n)
+                    .map(|k| {
+                        let t = a0 + sweep * k as f64 / n as f64;
+                        [c[0] + r * t.cos(), c[1] + r * t.sin()]
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        samples += points.len();
+        for p in points {
+            worst = worst.max(near(p));
+        }
+    }
+    let sketch = matches!(
+        imported.engine.project().board_shape,
+        sparksmith_core::model::board::BoardShape::Sketch(_)
+    );
+    let ok = worst * 1e6 <= f64::from(TOLERANCE_NM);
+    let text = format!(
+        "  outline          {} {} | {} cutouts | ours {:.3} mm long, kicad {:.3} mm | {} samples, worst {:.3} µm\n",
+        if ok { "pass" } else { "FAIL" },
+        if sketch { "sketch" } else { "rectangle" },
+        board.cutouts.len(),
+        ours_len,
+        theirs_len,
+        samples,
+        worst * 1000.0
+    );
     Ok((text, ok))
 }
 
@@ -284,9 +440,7 @@ mod tests {
               (property \"Value\" \"QQSECRETVALUE\" (at 0 0 0) (layer \"F.Fab\")) \
               (pad \"QQ7\" smd rect (at 0.4321 0 90) (size 1.2345 0.6789) (layers \"F.Cu\" \"F.Paste\" \"F.Mask\") \
                 (net 1 \"QQSECRETNET\") (pinfunction \"QQPINFN\") (zqxtoken 1))))";
-        let defaults = sparksmith_io::new_project::shipped()?;
-        let imported =
-            sparksmith_kicad::import(text.as_bytes(), &defaults.board, &defaults.presets)?;
+        let imported = import(text.as_bytes())?;
         let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
         let ours: Vec<File> = set
             .files

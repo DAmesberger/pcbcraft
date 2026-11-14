@@ -82,6 +82,34 @@ pub enum Case {
     Models,
     /// A pad whose size, place or margins are beyond the coordinate bound.
     PadOutOfRange,
+    /// No fab profile was given: no rules, so no outline, tracks or fills.
+    NoRules,
+    /// A board-wide setting the fab profile's bounds refused.
+    RuleRefused,
+    /// The physical stackup: copper, dielectric and mask thicknesses and
+    /// Dk taken over (glass styles from the stackup family).
+    StackupImported,
+    /// A stated stackup outside the stackup bounds: the family's preset.
+    StackupRefused,
+    /// A dielectric of several sublayers, summed into one.
+    StackupSublayers,
+    /// The outline, imported as a board sketch.
+    OutlineSketch,
+    /// The outline as the rectangle from the origin around it (no board
+    /// sketch engine).
+    OutlineRectangle,
+    /// `Edge.Cuts` drawings that do not close into one board: the board
+    /// keeps its rectangle.
+    OutlineNotClosed,
+    /// No outline: the board keeps its new-board rectangle.
+    OutlineMissing,
+    /// An outline that cannot be imported (no rules, or reaching below the
+    /// origin without a sketch engine).
+    OutlineNotImported,
+    /// Outline drawings that are curves or degenerate arcs.
+    OutlineDrawing,
+    /// `Edge.Cuts` drawings inside footprints.
+    FootprintOutline,
 }
 
 impl Case {
@@ -186,6 +214,58 @@ impl Case {
                 Refused,
                 "pads with a size, place or margin beyond the coordinate bound",
             ),
+            Self::NoRules => (
+                "-",
+                Refused,
+                "no fab profile given: outline, tracks and fills not imported",
+            ),
+            Self::RuleRefused => (
+                "-",
+                Report,
+                "board-wide settings (mask margin, via tenting) the fab profile refused",
+            ),
+            Self::StackupImported => (
+                "S1",
+                Exact,
+                "stackup: copper, dielectric and mask thicknesses and Dk (glass from the family)",
+            ),
+            Self::StackupRefused => (
+                "S1",
+                Refused,
+                "stackup outside the stackup bounds: the family's preset of its copper count",
+            ),
+            Self::StackupSublayers => (
+                "S1",
+                Approximate,
+                "dielectrics of several sublayers, summed into one (first Dk kept)",
+            ),
+            Self::OutlineSketch => ("B1", Exact, "board outline imported as a board sketch"),
+            Self::OutlineRectangle => (
+                "B1",
+                Approximate,
+                "board outline as the rectangle around it (no board sketch engine)",
+            ),
+            Self::OutlineNotClosed => (
+                "B1",
+                Refused,
+                "outline drawings that do not close into one board (rectangle kept)",
+            ),
+            Self::OutlineMissing => ("B1", Report, "no board outline (new-board rectangle kept)"),
+            Self::OutlineNotImported => (
+                "B1",
+                Refused,
+                "board outline not imported (no rules, or below the origin without a sketch engine)",
+            ),
+            Self::OutlineDrawing => (
+                "B1",
+                Refused,
+                "outline curves (Béziers) and degenerate arcs, not imported",
+            ),
+            Self::FootprintOutline => (
+                "B1",
+                Refused,
+                "outline drawings inside footprints, not imported",
+            ),
         }
     }
 }
@@ -219,6 +299,8 @@ pub struct Counts {
     pub definitions: usize,
     pub pads: usize,
     pub pads_imported: usize,
+    /// Cutouts of the imported board outline.
+    pub cutouts: usize,
 }
 
 /// Most private details kept (the rows still count every case).

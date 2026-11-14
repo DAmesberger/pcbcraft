@@ -25,6 +25,13 @@ proc-macro2 = { version = "1", features = ["span-locations"] }
 # Reads and rewrites `.sparksmith` containers for `convert-v1` (MIT; the
 # version and features sparksmith-io uses).
 zip = { version = "9.1.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# `kicad-compare --features sketch`: SolidCraft's board sketch engine, so the
+# outline imports as a board sketch, as the app and the CLI import it. Off by
+# default: the gates never build Solidcraft.
+sparksmith-solidcraft = { workspace = true, optional = true }
+
+[features]
+sketch = ["dep:sparksmith-solidcraft"]
 
 [dev-dependencies]
 # The `convert-v1` footprint tests solve sourced footprints with the real

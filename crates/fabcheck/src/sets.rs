@@ -7,7 +7,10 @@
 //! with a pad aperture function (not a via's), on mask and
 //! paste the flashes carrying a component (`.C`) attribute, in the drill
 //! files every tool but via drills. That is how a footprint-only import is
-//! held to a full board's output.
+//! held to a full board's output. [`Scope::Routed`] adds tracks and vias:
+//! on copper every object but zone fills (regions without a pad
+//! attribute) and non-conductor graphics, on mask and paste every flash,
+//! and every drill.
 use crate::compare::{LayerDiff, compare};
 use crate::drills::{DrillDiff, hits, pair};
 use crate::gerber::{GerberFile, Kind, Object};
@@ -29,6 +32,8 @@ pub enum Scope {
     All,
     /// Pad objects and component drills only.
     Pads,
+    /// Pads, tracks and vias: everything but zone fills and drawings.
+    Routed,
 }
 
 /// A circle of the design whose copper the reference may approximate by
@@ -48,6 +53,9 @@ pub struct Judge {
     pub tolerance_nm: i32,
     pub arc_tolerance_nm: i32,
     pub arcs: Vec<Arc>,
+    /// Added to every reference coordinate before comparing, nm (when the
+    /// two sets use different origins).
+    pub shift_nm: [i64; 2],
 }
 
 impl Judge {
@@ -56,6 +64,7 @@ impl Judge {
             tolerance_nm,
             arc_tolerance_nm: tolerance_nm,
             arcs: Vec::new(),
+            shift_nm: [0, 0],
         }
     }
 
@@ -171,6 +180,58 @@ fn pad_object(function: &str, object: &Object) -> bool {
     }
 }
 
+/// Whether a reference object is a pad, track or via of a layer of
+/// `function` ([`Scope::Routed`]).
+fn routed_object(function: &str, object: &Object) -> bool {
+    if function.starts_with("Copper,") {
+        let aperture = object
+            .aperture_attributes
+            .get(".AperFunction")
+            .and_then(|v| v.first())
+            .map(String::as_str);
+        if object.object_attributes.contains_key(".P") {
+            return true;
+        }
+        !matches!(object.kind, Kind::Region { .. }) && aperture != Some("NonConductor")
+    } else {
+        matches!(object.kind, Kind::Flash { .. })
+    }
+}
+
+/// `shapes` moved by `shift` nm.
+fn shifted(mut shapes: Shapes, shift: [i64; 2]) -> Fallible<Shapes> {
+    if shift == [0, 0] {
+        return Ok(shapes);
+    }
+    let (dx, dy) = (i32::try_from(shift[0])?, i32::try_from(shift[1])?);
+    for ring in shapes.iter_mut().flatten() {
+        for p in ring.iter_mut() {
+            p.x = p.x.checked_add(dx).ok_or("sets: a shifted point overflows")?;
+            p.y = p.y.checked_add(dy).ok_or("sets: a shifted point overflows")?;
+        }
+    }
+    Ok(shapes)
+}
+
+/// Drill hits moved by `shift` nm.
+fn shifted_hits(mut hits: Vec<crate::drills::DrillHit>, shift: [i64; 2]) -> Vec<crate::drills::DrillHit> {
+    let d = [shift[0] as f64 / 1e6, shift[1] as f64 / 1e6];
+    let m = |p: &mut crate::Point| {
+        p[0] += d[0];
+        p[1] += d[1];
+    };
+    for hit in &mut hits {
+        match &mut hit.feature {
+            crate::drills::Feature::Round { at } => m(at),
+            crate::drills::Feature::Slot { from, to } => {
+                m(from);
+                m(to);
+            }
+        }
+    }
+    hits
+}
+
 /// Compare `ours` with `reference` under `judge`.
 pub fn compare_sets(
     ours: &[File],
@@ -192,9 +253,14 @@ pub fn compare_sets(
         };
         let (b, total, kept) = match theirs.get(function) {
             Some(file) => {
-                let keep = |o: &Object| scope == Scope::All || pad_object(function, o);
+                let keep = |o: &Object| match scope {
+                    Scope::All => true,
+                    Scope::Pads => pad_object(function, o),
+                    Scope::Routed => routed_object(function, o),
+                };
                 let kept = file.objects.iter().filter(|o| keep(o)).count();
-                (polygons::render(file, keep)?, file.objects.len(), kept)
+                let shapes = shifted(polygons::render(file, keep)?, judge.shift_nm)?;
+                (shapes, file.objects.len(), kept)
             }
             None => (Vec::new(), 0, 0),
         };
@@ -244,9 +310,10 @@ pub fn compare_sets(
             Some(file) => {
                 let all = hits(file, |_| true)?;
                 let kept = hits(file, |f| {
-                    scope == Scope::All || !f.iter().any(|v| v == "ViaDrill")
+                    scope != Scope::Pads || !f.iter().any(|v| v == "ViaDrill")
                 })?;
-                (kept.clone(), all.len() - kept.len())
+                let excluded = all.len() - kept.len();
+                (shifted_hits(kept, judge.shift_nm), excluded)
             }
             None => (Vec::new(), 0),
         };

@@ -5,16 +5,24 @@
 
 use std::fmt::Write as _;
 
-/// `sparksmith_kicad::import` onto the core's test-fixture board and
-/// stackup presets.
+/// `sparksmith_kicad::import` onto the core's test-fixture board, stackup
+/// presets and prototype fab profile, without a sketch engine.
 pub fn import(bytes: &[u8]) -> Result<sparksmith_kicad::Imported, sparksmith_kicad::ImportError> {
-    let presets = sparksmith_core::StackupPresets::fixture().map_err(|e| {
-        sparksmith_kicad::ImportError::Refused {
-            step: "fixture",
-            reason: e.to_string(),
-        }
-    })?;
-    sparksmith_kicad::import(bytes, &sparksmith_core::NewBoard::fixture(), &presets)
+    let fixture = |e: sparksmith_core::Error| sparksmith_kicad::ImportError::Refused {
+        step: "fixture",
+        reason: e.to_string(),
+    };
+    let presets = sparksmith_core::StackupPresets::fixture().map_err(fixture)?;
+    let profile = sparksmith_core::rules::fixtures::prototype().map_err(fixture)?;
+    sparksmith_kicad::import(
+        bytes,
+        &sparksmith_kicad::Setup {
+            board: &sparksmith_core::NewBoard::fixture(),
+            presets: &presets,
+            profile: Some(&profile),
+            evaluators: Default::default(),
+        },
+    )
 }
 
 /// One pad as written in a board file.
@@ -111,6 +119,9 @@ pub struct Board {
     /// Extra `setup` tokens.
     pub setup: String,
     pub footprints: Vec<Footprint>,
+    /// Board-level items after the footprints (nets, outline drawings,
+    /// tracks, vias, zones), as board-file text.
+    pub items: String,
 }
 
 fn n(v: f64) -> String {
@@ -195,6 +206,7 @@ impl Board {
             }
             s.push_str("  )\n");
         }
+        s.push_str(&self.items);
         s.push_str(")\n");
         s
     }
@@ -257,5 +269,6 @@ pub fn showcase() -> Board {
         origin: Some([95.0, 140.0]),
         setup: "(pad_to_mask_clearance 0.05) (pad_to_paste_clearance -0.02)".into(),
         footprints,
+        items: String::new(),
     }
 }
