@@ -52,3 +52,14 @@ The board: a USB-C receptacle (J1), an LDO in SOT-23-5 (U1), two 1 µF capacitor
 ## Clean-up
 
 The app was quit and the test files deleted from the guest and the shared folder. The guest display stays at 1600 × 1000.
+
+## Status after the fixes
+
+Fixed on `main` at 8ee2dc10 (CI: 3,157 passed, 0 failed) and checked in the VM:
+- **1.** "ldo sot-23-5" lists SOT-23-5 and shows "Ignored: ldo".
+- **2.** The part card reads "From the built-in template '…'; values from …". The stored text is unchanged.
+- **3.** A single click on a parameter value opens it for typing, in the Board card, in Board shape and in Dimensions.
+- **4.** New saved files get the usual permissions (0666 less the umask), a replaced file keeps its mode, and recovery snapshots stay owner-only. This is covered by tests and was not checked in the VM.
+- **6.** 2D hides the board interface unless asked, with one switch shared with 3D.
+
+Finding 5 was not reproduced (see above).
