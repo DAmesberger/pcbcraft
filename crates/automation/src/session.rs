@@ -1721,6 +1721,8 @@ mod firmware_tests;
 #[cfg(test)]
 mod folder_tests;
 #[cfg(test)]
+mod generated_model_tests;
+#[cfg(test)]
 mod generators_tests;
 #[cfg(test)]
 mod high_speed_tests;
