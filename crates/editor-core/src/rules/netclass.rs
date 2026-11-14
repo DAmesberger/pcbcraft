@@ -358,6 +358,7 @@ pub(super) fn apply(rules: &mut ProjectRules, command: RulesCommand) -> Result<O
             }
         }
         RulesCommand::SetProfile { .. }
+        | RulesCommand::SetOptions { .. }
         | RulesCommand::SetOverride { .. }
         | RulesCommand::ClearOverride { .. }
         | RulesCommand::AddDiffPair { .. }

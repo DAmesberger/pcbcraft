@@ -577,7 +577,7 @@ mod tests {
             p.source.url,
             "https://jlcpcb.com/capabilities/pcb-capabilities"
         );
-        assert_eq!(p.source.date, "2026-11-11");
+        assert_eq!(p.source.date, "2026-11-14");
         assert!(matches!(
             p.drill_files,
             sparksmith_core::rules::DrillFiles::NotPublished { .. }
@@ -625,6 +625,70 @@ mod tests {
                 assert_eq!(c.get(NpthHole, hole), 0.45, "{}", p.id);
             }
             assert_eq!(r.holes.npth_annular_ring_min, 0.45, "{}", p.id);
+        }
+        Ok(())
+    }
+
+    /// The JLCPCB examples offer the choices JLCPCB publishes other limits
+    /// for. At their defaults the rules are the files' own values (what
+    /// boards pinned before the options existed), and every choice is
+    /// sourced: the absolute minimum PTH ring (0.18 mm on 2 layers, 0.15 mm
+    /// on 4) and PTH to copper (0.28 mm; 0.3 mm on 4 layers, the inner
+    /// layers' row), the black and white mask's 0.13 mm bridge and the
+    /// 0.1 mm drill.
+    #[test]
+    fn the_jlcpcb_options_give_the_published_limits_and_default_to_the_old_values() -> Result<()> {
+        use sparksmith_core::rules::CopperObject::{PthHole, Track};
+        for (name, ring, pth) in [
+            ("jlcpcb-2-layer-1oz.json", 0.18, 0.28),
+            ("jlcpcb-4-layer-1oz.json", 0.15, 0.3),
+        ] {
+            let text = shipped_text(name)?;
+            let p = decode(text.as_bytes())?;
+            let mut bare: serde_json::Value = serde_json::from_str(&text)?;
+            if let Some(o) = bare["fab_profile"].as_object_mut() {
+                o.remove("options");
+            }
+            if let Some(rules) = bare["fab_profile"]["rules"].as_object_mut() {
+                for rule in rules.values_mut().filter_map(|r| r.as_object_mut()) {
+                    rule.remove("cases");
+                }
+            }
+            assert_eq!(
+                p.rules(),
+                decode(&serde_json::to_vec(&bare)?)?.rules(),
+                "{name}"
+            );
+            assert!(p.options().iter().all(|o| !o.source.is_empty()), "{name}");
+            for option in p.options() {
+                for choice in &option.choices {
+                    let one = [(option.id.clone(), choice.id.clone())]
+                        .into_iter()
+                        .collect();
+                    let chosen = p.with_choices(&one)?;
+                    for key in sparksmith_core::rules::RuleKey::all() {
+                        let (_, source) = chosen.active(key).ok_or_else(|| {
+                            Error::Invalid(format!("{name}: {} has no entry", key.name()))
+                        })?;
+                        assert!(!source.is_empty(), "{name}: {}", key.name());
+                    }
+                }
+            }
+            let pick = |o: &str, c: &str| {
+                p.with_choices(&[(o.to_owned(), c.to_owned())].into_iter().collect())
+            };
+            let min = pick("limits", "minimum")?;
+            assert_eq!(min.rules().holes.pth_annular_ring_min, ring, "{name}");
+            assert_eq!(
+                min.rules().copper.clearance.get(PthHole, Track),
+                pth,
+                "{name}"
+            );
+            assert_eq!(
+                pick("mask_colour", "black_white")?.rules().mask.web_min,
+                0.13
+            );
+            assert_eq!(pick("drill", "microvia")?.rules().holes.drill_min, 0.1);
         }
         Ok(())
     }

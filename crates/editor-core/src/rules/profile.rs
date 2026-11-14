@@ -11,13 +11,28 @@
 //! must set every rule ([`RuleKey::all`]): a missing or unknown rule is
 //! refused, never filled in.
 //!
+//! A profile may also offer manufacturing options ([`FabOption`]): order
+//! choices the fabricator publishes different limits for (a mask colour,
+//! a drill process, its recommended or its minimum values). A rule then
+//! lists `cases`: the value and source that apply when the named options
+//! take the named choices; the rule's own value applies otherwise, and
+//! the first matching case wins. The profile keeps the choice of every
+//! option (`chosen`; each option's `default` until one is chosen), and its
+//! resolved rules are those of its choices: a board pins the profile with
+//! its choices, and changing a choice is a profile change
+//! (`rules.set_fab_options`).
+//!
 //! ```json
 //! {"format": 1, "fab_profile": {
 //!   "id": "jlcpcb-2-layer", "name": "JLCPCB 2-layer",
 //!   "source": {"publisher": "JLCPCB", "url": "https://…", "date": "2026-11-11"},
 //!   "drill_files": {"kind": "not_published", "source": "…"},
+//!   "options": [{"id": "drill", "name": "Drilling", "default": "standard",
+//!     "source": "…", "choices": [{"id": "standard", "name": "Standard"},
+//!                                {"id": "microvia", "name": "0.1 mm microvias"}]}],
 //!   "rules": {
-//!     "drill_min": {"value": 0.15, "source": "Drilling: 2-layer 0.15 – 6.3 mm"},
+//!     "drill_min": {"value": 0.15, "source": "Drilling: 2-layer 0.15 – 6.3 mm",
+//!       "cases": [{"when": {"drill": "microvia"}, "value": 0.1, "source": "…"}]},
 //!     "via_diameter_default": {"formula": "via_drill_default + 2.0 * via_annular_ring_min"},
 //!     …}}}
 //! ```
@@ -113,11 +128,61 @@ pub enum Setting {
 }
 
 /// One rule in a profile: its setting and where it comes from ("" means
-/// the profile's source).
+/// the profile's source), and the values that replace it under some
+/// manufacturing choices.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuleEntry {
     pub setting: Setting,
     pub source: String,
+    /// In order; the first whose `when` the profile's choices meet wins.
+    pub cases: Vec<RuleCase>,
+}
+
+/// A rule's value under some manufacturing choices.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RuleCase {
+    /// Option id → choice id; every pair must hold.
+    pub when: BTreeMap<String, String>,
+    pub value: RuleValue,
+    pub source: String,
+}
+
+/// A manufacturing option a profile offers: a choice the fabricator
+/// publishes different limits for.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FabOption {
+    /// Stable id that rule cases and a board's choices name.
+    pub id: String,
+    /// Shown name ("Solder mask colour").
+    pub name: String,
+    /// The choice a board takes until one is chosen: the profile author's
+    /// reading of the fabricator's standard order.
+    pub default: String,
+    pub choices: Vec<FabChoice>,
+    /// Where the option and its choices come from.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
+}
+
+/// One choice of a [`FabOption`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FabChoice {
+    pub id: String,
+    /// Shown name ("Black or white").
+    pub name: String,
+}
+
+/// Options a profile offers, and choices one option offers.
+pub const MAX_OPTIONS: usize = 16;
+/// Cases one rule lists.
+pub const MAX_CASES: usize = 16;
+
+impl FabOption {
+    pub fn choice(&self, id: &str) -> Option<&FabChoice> {
+        self.choices.iter().find(|c| c.id == id)
+    }
 }
 
 impl RuleEntry {
@@ -125,6 +190,7 @@ impl RuleEntry {
         Self {
             setting: Setting::Value(value),
             source: source.into(),
+            cases: Vec::new(),
         }
     }
 
@@ -132,6 +198,20 @@ impl RuleEntry {
         Self {
             setting: Setting::Formula(text.into()),
             source: source.into(),
+            cases: Vec::new(),
+        }
+    }
+
+    /// The value (or formula) and source under `chosen`: the first case
+    /// whose every option takes its choice, else the entry's own.
+    pub fn under(&self, chosen: &BTreeMap<String, String>) -> (Setting, &str) {
+        match self
+            .cases
+            .iter()
+            .find(|c| c.when.iter().all(|(o, v)| chosen.get(o) == Some(v)))
+        {
+            Some(case) => (Setting::Value(case.value), case.source.as_str()),
+            None => (self.setting.clone(), self.source.as_str()),
         }
     }
 }
@@ -148,7 +228,12 @@ pub struct RuleProfile {
     pub name: String,
     pub source: ProfileSource,
     pub drill_files: DrillFiles,
+    /// The manufacturing options it offers, in shown order.
+    options: Vec<FabOption>,
+    /// The choice of every option.
+    chosen: BTreeMap<String, String>,
     entries: BTreeMap<RuleKey, RuleEntry>,
+    /// The rules under `chosen`.
     rules: DesignRules,
     /// The rules its formulas name: an override of any other rule leaves
     /// every formula's value as resolved.
@@ -183,6 +268,8 @@ impl RuleProfile {
             name: name.into(),
             source,
             drill_files,
+            options: Vec::new(),
+            chosen: BTreeMap::new(),
             entries,
             rules: DesignRules::unset(),
             formula_inputs: BTreeSet::new(),
@@ -191,6 +278,161 @@ impl RuleProfile {
         profile.rules = profile.resolve_with(&[])?;
         profile.validate()?;
         Ok(profile)
+    }
+
+    /// This profile offering `options`, each at its default choice, with
+    /// `cases` for its rules (rule → cases, in order). The options and the
+    /// cases must name each other ([`Self::validate`]).
+    pub fn with_options(
+        mut self,
+        options: Vec<FabOption>,
+        cases: BTreeMap<RuleKey, Vec<RuleCase>>,
+    ) -> Result<Self> {
+        for (key, list) in cases {
+            let Some(entry) = self.entries.get_mut(&key.normalized()) else {
+                return Err(Error::Invalid(format!(
+                    "rules.fab_option: {} is not a rule of the profile",
+                    key.name()
+                )));
+            };
+            entry.cases = list;
+        }
+        self.chosen = options
+            .iter()
+            .map(|o| (o.id.clone(), o.default.clone()))
+            .collect();
+        self.options = options;
+        self.check_options()?;
+        self.rules = self.resolve_with(&[])?;
+        self.validate()?;
+        Ok(self)
+    }
+
+    /// The manufacturing options, in shown order.
+    pub fn options(&self) -> &[FabOption] {
+        &self.options
+    }
+
+    /// The choice of every option (option id → choice id).
+    pub fn chosen(&self) -> &BTreeMap<String, String> {
+        &self.chosen
+    }
+
+    /// This profile with `choices` (option id → choice id) in place of the
+    /// current ones; options not named keep theirs. An unknown option or
+    /// choice, or rules out of bounds under the choices, is refused.
+    pub fn with_choices(&self, choices: &BTreeMap<String, String>) -> Result<Self> {
+        let mut next = self.clone();
+        for (option, choice) in choices {
+            let Some(o) = next.options.iter().find(|o| o.id == *option) else {
+                return Err(Error::Invalid(format!(
+                    "rules.fab_option: {} offers no option {option}{}",
+                    next.name,
+                    offered(next.options.iter().map(|o| o.id.as_str()))
+                )));
+            };
+            if o.choice(choice).is_none() {
+                return Err(Error::Invalid(format!(
+                    "rules.fab_option: {} offers no choice {choice}{}",
+                    o.name,
+                    offered(o.choices.iter().map(|c| c.id.as_str()))
+                )));
+            }
+            next.chosen.insert(option.clone(), choice.clone());
+        }
+        next.rules = next.resolve_with(&[])?;
+        next.validate()?;
+        Ok(next)
+    }
+
+    /// The shown name of the choice `option` takes ("" when the profile
+    /// offers no such option).
+    pub fn choice_name(&self, option: &str) -> &str {
+        self.options
+            .iter()
+            .find(|o| o.id == option)
+            .and_then(|o| self.chosen.get(option).and_then(|c| o.choice(c)))
+            .map_or("", |c| c.name.as_str())
+    }
+
+    /// Whether `other` is this profile with other choices.
+    pub fn same_but_choices(&self, other: &Self) -> bool {
+        other
+            .with_choices(&self.chosen)
+            .is_ok_and(|other| other == *self)
+    }
+
+    /// Options and cases name each other: unique, bounded ids; a default
+    /// and a choice of every option among its choices; every case naming
+    /// options and choices the profile offers, with a value of its rule's
+    /// kind.
+    fn check_options(&self) -> Result<()> {
+        let bad = |what: String| Err(Error::Invalid(format!("rules.fab_option: {what}")));
+        let printable = |t: &str| {
+            !t.trim().is_empty() && t.len() <= MAX_PROFILE_TEXT && !t.chars().any(char::is_control)
+        };
+        let offers = |option: &str, choice: &str| {
+            self.options
+                .iter()
+                .any(|o| o.id == option && o.choice(choice).is_some())
+        };
+        if self.options.len() > MAX_OPTIONS {
+            return bad(format!("a profile offers at most {MAX_OPTIONS} options"));
+        }
+        let mut ids = BTreeSet::new();
+        for o in &self.options {
+            if !printable(&o.id) || !printable(&o.name) || o.source.len() > MAX_PROFILE_NOTES {
+                return bad("an option needs an id and a name; texts are bounded".into());
+            }
+            if !ids.insert(o.id.as_str()) {
+                return bad(format!("{} is offered twice", o.id));
+            }
+            if o.choices.is_empty() || o.choices.len() > MAX_OPTIONS {
+                return bad(format!("{} offers 1–{MAX_OPTIONS} choices", o.name));
+            }
+            let mut choices = BTreeSet::new();
+            for c in &o.choices {
+                if !printable(&c.id) || !printable(&c.name) || !choices.insert(c.id.as_str()) {
+                    return bad(format!("{}'s choices need distinct ids and names", o.name));
+                }
+            }
+            if o.choice(&o.default).is_none() {
+                return bad(format!(
+                    "{}'s default {} is not a choice",
+                    o.name, o.default
+                ));
+            }
+        }
+        if self.chosen.len() != self.options.len() || self.chosen.iter().any(|(o, c)| !offers(o, c))
+        {
+            return bad("every option needs one of its choices".into());
+        }
+        for (key, entry) in &self.entries {
+            if entry.cases.len() > MAX_CASES {
+                return bad(format!("{} lists more than {MAX_CASES} cases", key.name()));
+            }
+            for case in &entry.cases {
+                if case.when.is_empty() || case.source.len() > MAX_PROFILE_NOTES {
+                    return bad(format!(
+                        "a case of {} names no option, or its source is too long",
+                        key.name()
+                    ));
+                }
+                if let Some((o, c)) = case.when.iter().find(|(o, c)| !offers(o, c)) {
+                    return bad(format!(
+                        "a case of {} names {o}: {c}, which the profile does not offer",
+                        key.name()
+                    ));
+                }
+                if std::mem::discriminant(&case.value) != std::mem::discriminant(&key.kind()) {
+                    return bad(format!(
+                        "a case of {} takes a different kind of value",
+                        key.name()
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// A profile of plain values: every rule of `rules`, each with
@@ -210,13 +452,20 @@ impl RuleProfile {
         Self::new(id, name, source, drill_files, entries)
     }
 
-    /// The resolved rules (values and formulas, no project overrides).
+    /// The resolved rules (values and formulas under the chosen options,
+    /// no project overrides).
     pub fn rules(&self) -> &DesignRules {
         &self.rules
     }
 
+    /// One rule's entry, with its cases.
     pub fn entry(&self, key: RuleKey) -> Option<&RuleEntry> {
         self.entries.get(&key.normalized())
+    }
+
+    /// One rule's value (or formula) and source under the chosen options.
+    pub fn active(&self, key: RuleKey) -> Option<(Setting, &str)> {
+        self.entry(key).map(|e| e.under(&self.chosen))
     }
 
     /// Every rule's entry, in key order.
@@ -260,7 +509,7 @@ impl RuleProfile {
                     && self
                         .entries
                         .get(&key)
-                        .is_some_and(|e| matches!(e.setting, Setting::Value(_)))
+                        .is_some_and(|e| matches!(e.under(&self.chosen).0, Setting::Value(_)))
             })
         {
             let mut rules = self.rules.clone();
@@ -276,11 +525,13 @@ impl RuleProfile {
                 key.set(&mut rules, o.value)?;
                 continue;
             }
-            match &entry.setting {
-                Setting::Value(v) => key.set(&mut rules, *v)?,
-                Setting::Formula(text) => formulas.push((*key, text.as_str())),
+            match entry.under(&self.chosen).0 {
+                Setting::Value(v) => key.set(&mut rules, v)?,
+                Setting::Formula(text) => formulas.push((*key, text)),
             }
         }
+        let formulas: Vec<(RuleKey, &str)> =
+            formulas.iter().map(|(k, t)| (*k, t.as_str())).collect();
         formula::evaluate(&mut rules, &formulas)?;
         Ok(rules)
     }
@@ -317,6 +568,7 @@ impl RuleProfile {
                     .into(),
             ));
         }
+        self.check_options()?;
         if s.publisher.trim().is_empty() || !valid_date(&s.date) {
             return Err(Error::Invalid(format!(
                 "rules.fab_profile_source: {} must name who published its numbers and the date \
@@ -349,6 +601,16 @@ pub fn valid_date(date: &str) -> bool {
     (1..=12).contains(&m) && (1..=31).contains(&d)
 }
 
+/// " (it offers a, b)" for an error, or "" when nothing is offered.
+fn offered<'a>(ids: impl Iterator<Item = &'a str>) -> String {
+    let ids: Vec<&str> = ids.collect();
+    if ids.is_empty() {
+        String::new()
+    } else {
+        format!(" (it offers {})", ids.join(", "))
+    }
+}
+
 /// One fab profile file: [`PROFILE_FILE_FORMAT`] and the profile
 /// (`fab_profile`).
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -367,8 +629,15 @@ pub struct ProfileData {
     pub name: String,
     pub source: ProfileSource,
     pub drill_files: DrillFiles,
+    /// The manufacturing options it offers, in shown order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<FabOption>,
+    /// The choice of options (option id → choice id); an option not named
+    /// takes its `default`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub chosen: BTreeMap<String, String>,
     /// Every rule by name ([`RuleKey::name`]): `{"value": …}` or
-    /// `{"formula": "…"}`, each with an optional `"source"`.
+    /// `{"formula": "…"}`, each with an optional `"source"` and `"cases"`.
     pub rules: BTreeMap<String, EntryData>,
 }
 
@@ -383,6 +652,22 @@ pub struct EntryData {
     pub value: Missing,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub formula: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub source: String,
+    /// Values that apply under some manufacturing choices, in order: the
+    /// first whose `when` holds wins.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cases: Vec<CaseData>,
+}
+
+/// One stored rule case: `{"when": {"option": "choice"}, "value": …,
+/// "source": "…"}`.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CaseData {
+    pub when: BTreeMap<String, String>,
+    #[schemars(with = "Value")]
+    pub value: Value,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub source: String,
 }
@@ -454,6 +739,15 @@ impl From<RuleProfile> for ProfileData {
                         value,
                         formula,
                         source: entry.source,
+                        cases: entry
+                            .cases
+                            .into_iter()
+                            .map(|c| CaseData {
+                                when: c.when,
+                                value: to_json(c.value),
+                                source: c.source,
+                            })
+                            .collect(),
                     },
                 )
             })
@@ -463,6 +757,8 @@ impl From<RuleProfile> for ProfileData {
             name: p.name,
             source: p.source,
             drill_files: p.drill_files,
+            options: p.options,
+            chosen: p.chosen,
             rules,
         }
     }
@@ -473,6 +769,7 @@ impl TryFrom<ProfileData> for RuleProfile {
 
     fn try_from(data: ProfileData) -> Result<Self> {
         let mut entries = BTreeMap::new();
+        let mut cases = BTreeMap::new();
         for (name, entry) in data.rules {
             let key = RuleKey::from_name(&name).ok_or_else(|| {
                 Error::Invalid(format!("rules.unknown_rule: {name} is not a rule"))
@@ -493,12 +790,34 @@ impl TryFrom<ProfileData> for RuleProfile {
                     )));
                 }
             };
+            if !entry.cases.is_empty() {
+                let list = entry
+                    .cases
+                    .into_iter()
+                    .map(|c| {
+                        let value = from_json(key, &c.value).ok_or_else(|| {
+                            Error::Invalid(format!(
+                                "rules.value_kind: a case of {name} takes a different kind of \
+                                 value than {}",
+                                c.value
+                            ))
+                        })?;
+                        Ok(RuleCase {
+                            when: c.when,
+                            value,
+                            source: c.source,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                cases.insert(key, list);
+            }
             if entries
                 .insert(
                     key,
                     RuleEntry {
                         setting,
                         source: entry.source,
+                        cases: Vec::new(),
                     },
                 )
                 .is_some()
@@ -508,6 +827,14 @@ impl TryFrom<ProfileData> for RuleProfile {
                 )));
             }
         }
-        Self::new(&data.id, &data.name, data.source, data.drill_files, entries)
+        // The rules without options first: they must be valid on their
+        // own; then the options, their cases and the stored choices.
+        let profile = Self::new(&data.id, &data.name, data.source, data.drill_files, entries)?;
+        if data.options.is_empty() && cases.is_empty() && data.chosen.is_empty() {
+            return Ok(profile);
+        }
+        profile
+            .with_options(data.options, cases)?
+            .with_choices(&data.chosen)
     }
 }

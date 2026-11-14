@@ -690,3 +690,234 @@ fn engine_skips_no_op_rules_commands_and_previews_refusals() -> Result<()> {
     assert_eq!(names, ["Test prototype"], "only the project's own");
     Ok(())
 }
+
+fn choices(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+    pairs
+        .iter()
+        .map(|(o, c)| ((*o).to_owned(), (*c).to_owned()))
+        .collect()
+}
+
+/// The shipped JLCPCB file with its options and cases removed: the
+/// profile as it was before it offered options.
+fn jlcpcb_without_options() -> Result<RuleProfile> {
+    let mut value: serde_json::Value =
+        serde_json::from_str(fixtures::JLCPCB_EXAMPLE_JSON).map_err(j)?;
+    let profile = &mut value["fab_profile"];
+    if let Some(p) = profile.as_object_mut() {
+        p.remove("options");
+    }
+    if let Some(rules) = profile["rules"].as_object_mut() {
+        for rule in rules.values_mut() {
+            if let Some(rule) = rule.as_object_mut() {
+                rule.remove("cases");
+            }
+        }
+    }
+    fixtures::parse(&value.to_string())
+}
+
+/// A profile's options give the limits the fabricator publishes for each
+/// choice; at the defaults the rules are the profile's own values.
+#[test]
+fn fab_options_choose_the_published_limits_and_default_to_the_base_values() -> Result<()> {
+    use CopperObject::{PthHole, Track};
+    let p = fixtures::jlcpcb_example()?;
+    let ids: Vec<_> = p.options().iter().map(|o| o.id.as_str()).collect();
+    assert_eq!(ids, ["limits", "mask_colour", "drill"]);
+    assert_eq!(p.rules(), jlcpcb_without_options()?.rules());
+    assert_eq!(
+        p.chosen(),
+        &choices(&[
+            ("drill", "standard"),
+            ("limits", "recommended"),
+            ("mask_colour", "green")
+        ])
+    );
+    let ring_and_pth = |p: &RuleProfile| {
+        let r = p.rules();
+        (
+            r.holes.pth_annular_ring_min,
+            r.copper.clearance.get(PthHole, Track),
+        )
+    };
+    assert_eq!(ring_and_pth(&p), (0.25, 0.35));
+    let min = p.with_choices(&choices(&[("limits", "minimum")]))?;
+    assert_eq!(ring_and_pth(&min), (0.18, 0.28));
+    assert_eq!(
+        min.rules().mask.web_min,
+        p.rules().mask.web_min,
+        "other rules stay"
+    );
+    let (_, source) = min
+        .active(RuleKey::PthAnnularRingMin)
+        .ok_or_else(|| Error::Invalid("no ring".into()))?;
+    assert!(source.contains("absolute minimum 0.18 mm"), "{source}");
+    let black = p.with_choices(&choices(&[("mask_colour", "black_white")]))?;
+    assert_eq!(black.rules().mask.web_min, 0.13);
+    let fine = p.with_choices(&choices(&[("drill", "microvia")]))?;
+    assert_eq!(fine.rules().holes.drill_min, 0.1);
+    assert_eq!(min.choice_name("limits"), "Absolute minimum");
+    assert!(min.same_but_choices(&p));
+    assert!(!min.same_but_choices(&fixtures::prototype()?));
+    // The choices are kept with the profile, so a board reopens on them.
+    let text = serde_json::to_string(&min).map_err(j)?;
+    assert_eq!(serde_json::from_str::<RuleProfile>(&text).map_err(j)?, min);
+    for (bad, why) in [
+        (choices(&[("colour", "green")]), "offers no option colour"),
+        (choices(&[("limits", "tight")]), "offers no choice tight"),
+    ] {
+        let refused = p.with_choices(&bad).map_err(|e| e.to_string());
+        assert!(
+            refused.as_ref().is_err_and(|e| e.contains(why)),
+            "{refused:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Options and cases must name each other; every combination of the
+/// shipped options gives valid rules.
+#[test]
+fn fab_options_and_cases_are_checked() -> Result<()> {
+    let edit = |f: &dyn Fn(&mut serde_json::Value)| -> Result<String> {
+        let mut value: serde_json::Value =
+            serde_json::from_str(fixtures::JLCPCB_EXAMPLE_JSON).map_err(j)?;
+        f(&mut value["fab_profile"]);
+        Ok(value.to_string())
+    };
+    let cases = [
+        (
+            edit(&|p| {
+                p["rules"]["drill_min"]["cases"][0]["when"] = serde_json::json!({"drill": "laser"})
+            })?,
+            "does not offer",
+        ),
+        (
+            edit(&|p| p["options"][0]["default"] = "tight".into())?,
+            "is not a choice",
+        ),
+        (
+            edit(&|p| p["chosen"] = serde_json::json!({"limits": "tight"}))?,
+            "offers no choice",
+        ),
+        (
+            edit(&|p| p["rules"]["drill_min"]["cases"][0]["value"] = true.into())?,
+            "different kind",
+        ),
+        (
+            edit(&|p| {
+                if let Some(p) = p.as_object_mut() {
+                    p.remove("options");
+                }
+            })?,
+            "does not offer",
+        ),
+    ];
+    for (text, why) in cases {
+        let refused = fixtures::parse(&text).map_err(|e| e.to_string());
+        assert!(
+            refused.as_ref().is_err_and(|e| e.contains(why)),
+            "{why}: {refused:?}"
+        );
+    }
+    let p = fixtures::jlcpcb_example()?;
+    let mut all = vec![std::collections::BTreeMap::new()];
+    for option in p.options() {
+        all = all
+            .into_iter()
+            .flat_map(|picked| {
+                option.choices.iter().map(move |c| {
+                    let mut next = picked.clone();
+                    next.insert(option.id.clone(), c.id.clone());
+                    next
+                })
+            })
+            .collect();
+    }
+    assert_eq!(all.len(), 8);
+    for picked in &all {
+        p.with_choices(picked)?;
+    }
+    Ok(())
+}
+
+/// `rules.set_fab_options` is one undo step that keeps overrides; its
+/// preview lists the rules that change and changes nothing; an unknown
+/// choice is refused and leaves the board as it was.
+#[test]
+fn the_engine_previews_and_applies_fab_options() -> Result<()> {
+    use crate::{Engine, Operation, Query, QueryResult};
+    let mut engine = Engine::demo()?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(set_profile_cmd(fixtures::jlcpcb_example()?, false)),
+    )?;
+    engine.apply(
+        engine.revision(),
+        Operation::Rules(RulesCommand::SetOverride {
+            key: RuleKey::TrackWidthDefault,
+            value: RuleValue::Length(0.3),
+        }),
+    )?;
+    let rev = engine.revision();
+    let minimum = choices(&[("limits", "minimum")]);
+    let QueryResult::ProfileImpact(impact) = engine.query(Query::PreviewOptions {
+        options: minimum.clone(),
+    })?
+    else {
+        return Err(Error::Invalid("not an impact".into()));
+    };
+    assert_eq!(impact.refusal, None);
+    assert!(impact.dropped_overrides.is_empty(), "overrides stay");
+    let mut changed: Vec<_> = impact.changes.iter().map(|c| c.key.name()).collect();
+    changed.sort();
+    assert_eq!(
+        changed,
+        [
+            "clearance_fill_pth_hole",
+            "clearance_pad_pth_hole",
+            "clearance_track_pth_hole",
+            "clearance_via_pth_hole",
+            "pth_annular_ring_min"
+        ]
+    );
+    assert_eq!(engine.revision(), rev, "a preview changes nothing");
+    let refused = engine.apply(
+        rev,
+        Operation::Rules(RulesCommand::SetOptions {
+            options: choices(&[("limits", "tight")]),
+        }),
+    );
+    assert!(refused.is_err());
+    assert_eq!(engine.revision(), rev, "a refusal changes nothing");
+    engine.apply(
+        rev,
+        Operation::Rules(RulesCommand::SetOptions { options: minimum }),
+    )?;
+    let rules = &engine.project().rules;
+    assert_eq!(rules.effective().holes.pth_annular_ring_min, 0.18);
+    assert_eq!(rules.overrides.len(), 1, "the override is kept");
+    let QueryResult::Rules(report) = engine.query(Query::RulesEffective {})? else {
+        return Err(Error::Invalid("not rules".into()));
+    };
+    let summary = report
+        .profile
+        .ok_or_else(|| Error::Invalid("no profile".into()))?;
+    assert_eq!(
+        summary.chosen.get("limits").map(String::as_str),
+        Some("minimum")
+    );
+    assert_eq!(summary.options.len(), 3);
+    engine.undo()?;
+    assert_eq!(
+        engine
+            .project()
+            .rules
+            .effective()
+            .holes
+            .pth_annular_ring_min,
+        0.25
+    );
+    Ok(())
+}

@@ -27,7 +27,7 @@ fn the_catalog_has_its_260_entries() {
     // library.generate_part), 168 operations (the seven assembly.* commands,
     // then library.generate joined), 43 queries (assembly.status joined);
     // the three tables above are what keeps the count honest.
-    assert_eq!(metadata::entries().len(), 260);
+    assert_eq!(metadata::entries().len(), 262);
 }
 
 /// A title is short, says more than the wire name, and is unique within its

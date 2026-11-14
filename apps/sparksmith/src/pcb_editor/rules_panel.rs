@@ -13,6 +13,10 @@
 //! another profile first shows its impact (`rules.preview_fab_profile`): the
 //! rules that change, the overrides dropped and the board issues that
 //! appear or go; Switch then commits `rules.set_fab_profile` as one undo step.
+//! A profile's manufacturing options (a mask colour, a drill process, its
+//! recommended or minimum values) show under its source; choosing another
+//! choice is reviewed the same way (`rules.preview_fab_options`) and Use
+//! commits `rules.set_fab_options`, keeping the overrides.
 //! A new project without a profile opens the panel at "Choose a fab
 //! profile" ([`PcbEditor::ask_for_profile`]): the shipped library's
 //! default profile is preselected, and Use profile sets it in one undo
@@ -155,12 +159,24 @@ fn choose_id() -> egui::Id {
 struct Preview {
     profile: RuleProfile,
     keep_overrides: bool,
+    /// Other choices of the board's profile options rather than another
+    /// profile: what the review names ("Solder mask colour: Black or
+    /// white"), the option's source, and the choices.
+    options: Option<OptionChange>,
     /// The revision the impact was computed at.
     at: u64,
     impact: Result<ProfileImpact, String>,
     /// The revision Switch was sent at.
     sent: Option<u64>,
     refusal: Option<String>,
+}
+
+/// A change of the board's profile options under review.
+#[derive(Clone)]
+struct OptionChange {
+    label: String,
+    source: String,
+    choices: BTreeMap<String, String>,
 }
 
 /// The "Save as fab profile" form: a name and where the numbers come from.
@@ -301,6 +317,34 @@ impl RulesPanel {
         self.mode = Mode::Preview(Box::new(Preview {
             profile,
             keep_overrides,
+            options: None,
+            at: engine.revision(),
+            impact,
+            sent: None,
+            refusal: None,
+        }));
+    }
+
+    /// The impact of choosing `change`'s choices for the board's profile,
+    /// computed now.
+    fn preview_options(&mut self, engine: &Engine, change: OptionChange) {
+        // A refused choice is reviewed with its reason (from the query).
+        let Some(current) = engine.project().rules.profile.clone() else {
+            return;
+        };
+        let profile =
+            rules::with_options(&engine.project().rules, &change.choices).unwrap_or(current);
+        let impact = match engine.query(Query::PreviewOptions {
+            options: change.choices.clone(),
+        }) {
+            Ok(QueryResult::ProfileImpact(impact)) => Ok(*impact),
+            Ok(_) => Err("The preview returned something else".to_owned()),
+            Err(error) => Err(refusal::shown_error(&error)),
+        };
+        self.mode = Mode::Preview(Box::new(Preview {
+            profile,
+            keep_overrides: true,
+            options: Some(change),
             at: engine.revision(),
             impact,
             sent: None,
@@ -744,12 +788,11 @@ impl PcbEditor {
         if let Mode::Preview(preview) = &panel.mode
             && preview.sent.is_some_and(|sent| sent != engine.revision())
         {
-            toast::post(
-                ui.ctx(),
-                Level::Ok,
-                format!("Switched to {}", preview.profile.name),
-                vec![ToastAction::Undo],
-            );
+            let text = match &preview.options {
+                Some(change) => format!("Using {}", change.label),
+                None => format!("Switched to {}", preview.profile.name),
+            };
+            toast::post(ui.ctx(), Level::Ok, text, vec![ToastAction::Undo]);
             panel.mode = Mode::Table;
         }
         let mut close = false;
@@ -905,7 +948,9 @@ fn picks(
     for p in &choices {
         let pick = Pick::User(p.id.clone());
         if p.id == snapshot.id {
-            if p == snapshot {
+            // The board's own choices of the profile's options are not a
+            // difference from the library's.
+            if snapshot.same_but_choices(p) {
                 current = pick.clone();
             } else {
                 differs = Some(p.clone());
@@ -948,6 +993,9 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
                 kit::row(ui, "Source", |ui| {
                     kit::summary_row(ui, &source_line(&profile.source), None);
                 });
+                if let Some(change) = option_rows(ui, profile) {
+                    panel.preview_options(engine, change);
+                }
             }
             None => {
                 kit::hint(
@@ -1066,6 +1114,35 @@ fn body(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> (Option<Operati
         None => library_op,
     };
     (op, focused)
+}
+
+/// The profile's manufacturing options, one choice row each; the change
+/// a row asks for.
+fn option_rows(ui: &mut Ui, profile: &RuleProfile) -> Option<OptionChange> {
+    let mut change = None;
+    for option in profile.options() {
+        let current = profile
+            .chosen()
+            .get(&option.id)
+            .cloned()
+            .unwrap_or_default();
+        let mut pick = current.clone();
+        let list: Vec<(String, String)> = option
+            .choices
+            .iter()
+            .map(|c| (c.id.clone(), c.name.clone()))
+            .collect();
+        kit::choice_row(ui, &option.name, &mut pick, &list);
+        if pick != current {
+            let name = option.choice(&pick).map_or("", |c| c.name.as_str());
+            change = Some(OptionChange {
+                label: format!("{}: {name}", option.name),
+                source: option.source.clone(),
+                choices: [(option.id.clone(), pick)].into_iter().collect(),
+            });
+        }
+    }
+    change
 }
 
 /// One group's table: Rule · Profile · Value · Reset. Returns the edit a
@@ -1374,6 +1451,14 @@ fn library_section(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Opti
 }
 
 /// The docked impact review of a profile switch.
+/// What a review names: the option change, or the profile switched to.
+fn preview_name(preview: &Preview) -> &str {
+    preview
+        .options
+        .as_ref()
+        .map_or(preview.profile.name.as_str(), |c| c.label.as_str())
+}
+
 fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<Operation> {
     let Mode::Preview(preview) = &mut panel.mode else {
         return None;
@@ -1383,7 +1468,7 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
         // A switch the engine would refuse is previewed with its reason
         // as the blocker, so Apply is not offered.
         Ok(impact) => (
-            impact_summary(&preview.profile.name, impact),
+            impact_summary(preview_name(preview), impact),
             impact_groups(impact),
             impact
                 .refusal
@@ -1397,7 +1482,7 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
                 .collect(),
         ),
         Err(error) => (
-            preview.profile.name.clone(),
+            preview_name(preview).to_owned(),
             Vec::new(),
             vec![ReviewLine {
                 level: Level::Error,
@@ -1407,11 +1492,17 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
             }],
         ),
     };
-    let apply = format!("Switch to {}", preview.profile.name);
+    let (apply, title) = match &preview.options {
+        Some(_) => ("Use these limits".to_owned(), "Change fab profile option"),
+        None => (
+            format!("Switch to {}", preview.profile.name),
+            "Switch fab profile",
+        ),
+    };
     let review = ReviewPanel {
         id: preview_id(),
         icon: "constraint",
-        title: "Switch fab profile",
+        title,
         summary: &summary,
         stale,
         blockers: &blockers,
@@ -1420,16 +1511,22 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
         apply: &apply,
         destructive: false,
     };
-    let overrides = !engine.project().rules.overrides.is_empty();
+    // An option change keeps the overrides; a switch asks.
+    let overrides = !engine.project().rules.overrides.is_empty() && preview.options.is_none();
     let mut keep = preview.keep_overrides;
     let source = source_line(&preview.profile.source);
+    let notes = match &preview.options {
+        Some(change) => change.source.clone(),
+        None => preview.profile.source.notes.clone(),
+    };
     let action = review.show_with(ui, &mut [], preview.refusal.as_deref(), |ui| {
-        kit::hint(ui, &source, &preview.profile.source.notes);
+        kit::hint(ui, &source, &notes);
         if overrides {
             kit::check_row(ui, "Keep project overrides", &mut keep);
         }
     });
     let profile = preview.profile.clone();
+    let options = preview.options.clone();
     if keep != preview.keep_overrides {
         panel.preview(engine, profile, keep);
         return None;
@@ -1440,7 +1537,10 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
             None
         }
         ReviewAction::Recompute => {
-            panel.preview(engine, profile, keep);
+            match options {
+                Some(change) => panel.preview_options(engine, change),
+                None => panel.preview(engine, profile, keep),
+            }
             None
         }
         ReviewAction::CopyReport => {
@@ -1458,9 +1558,14 @@ fn preview_slot(panel: &mut RulesPanel, ui: &mut Ui, engine: &Engine) -> Option<
             preview.refusal = None;
             preview.sent = Some(engine.revision());
             refusal::mark(ui.ctx(), Origin::Dialog(preview_id()));
-            Some(Operation::Rules(RulesCommand::SetProfile {
-                profile: Box::new(profile),
-                keep_overrides: keep,
+            Some(Operation::Rules(match options {
+                Some(change) => RulesCommand::SetOptions {
+                    options: change.choices,
+                },
+                None => RulesCommand::SetProfile {
+                    profile: Box::new(profile),
+                    keep_overrides: keep,
+                },
             }))
         }
         ReviewAction::Acknowledge(_) | ReviewAction::Locate(_) | ReviewAction::LocateAfter(_) => {

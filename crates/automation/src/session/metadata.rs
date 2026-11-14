@@ -152,6 +152,7 @@ pub const LINKED: &[&str] = &[
     "rules.effective",
     "rules.fab_profiles",
     "rules.preview_fab_profile",
+    "rules.preview_fab_options",
     "net_class.list",
     "net_class.preview_patterns",
     "board.shape",
