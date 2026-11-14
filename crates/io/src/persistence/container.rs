@@ -256,7 +256,13 @@ pub(crate) fn write(
         }
         total = add_total(total, asset.data.len() as u64)?;
     }
-    super::atomic_write_with(path, |target| {
+    // Only a recovery snapshot carries a recovery entry; it stays owner-only.
+    let access = if recovery.is_some() {
+        super::Access::Private
+    } else {
+        super::Access::Shared
+    };
+    super::write_with(path, true, access, |target| {
         let mut zip = ZipWriter::new(target);
         let deflated = options(CompressionMethod::Deflated);
         zip.start_file(CONTAINER_DOCUMENT, deflated)

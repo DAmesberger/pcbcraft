@@ -79,6 +79,23 @@ fn a_snapshot_under_the_former_suffix_is_still_recovered() -> Result<()> {
     Ok(())
 }
 
+/// Snapshots stay owner-only, first write and every later one, even when
+/// the session file was made wider meanwhile.
+#[cfg(unix)]
+#[test]
+fn snapshots_stay_owner_only() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = |p: &Path| -> Result<u32> { Ok(std::fs::metadata(p)?.permissions().mode() & 0o777) };
+    let directory = tempfile::tempdir()?;
+    let store = RecoveryStore::new(directory.path())?;
+    store.write(&Engine::demo()?.to_file(), None)?;
+    assert_eq!(mode(own(&store)?)?, 0o600);
+    std::fs::set_permissions(own(&store)?, std::fs::Permissions::from_mode(0o644))?;
+    store.write(&Engine::demo()?.to_file(), None)?;
+    assert_eq!(mode(own(&store)?)?, 0o600);
+    Ok(())
+}
+
 #[test]
 fn invalid_recovery_write_preserves_previous_valid_snapshot() -> Result<()> {
     let directory = tempfile::tempdir()?;
