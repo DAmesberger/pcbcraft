@@ -10,7 +10,7 @@ use crate::library::samples::Preset;
 use crate::library::symbol_style::{self, ResistorStyle, SymbolConventions, SymbolKind};
 use crate::library::templates::catalog::{
     BUILT_FAMILY_REV, FamilyRef, LandValues, NewFromTemplate, PackageFromTemplate, PackagePlan,
-    Renumber, RowFrom, RowSource, SavePackageRow, TerminalMatch,
+    Renumber, RowFrom, RowSource, SavePackageRow, TerminalMatch, readable_provenance, resolve_row,
 };
 use crate::library::{Definition, DefinitionMeta, DraftEdit, PadShape};
 use crate::tests::support::mdeg;
@@ -1268,6 +1268,31 @@ fn built_drafts_record_the_row_identity() -> Fallible<()> {
             && text.contains("citation unverified"),
         "{text}"
     );
+    // Displays name the row by its kind, not its file and format; the
+    // cited document stays.
+    let shown = readable_provenance(&text);
+    assert!(
+        shown.starts_with("From the built-in template ‘SOIC-8 3.9 mm’; values from ")
+            && shown.contains("citation unverified")
+            && shown.ends_with("; verify against the selected component datasheet.")
+            && !shown.contains('[')
+            && !shown.contains(".json"),
+        "{shown}"
+    );
+    let edited = readable_provenance(&crate::library::templates::catalog::provenance(
+        &resolve_row(
+            &engine.project().library,
+            &RowSource::Starter {
+                name: "SOIC-8 3.9 mm".into(),
+            },
+        )?,
+        false,
+    ));
+    assert_eq!(
+        edited,
+        "Custom values edited from the built-in template ‘SOIC-8 3.9 mm’; estimated values and lands; verify against the selected component datasheet."
+    );
+    assert_eq!(readable_provenance("Datasheet rev. B"), "Datasheet rev. B");
     Ok(())
 }
 
