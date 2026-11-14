@@ -5,7 +5,8 @@
       "name": "chip",
       "package": "sparksmith-gen-chip",
       "sha256": {
-        "aarch64-apple-darwin": "e8ee159a07644986c5e8107a7c95baef4d254e05a11a965432f096a6df7695b1"
+        "aarch64-apple-darwin": "e8ee159a07644986c5e8107a7c95baef4d254e05a11a965432f096a6df7695b1",
+        "x86_64-unknown-linux-gnu": "2803fefd2d52659010dc46cef2824ac6bfdcf5b5d5a4e8047b0a1a8aa087d4ca"
       }
     }
   ],
