@@ -46,6 +46,83 @@ pub struct PadConnections {
     pub via: Option<PadConnection>,
 }
 
+/// How copper fills join one placed part's pads, over each fill's own
+/// settings: a part's (footprint-wide) override applies to its pads, and a
+/// pad's own override wins over the part's, field by field. Every field is
+/// optional; unset follows the next level (pad, part, fill, net class,
+/// rule). Set with `fill.set_pad_override`.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PadFillOverride {
+    /// Solid, thermal spokes or not joined.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection: Option<PadConnection>,
+    /// Thermal spoke width, mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoke_width: Option<f64>,
+    /// First spoke's angle in the pad frame, degrees.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spoke_angle_deg: Option<f64>,
+    /// Thermal relief gap between the pad and the fill, mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thermal_gap: Option<f64>,
+    /// Gap from fill copper to the pad where the fill does not join it, mm,
+    /// in place of the fill's own clearance; the clearance rules still set
+    /// the floor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clearance: Option<f64>,
+}
+
+impl PadFillOverride {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `self`'s fields over `under`'s.
+    pub fn over(self, under: Self) -> Self {
+        Self {
+            connection: self.connection.or(under.connection),
+            spoke_width: self.spoke_width.or(under.spoke_width),
+            spoke_angle_deg: self.spoke_angle_deg.or(under.spoke_angle_deg),
+            thermal_gap: self.thermal_gap.or(under.thermal_gap),
+            clearance: self.clearance.or(under.clearance),
+        }
+    }
+
+    /// Lengths within 0–[`crate::rules::MAX_RULE_MM`] (a spoke wider than
+    /// 0), an angle within ±360°.
+    pub fn valid(&self) -> bool {
+        let mm = |v: Option<f64>| {
+            v.is_none_or(|v| v.is_finite() && (0.0..=crate::rules::MAX_RULE_MM).contains(&v))
+        };
+        mm(self.spoke_width)
+            && self.spoke_width.is_none_or(|w| w > 0.0)
+            && mm(self.thermal_gap)
+            && mm(self.clearance)
+            && self
+                .spoke_angle_deg
+                .is_none_or(|a| a.is_finite() && (-360.0..=360.0).contains(&a))
+    }
+
+    /// The thermal relief `base` with this override's spoke and gap.
+    pub fn thermal(&self, base: ThermalRelief) -> ThermalRelief {
+        ThermalRelief {
+            spoke_width: self.spoke_width.unwrap_or(base.spoke_width),
+            spoke_count: base.spoke_count,
+            gap: self.thermal_gap.unwrap_or(base.gap),
+            angle_deg: self.spoke_angle_deg.unwrap_or(base.angle_deg),
+        }
+    }
+}
+
+/// One pad's [`PadFillOverride`] on a placed part.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PadFillOverrideEntry {
+    pub pad: crate::ids::PadId,
+    pub settings: PadFillOverride,
+}
+
 /// A fill's departures from the effective fill rules.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(deny_unknown_fields)]

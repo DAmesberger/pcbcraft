@@ -196,12 +196,12 @@ impl ComponentDefinition {
                 vec![this],
             ));
         }
-        // A mechanical part (docs/mechanical-parts.md) may have none.
-        let least = usize::from(!super::mechanical::implemented_mechanically(library, self));
-        if !(least..=MAX_TERMINALS).contains(&self.terminals.len()) {
+        // A part may have no electrical terminal at all: a fiducial, a
+        // mounting hole, a logo or a mechanical part (docs/mechanical-parts.md).
+        if self.terminals.len() > MAX_TERMINALS {
             out.push(issue(
                 "component.terminal_count",
-                format!("A component needs {least}–{MAX_TERMINALS} electrical terminals."),
+                format!("A component has at most {MAX_TERMINALS} electrical terminals."),
                 vec![this],
             ));
         }

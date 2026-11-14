@@ -10,7 +10,10 @@ use crate::diagnostics::{Error, Result};
 use crate::geometry::point_valid;
 use crate::ids::Id;
 use crate::library::{MAX_OUTLINE_SEGMENTS, Outline, Segment};
-use crate::model::fill::{FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec};
+use crate::model::fill::{
+    FillRegion, FillSpec, FilledCopper, KeepoutLayers, KeepoutSpec, PadFillOverride,
+    PadFillOverrideEntry,
+};
 use crate::model::{Fill, Keepout, Project};
 use crate::rules::MAX_RULE_MM;
 use schemars::JsonSchema;
@@ -76,6 +79,19 @@ pub enum FillCommand {
     /// Delete a keepout.
     #[serde(rename = "keepout.delete")]
     DeleteKeepout { id: Id },
+    /// Set how fills join a placed part's pads, over each fill's settings:
+    /// the whole part's (`pad` omitted) or one pad's, which wins over the
+    /// part's field by field. Empty `settings` removes the override. Fill
+    /// copper near the part goes stale. Example:
+    /// `{"command":"fill.set_pad_override","params":{"instance":7,"pad":1,
+    /// "settings":{"connection":"solid"}}}`.
+    #[serde(rename = "fill.set_pad_override")]
+    SetPadOverride {
+        instance: Id,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pad: Option<crate::ids::PadId>,
+        settings: PadFillOverride,
+    },
 }
 
 // A new command chooses its permission class here.
@@ -89,6 +105,7 @@ declare_classes!(FillCommand {
     AddKeepout "keepout.add" Edit "Add a keep-out",
     EditKeepout "keepout.edit" Edit "Edit a keep-out",
     DeleteKeepout "keepout.delete" Edit "Delete a keep-out",
+    SetPadOverride "fill.set_pad_override" Edit "Set how fills join pads",
 });
 
 /// One fill's computed copper for `fill.store_all`.
@@ -222,7 +239,65 @@ pub fn apply(project: &mut Project, command: FillCommand) -> Result<Option<Id>> 
             }
             Ok(None)
         }
+        FillCommand::SetPadOverride {
+            instance,
+            pad,
+            settings,
+        } => {
+            set_pad_override(project, instance, pad, settings)?;
+            Ok(None)
+        }
     }
+}
+
+/// `fill.set_pad_override`: a placed part's or one of its pads' fill
+/// override.
+fn set_pad_override(
+    project: &mut Project,
+    instance: Id,
+    pad: Option<crate::ids::PadId>,
+    settings: PadFillOverride,
+) -> Result<()> {
+    if !settings.valid() {
+        return Err(Error::Invalid(format!(
+            "fill.pad_override_bounds: spoke width above 0, gaps and clearance 0–{MAX_RULE_MM} mm \
+             and an angle within ±360°"
+        )));
+    }
+    let Some(index) = project
+        .placements
+        .iter()
+        .position(|p| p.instance == instance)
+    else {
+        return Err(Error::NotFound(
+            "fill.pad_override_part: the part is not placed on the board".into(),
+        ));
+    };
+    if let Some(pad) = pad {
+        let has = project
+            .instance(instance)
+            .and_then(|i| crate::instances::resolve(&project.library, i).ok())
+            .and_then(|r| r.physical)
+            .is_some_and(|p| p.footprint.definition.pads.iter().any(|q| q.id == pad));
+        if !has {
+            return Err(Error::NotFound(format!(
+                "fill.pad_override_pad: the part's footprint has no pad {pad}"
+            )));
+        }
+    }
+    let placement = &mut project.placements[index];
+    match pad {
+        None => placement.fill_override = settings,
+        Some(pad) => {
+            let entries = &mut placement.pad_fill_overrides;
+            entries.retain(|e| e.pad != pad);
+            if !settings.is_empty() {
+                entries.push(PadFillOverrideEntry { pad, settings });
+                entries.sort_by_key(|e| e.pad);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Give every board-following fill ([`FillRegion::Board`]) the solved
@@ -461,6 +536,20 @@ fn mm_ok(v: Option<f64>) -> bool {
 /// Structural bounds of fills and keepouts. A fill whose net is gone is
 /// a check finding, not an invalid document.
 pub fn validate(project: &Project) -> Result<()> {
+    for placement in &project.placements {
+        let pads = &placement.pad_fill_overrides;
+        if !placement.fill_override.valid()
+            || pads
+                .iter()
+                .any(|e| !e.settings.valid() || e.settings.is_empty())
+            || pads.windows(2).any(|w| w[0].pad >= w[1].pad)
+        {
+            return Err(Error::Invalid(
+                "fill.pad_override_bounds: pad fill overrides need values within bounds, one per pad in pad order"
+                    .into(),
+            ));
+        }
+    }
     for f in &project.fills {
         let s = &f.settings;
         let thermal_ok = s.thermal.is_none_or(|t| {
