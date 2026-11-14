@@ -54,7 +54,7 @@ fn generated(key: &str) -> Result<(Vec<u8>, PartValues, [i64; 4], String)> {
     let runtime = WasmiRuntime::new(Limits::DEFAULT);
     let description = runtime.describe(CHIP).map_err(fail)?;
     let preset = description
-        .presets
+        .presets()
         .iter()
         .find(|p| p.key == key)
         .ok_or_else(|| Error::Verification(format!("no preset {key}")))?;
@@ -68,7 +68,7 @@ fn generated(key: &str) -> Result<(Vec<u8>, PartValues, [i64; 4], String)> {
         let ParamValue::Int(v) = value else {
             return Err(Error::Verification(format!("{name} is not an integer")));
         };
-        converted.insert(name.clone(), PartValue::Mm(n(*v)?.to_mm_f64()));
+        converted.insert(name.clone(), PartValue::Nm(n(*v)?.get()));
     }
     let int = |k: &str| match request.params.get(k) {
         Some(ParamValue::Int(v)) => *v,
@@ -230,6 +230,78 @@ fn the_bundles_part_files_pass_the_part_file_check() -> Result<()> {
         let bytes = std::fs::read(&path).map_err(|e| Error::Verification(e.to_string()))?;
         let report = part_file::evaluate(&bytes, &PartValues::new())?.report();
         assert!(report.ok, "{}: {:?}", path.display(), report.findings);
+    }
+    Ok(())
+}
+
+/// Slice B2: the generated chip's lead contacts bind its terminations to
+/// their terminals exactly as the in-code builder binds its bodies, so they
+/// highlight and pick with their nets; a contact under no lead body is
+/// refused.
+#[test]
+fn the_part_files_terminations_bind_to_the_builders_terminals() -> Result<()> {
+    for key in [
+        "resistor-0603",
+        "capacitor-0805",
+        "ferrite-0603",
+        "led-0603",
+    ] {
+        let (bytes, values, dims, part) = generated(key)?;
+        let evaluated = part_file::evaluate(&bytes, &values)?;
+        // The generation's lead contacts, in mm.
+        let runtime = WasmiRuntime::new(Limits::DEFAULT);
+        let description = runtime.describe(CHIP).map_err(fail)?;
+        let preset = description
+            .presets()
+            .iter()
+            .find(|p| p.key == key)
+            .ok_or_else(|| Error::Verification(format!("no preset {key}")))?;
+        let request = complete(&description, Scope::Package, &preset.params).map_err(fail)?;
+        let made = runtime.generate(CHIP, &request).map_err(fail)?;
+        let contacts: Vec<(String, [f64; 2])> = made
+            .generation
+            .package
+            .geometry
+            .leads
+            .iter()
+            .map(|l| {
+                (
+                    l.key.clone(),
+                    [l.contact[0] as f64 / 1e6, l.contact[1] as f64 / 1e6],
+                )
+            })
+            .collect();
+        let bound: Vec<(String, String)> = part_file::lead_bodies(&evaluated, &contacts, true)
+            .map_err(Error::Verification)?
+            .into_iter()
+            .map(|l| (l.body, l.terminal))
+            .collect();
+        let mut native = Native::new("leads")?;
+        let mut builder: Vec<(String, String)> =
+            build_standalone(&mut native, &in_code(dims, &part)?)?
+                .into_iter()
+                .filter_map(|b| Some((b.name, b.terminal?.to_string())))
+                .collect();
+        builder.sort();
+        assert_eq!(bound.len(), 2, "{key}: two terminations");
+        assert_eq!(bound, builder, "{key}");
+        // A lead off the part: refused, naming it.
+        let mut off = contacts.clone();
+        off.push(("3".into(), [10.0, 10.0]));
+        let refused = part_file::lead_bodies(&evaluated, &off, true)
+            .err()
+            .unwrap_or_default();
+        assert!(
+            refused.starts_with("lead 3 touches the board at (10, 10) mm, under no lead body"),
+            "{refused}"
+        );
+        // From footprint pads (not strict): the stray pad is skipped.
+        assert_eq!(
+            part_file::lead_bodies(&evaluated, &off, false)
+                .map_err(Error::Verification)?
+                .len(),
+            2
+        );
     }
     Ok(())
 }

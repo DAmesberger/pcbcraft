@@ -175,7 +175,6 @@ const MAP: &[(&str, &[&str])] = &[
             "model",
         ],
     ),
-    ("scripting", &["ids", "diagnostics", "quantity", "library"]),
     (
         "validate",
         &[
@@ -261,7 +260,6 @@ const BELOW_UPDATES: &[&str] = &[
     "erc",
     "completeness",
     "catalog",
-    "scripting",
     "validate",
     "issues",
 ];
@@ -288,7 +286,6 @@ const BELOW_COMMANDS: &[&str] = &[
     "pins",
     "firmware",
     "catalog",
-    "scripting",
     "validate",
     "issues",
     "updates",

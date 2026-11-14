@@ -1,0 +1,29 @@
+[package]
+name = "sparksmith-gen-fixture"
+description = "Test module: a plugin with a part capability and an edit command that calls the host during generate-part and draws a 45° arc; never shipped"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# cdylib: the module (built by `cargo xtask generators check`); rlib: the
+# native golden test.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# As a generator crate: unsafe_code denied, not forbidden, so the SDK's
+# export macro can allow it for `#[unsafe(no_mangle)]`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+unreachable = "deny"
+
+[dependencies]
+sparksmith-generator-sdk.workspace = true

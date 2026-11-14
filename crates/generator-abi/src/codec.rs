@@ -12,13 +12,24 @@
 //!
 //! [`decode`] accepts only bytes that [`encode`] would write for the decoded
 //! value, so two different byte strings never decode to the same value.
-use alloc::string::{String, ToString};
+//!
+//! The codec has its own reader, writer and serde (de)serializer over an
+//! integer-only tree ([`Canon`]), not `serde_json`: no path reaches
+//! floating-point code, so a module built with it contains no float
+//! instruction, which the host refuses in plugins whose results are hashed
+//! (part-generation slice B3).
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+mod de;
+mod ser;
+pub mod tree;
+
+pub use tree::Canon;
 
 /// Deepest nesting of arrays and objects the codec accepts.
 pub const MAX_DEPTH: usize = 64;
@@ -62,10 +73,10 @@ impl fmt::Display for CodecError {
 }
 
 /// The canonical bytes of `value`.
-pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, CodecError> {
-    let value = serde_json::to_value(value).map_err(|e| CodecError::Shape(e.to_string()))?;
+pub fn encode<T: Serialize + ?Sized>(value: &T) -> Result<Vec<u8>, CodecError> {
+    let tree = ser::to_canon(value).map_err(|e| CodecError::Shape(e.0))?;
     let mut out = Vec::new();
-    write_value(&value, &mut out, 0)?;
+    tree::write(&tree, &mut out, 0)?;
     Ok(out)
 }
 
@@ -80,14 +91,13 @@ pub fn decode<T: DeserializeOwned + Serialize>(
             limit,
         });
     }
-    let value: Value =
-        serde_json::from_slice(bytes).map_err(|e| CodecError::Syntax(e.to_string()))?;
+    let value = tree::read(bytes)?;
     let mut again = Vec::with_capacity(bytes.len());
-    write_value(&value, &mut again, 0)?;
+    tree::write(&value, &mut again, 0)?;
     if again != bytes {
         return Err(CodecError::NotCanonical);
     }
-    let typed: T = serde_json::from_value(value).map_err(|e| CodecError::Shape(e.to_string()))?;
+    let typed: T = de::from_canon(value).map_err(|e| CodecError::Shape(e.0))?;
     // A field the type fills by default, or a `null` it reads as absent,
     // would encode differently: refuse it as not canonical.
     if encode(&typed)? != bytes {
@@ -96,60 +106,16 @@ pub fn decode<T: DeserializeOwned + Serialize>(
     Ok(typed)
 }
 
-fn write_value(value: &Value, out: &mut Vec<u8>, depth: usize) -> Result<(), CodecError> {
-    if depth > MAX_DEPTH {
-        return Err(CodecError::TooDeep);
+/// Read JSON that need not be canonical (spaces, any key order), such as a
+/// generator's `presets.json`, into `T`; integers only.
+pub fn read<T: DeserializeOwned>(bytes: &[u8], limit: usize) -> Result<T, CodecError> {
+    if bytes.len() > limit {
+        return Err(CodecError::TooLarge {
+            bytes: bytes.len(),
+            limit,
+        });
     }
-    match value {
-        Value::Null => out.extend_from_slice(b"null"),
-        Value::Bool(true) => out.extend_from_slice(b"true"),
-        Value::Bool(false) => out.extend_from_slice(b"false"),
-        Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                out.extend_from_slice(i.to_string().as_bytes());
-            } else if let Some(u) = n.as_u64() {
-                out.extend_from_slice(u.to_string().as_bytes());
-            } else {
-                return Err(CodecError::Float);
-            }
-        }
-        Value::String(s) => write_string(s, out)?,
-        Value::Array(items) => {
-            out.push(b'[');
-            for (k, item) in items.iter().enumerate() {
-                if k > 0 {
-                    out.push(b',');
-                }
-                write_value(item, out, depth + 1)?;
-            }
-            out.push(b']');
-        }
-        Value::Object(map) => {
-            let mut entries: Vec<(&String, &Value)> = map.iter().collect();
-            entries.sort_by(|a, b| a.0.as_bytes().cmp(b.0.as_bytes()));
-            out.push(b'{');
-            for (k, (key, item)) in entries.into_iter().enumerate() {
-                if k > 0 {
-                    out.push(b',');
-                }
-                write_string(key, out)?;
-                out.push(b':');
-                write_value(item, out, depth + 1)?;
-            }
-            out.push(b'}');
-        }
-    }
-    Ok(())
-}
-
-fn write_string(s: &str, out: &mut Vec<u8>) -> Result<(), CodecError> {
-    #[cfg(feature = "nfc")]
-    if !unicode_normalization::is_nfc(s) {
-        return Err(CodecError::NotNfc);
-    }
-    let quoted = serde_json::to_vec(s).map_err(|e| CodecError::Shape(e.to_string()))?;
-    out.extend_from_slice(&quoted);
-    Ok(())
+    de::from_canon(tree::read(bytes)?).map_err(|e| CodecError::Shape(e.0))
 }
 
 /// SHA-256 of `bytes`.
@@ -235,7 +201,7 @@ mod tests {
                 &br#"{"alpha":"x","map":{},"zeta":7e0}"#[..],
                 CodecError::Float,
             ),
-            // serde_json reads `-0` as a float.
+            // `-0` is no integer's shortest form.
             (
                 &br#"{"alpha":"x","map":{},"zeta":-0}"#[..],
                 CodecError::Float,
@@ -272,17 +238,27 @@ mod tests {
     fn bounds_size_and_depth() {
         let long = vec![b' '; 2048];
         assert_eq!(
-            decode::<Value>(&long, 1024).err(),
+            decode::<Vec<u8>>(&long, 1024).err(),
             Some(CodecError::TooLarge {
                 bytes: 2048,
                 limit: 1024
             })
         );
-        let mut deep = Value::Bool(true);
+        let mut deep = Canon::Bool(true);
         for _ in 0..=MAX_DEPTH {
-            deep = Value::Array(vec![deep]);
+            deep = Canon::Arr(vec![deep]);
         }
-        assert_eq!(encode(&deep).err(), Some(CodecError::TooDeep));
+        let mut out = Vec::new();
+        assert_eq!(
+            tree::write(&deep, &mut out, 0).err(),
+            Some(CodecError::TooDeep)
+        );
+        let text = alloc::format!(
+            "{}true{}",
+            "[".repeat(MAX_DEPTH + 1),
+            "]".repeat(MAX_DEPTH + 1)
+        );
+        assert_eq!(tree::read(text.as_bytes()).err(), Some(CodecError::TooDeep));
     }
 
     #[cfg(feature = "nfc")]

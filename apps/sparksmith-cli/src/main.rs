@@ -8,6 +8,7 @@ mod firmware;
 mod import_kicad;
 mod part;
 mod pinout;
+mod plugin;
 mod review_diff;
 mod sample_packages;
 
@@ -87,6 +88,7 @@ fn usage() -> String {
         review_diff::USAGE,
         part::USAGE,
         import_kicad::USAGE,
+        plugin::USAGE,
     ]
     .into_iter()
     .filter(|u| !u.is_empty())
@@ -340,6 +342,7 @@ fn run() -> Result<()> {
         [command, rest @ ..] if command == "part" => part::run(rest),
         [command, rest @ ..] if command == "import-kicad" => import_kicad::run(rest),
         [command, rest @ ..] if command == "convert" => convert::run(rest),
+        [command, rest @ ..] if command == "plugin" => plugin::run(rest),
         _ => Err(usage().into()),
     }
 }

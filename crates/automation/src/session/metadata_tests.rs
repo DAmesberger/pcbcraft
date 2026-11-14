@@ -24,8 +24,8 @@ fn the_catalog_has_its_265_entries() {
     // The three tables above keep the per-family counts honest; this total
     // changes with every new request, operation or query. 262 after the fab
     // profile options; then fill.set_pad_override, component.place_board_only
-    // and rules.set_project_source joined.
-    assert_eq!(metadata::entries().len(), 265);
+    // and rules.set_project_source joined, and library.generate_pads went.
+    assert_eq!(metadata::entries().len(), 264);
 }
 
 /// A title is short, says more than the wire name, and is unique within its

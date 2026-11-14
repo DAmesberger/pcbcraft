@@ -187,20 +187,31 @@ fn clipped(a: Point, b: Point, boxes: &[Box2]) -> Vec<Primitive> {
 pub fn silk_outline(pads: &[Pad], body: Box2, default_mask_nm: i64) -> Vec<Graphic> {
     let boxes: Vec<Box2> = pads.iter().map(|p| keep_out(p, default_mask_nm)).collect();
     let [c0, c1, c2, c3] = body.inflated(SILK_OUTSET_NM).corners();
-    [(c0, c1), (c1, c2), (c2, c3), (c3, c0)]
-        .into_iter()
-        .flat_map(|(a, b)| clipped(a, b, &boxes))
-        .map(|shape| Graphic {
-            shape,
-            stroke_nm: SILK_STROKE_NM,
-            fill: Fill::None,
-        })
-        .collect()
+    [
+        ("bottom", c0, c1),
+        ("right", c1, c2),
+        ("top", c2, c3),
+        ("left", c3, c0),
+    ]
+    .into_iter()
+    .flat_map(|(edge, a, b)| {
+        clipped(a, b, &boxes)
+            .into_iter()
+            .enumerate()
+            .map(move |(k, shape)| Graphic {
+                key: alloc::format!("outline-{edge}-{}", k + 1),
+                shape,
+                stroke_nm: SILK_STROKE_NM,
+                fill: Fill::None,
+            })
+    })
+    .collect()
 }
 
 /// The silkscreen designator, centred above `courtyard_top`.
 pub fn silk_designator(body: Box2, courtyard_top: i64) -> Graphic {
     text(
+        "designator",
         [
             body.center()[0],
             courtyard_top + TEXT_HEIGHT_NM / 2 + SILK_STROKE_NM,
@@ -215,6 +226,7 @@ pub fn assembly(body: Box2) -> Vec<Graphic> {
     let height = (w.min(h) / 2).clamp(MIN_ASSEMBLY_TEXT_NM, TEXT_HEIGHT_NM);
     vec![
         Graphic {
+            key: "assembly-outline".into(),
             shape: Primitive::Rect {
                 min: body.min,
                 max: body.max,
@@ -222,12 +234,13 @@ pub fn assembly(body: Box2) -> Vec<Graphic> {
             stroke_nm: ASSEMBLY_STROKE_NM,
             fill: Fill::None,
         },
-        text(body.center(), height),
+        text("assembly-designator", body.center(), height),
     ]
 }
 
-fn text(at: Point, height_nm: i64) -> Graphic {
+fn text(key: &str, at: Point, height_nm: i64) -> Graphic {
     Graphic {
+        key: key.into(),
         shape: Primitive::Text {
             at,
             height_nm,

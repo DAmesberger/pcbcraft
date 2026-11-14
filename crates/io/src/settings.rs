@@ -477,6 +477,12 @@ impl UserDirs {
         self.config.join(SETTINGS_FILE)
     }
 
+    /// The plugin approvals (`crate::plugin_approvals`), beside the
+    /// settings.
+    pub fn approvals_path(&self) -> PathBuf {
+        self.config.join(crate::plugin_approvals::APPROVALS_FILE)
+    }
+
     /// Where crash-recovery snapshots live: `SPARKSMITH_RECOVERY_DIR` when
     /// set, else the platform's state directory (`~/Library/Application
     /// Support/Sparksmith/Recovery`, `%LOCALAPPDATA%\Sparksmith\Recovery`,

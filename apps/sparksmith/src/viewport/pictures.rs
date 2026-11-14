@@ -1351,19 +1351,19 @@ pub(crate) fn mechanical_board() -> Result<sparksmith_core::Engine, Box<dyn std:
         (
             "smd-nut",
             [40.5, 24.5],
-            vec![("height", PartValue::Mm(4.0))],
+            vec![("height", PartValue::Nm(4_000_000))],
         ),
         ("round-spacer", [40.5, 3.5], vec![]),
         (
             "finned-heatsink",
             [36.0, 15.0],
             vec![
-                ("length", PartValue::Mm(8.0)),
-                ("width", PartValue::Mm(8.0)),
-                ("height", PartValue::Mm(6.0)),
+                ("length", PartValue::Nm(8_000_000)),
+                ("width", PartValue::Nm(8_000_000)),
+                ("height", PartValue::Nm(6_000_000)),
                 ("fin_count", PartValue::Count(5)),
-                ("fin_thickness", PartValue::Mm(0.8)),
-                ("base_height", PartValue::Mm(1.2)),
+                ("fin_thickness", PartValue::Nm(800_000)),
+                ("base_height", PartValue::Nm(1_200_000)),
             ],
         ),
     ];

@@ -16,17 +16,49 @@ const REQUEST_AT: u32 = 48 * 1024;
 fn description() -> v1::Description {
     v1::Description {
         abi: v1::ABI,
-        id_hint: "fixture".into(),
+        id: "fixture".into(),
         version: 1,
-        name: "Fixture".into(),
-        families: Vec::new(),
-        scopes: vec![Scope::Package],
+        title: "Fixture".into(),
+        licence: "MIT OR Apache-2.0".into(),
+        deterministic: true,
+        capabilities: vec![v1::Capability {
+            name: v1::GENERATE_PART.into(),
+            effect: v1::Effect::None,
+            title: None,
+            params: Vec::new(),
+            rules: Vec::new(),
+            presets: Vec::new(),
+            part: Some(v1::PartOffer {
+                families: Vec::new(),
+                scopes: vec![Scope::Package],
+                grammar: Vec::new(),
+                instance_fields: Vec::new(),
+            }),
+        }],
+        needs: Vec::new(),
+    }
+}
+
+/// The fixture's description with an `edit` command beside its part
+/// capability, as a plugin that may import host functions.
+fn mixed() -> v1::Description {
+    let mut d = description();
+    d.capabilities.push(v1::Capability {
+        name: "stitch".into(),
+        effect: v1::Effect::Edit,
+        title: None,
         params: Vec::new(),
         rules: Vec::new(),
         presets: Vec::new(),
-        grammar: Vec::new(),
-        instance_fields: Vec::new(),
-    }
+        part: None,
+    });
+    d.needs.push(v1::Need {
+        module: "layout".into(),
+        major: 1,
+        minor: 0,
+        class: v1::Effect::Edit,
+    });
+    d
 }
 
 /// A minimal valid package-scope part: one pad.
@@ -118,8 +150,10 @@ struct Fixture {
     extra: &'static str,
     /// Memory pages.
     pages: u32,
-    /// The body of `sparksmith_gen_generate`, which must leave an i64.
+    /// The body of `sparksmith_invoke`, which must leave an i64.
     generate: String,
+    /// The description it gives.
+    description: v1::Description,
     /// The response bytes stored at `RESPONSE_AT`.
     response: Vec<u8>,
 }
@@ -133,11 +167,12 @@ impl Fixture {
             pages: 2,
             generate: format!("i64.const {}", packed(RESPONSE_AT, response.len())),
             response,
+            description: description(),
         })
     }
 
     fn wasm(&self) -> Result<Vec<u8>, String> {
-        let description = codec::encode(&description()).map_err(|e| e.to_string())?;
+        let description = codec::encode(&self.description).map_err(|e| e.to_string())?;
         let text = format!(
             r#"(module
               {extra}
@@ -145,10 +180,10 @@ impl Fixture {
               (global $calls (mut i32) (i32.const 0))
               (data (i32.const {DESCRIPTION_AT}) "{description_data}")
               (data (i32.const {RESPONSE_AT}) "{response_data}")
-              (func (export "sparksmith_gen_abi") (result i32) i32.const 1)
-              (func (export "sparksmith_gen_alloc") (param i32) (result i32) i32.const {REQUEST_AT})
-              (func (export "sparksmith_gen_describe") (result i64) i64.const {describe})
-              (func (export "sparksmith_gen_generate") (param i32 i32) (result i64)
+              (func (export "sparksmith_abi") (result i32) i32.const 1)
+              (func (export "sparksmith_alloc") (param i32) (result i32) i32.const {REQUEST_AT})
+              (func (export "sparksmith_describe") (result i64) i64.const {describe})
+              (func (export "sparksmith_invoke") (param i32 i32) (result i64)
                 ;; A second call on the same instance traps: calls must not share one.
                 (global.set $calls (i32.add (global.get $calls) (i32.const 1)))
                 (if (i32.gt_u (global.get $calls) (i32.const 1)) (then unreachable))
@@ -212,8 +247,95 @@ fn a_module_with_imports_is_refused_before_it_runs() -> Result<(), String> {
     assert_eq!(code(&failure), "generator.has_imports");
     assert_eq!(
         failure.to_string(),
-        "This generator asks for host functions (env.clock), which generators may not use. It was not run."
+        "This plugin asks for the host function env.clock, which the plugin ABI does not offer with that signature (only sparksmith.call, sparksmith.log and sparksmith.cancelled). It was not run."
     );
+    // The plugin ABI's own function with another signature.
+    fixture.extra = r#"(import "sparksmith" "call" (func $call (param i32) (result i64)))"#;
+    assert_eq!(code(&refused(&runtime, &fixture)?), "generator.has_imports");
+    Ok(())
+}
+
+/// A plugin whose capabilities are all of effect none may import nothing,
+/// not even the plugin ABI's own functions.
+#[test]
+fn a_pure_plugin_that_imports_anything_is_refused() -> Result<(), String> {
+    let runtime = WasmiRuntime::new(Limits::DEFAULT);
+    let mut fixture = Fixture::ok()?;
+    fixture.extra = r#"(import "sparksmith" "cancelled" (func $cancelled (result i32)))"#;
+    let failure = refused(&runtime, &fixture)?;
+    assert_eq!(code(&failure), "generator.has_imports");
+    assert_eq!(
+        failure.to_string(),
+        "This plugin imports host functions, but every capability it offers is of effect none, which may import nothing. It was not run."
+    );
+    Ok(())
+}
+
+/// A plugin with an edit command beside `generate-part` may import `call`;
+/// during `generate-part` (effect none) the host answers it with the fixed
+/// refusal, so the result is the same as without it.
+#[test]
+fn call_during_generate_part_is_refused_as_pure_and_changes_nothing() -> Result<(), String> {
+    let runtime = WasmiRuntime::new(Limits::DEFAULT);
+    let plain = Fixture::ok()?;
+    let mut calling = Fixture::ok()?;
+    calling.description = mixed();
+    calling.extra = PURE_CALLER;
+    calling.generate = format!(
+        "(call $check) i64.const {}",
+        packed(RESPONSE_AT, calling.response.len())
+    );
+    let wasm = calling.wasm()?;
+    let loaded = runtime.load(&wasm).map_err(|f| f.to_string())?;
+    assert_eq!(loaded.describe().map_err(|f| f.to_string())?, mixed());
+    let with_call = runtime
+        .generate(&wasm, &request())
+        .map_err(|f| f.to_string())?;
+    let without = runtime
+        .generate(&plain.wasm()?, &request())
+        .map_err(|f| f.to_string())?;
+    assert_eq!(with_call.result_hash, without.result_hash);
+    assert_eq!(with_call.generation, generation());
+    Ok(())
+}
+
+/// Imports the three host functions and, in `$check`, calls each: `call`
+/// must answer a reply of at least 20 bytes whose status byte is 1 (an
+/// error) and whose body names `plugin.pure` at a fixed place, `cancelled`
+/// must answer 0; otherwise the module traps.
+const PURE_CALLER: &str = r#"
+    (import "sparksmith" "call" (func $call (param i32 i32) (result i64)))
+    (import "sparksmith" "log" (func $log (param i32 i32 i32)))
+    (import "sparksmith" "cancelled" (func $cancelled (result i32)))
+    (func $check (local $packed i64) (local $ptr i32)
+      (call $log (i32.const 1) (i32.const 0) (i32.const 0))
+      (if (i32.ne (call $cancelled) (i32.const 0)) (then unreachable))
+      (local.set $packed (call $call (i32.const 0) (i32.const 0)))
+      (if (i64.lt_u (i64.and (local.get $packed) (i64.const 0xffffffff)) (i64.const 20))
+        (then unreachable))
+      (local.set $ptr (i32.wrap_i64 (i64.shr_u (local.get $packed) (i64.const 32))))
+      (if (i32.ne (i32.load8_u (local.get $ptr)) (i32.const 1)) (then unreachable))
+      ;; {"errors":[{"code":"plugin.pure",... : the code starts at byte 21.
+      (if (i32.ne (i32.load8_u (i32.add (local.get $ptr) (i32.const 21))) (i32.const 112))
+        (then unreachable)))
+"#;
+
+#[test]
+fn a_module_using_floats_is_refused_before_it_runs() -> Result<(), String> {
+    let runtime = WasmiRuntime::new(Limits::DEFAULT);
+    let mut fixture = Fixture::ok()?;
+    fixture.extra = r#"(func $half (param i32) (result i32)
+        (i32.trunc_f64_s (f64.mul (f64.convert_i32_s (local.get 0)) (f64.const 0.5))))"#;
+    let failure = refused(&runtime, &fixture)?;
+    assert_eq!(code(&failure), "generator.float");
+    assert!(
+        failure
+            .to_string()
+            .starts_with("The plugin uses floating-point arithmetic (floating-point")
+    );
+    assert!(failure.to_string().ends_with(
+        "which a plugin whose results are hashed may not: its results must be the same bits on every computer. It was not run."
+    ));
     Ok(())
 }
 
@@ -344,7 +466,7 @@ fn a_module_without_the_abi_exports_is_refused() -> Result<(), String> {
     assert_eq!(code(&failure), "generator.missing_export");
     assert_eq!(
         failure.to_string(),
-        "The generator does not export \"sparksmith_gen_abi\", which ABI 1 requires. It was not run."
+        "The generator does not export \"sparksmith_abi\", which ABI 1 requires. It was not run."
     );
     Ok(())
 }

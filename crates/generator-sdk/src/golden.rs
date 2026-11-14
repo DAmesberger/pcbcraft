@@ -29,7 +29,7 @@ pub struct GoldenCase {
 
 /// Parse a `golden.json`.
 pub fn parse(json: &str) -> Result<GoldenFile, String> {
-    serde_json::from_str(json).map_err(|e| format!("golden.json: {e}"))
+    codec::read(json.as_bytes(), usize::MAX).map_err(|e| format!("golden.json: {e}"))
 }
 
 /// Run every case natively and compare result hashes. Returns the number of

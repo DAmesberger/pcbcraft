@@ -18,6 +18,5 @@ nfc = ["dep:unicode-normalization"]
 # module, so it must not pull in `std` or anything that embeds host paths.
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
-serde_json = { version = "1", default-features = false, features = ["alloc"] }
 sha2 = { version = "0.10", default-features = false }
 unicode-normalization = { version = "0.1", default-features = false, optional = true }

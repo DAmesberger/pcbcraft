@@ -196,7 +196,7 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
     let part = evaluate(bytes(), &PartValues::new())?;
     let mut board = Native::new("board")?;
     let stem = part.stem();
-    let inserted = insert(&mut board, &stem, &part)?;
+    let inserted = insert(&mut board, &stem, &part, &Default::default())?;
     assert!(board.evaluation_error().is_none());
     assert_eq!(def.bodies.len(), inserted.bodies.len());
     let (ga, gb) = (
@@ -266,7 +266,7 @@ fn the_wroom3_part_builds_what_the_module_builder_builds() -> Fallible {
 #[test]
 fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
     let mut values = PartValues::new();
-    values.insert("can_height".into(), PartValue::Mm(2.0));
+    values.insert("can_height".into(), PartValue::Nm(2_000_000));
     let part = evaluate(bytes(), &values)?;
     assert!(!part.blocked(), "{:?}", part.findings);
     let base = evaluate(bytes(), &PartValues::new())?;
@@ -274,7 +274,7 @@ fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
     assert!((dz - 0.465).abs() < 1e-6, "the can 0.465 mm lower: {dz}");
     assert_ne!(part.stem(), base.stem());
     let mut board = Native::new("board")?;
-    insert(&mut board, &part.stem(), &part)?;
+    insert(&mut board, &part.stem(), &part, &Default::default())?;
     let name = format!("{}_can_height", part.stem());
     let p = board
         .session()
@@ -285,8 +285,8 @@ fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
         .unwrap();
     assert_eq!(p.expr, "2 mm");
     // A second definition beside the first, and a clash refused.
-    insert(&mut board, &base.stem(), &base)?;
-    assert!(insert(&mut board, &base.stem(), &base).is_err());
+    insert(&mut board, &base.stem(), &base, &Default::default())?;
+    assert!(insert(&mut board, &base.stem(), &base, &Default::default()).is_err());
     assert!(board.evaluation_error().is_none());
     Ok(())
 }
@@ -294,7 +294,7 @@ fn values_drive_the_part_and_stay_live_in_the_board() -> Fallible {
 #[test]
 fn equal_values_evaluate_once() -> Fallible {
     let mut values = PartValues::new();
-    values.insert("can_round".into(), PartValue::Mm(0.25));
+    values.insert("can_round".into(), PartValue::Nm(250_000));
     let first = evaluate(bytes(), &values)?;
     let (hits, _) = cache_counts();
     let second = evaluate(bytes(), &values)?;
@@ -315,16 +315,16 @@ fn bad_part_files_and_values_are_refused() -> Fallible {
         "part_file.read"
     );
     let mut unknown = PartValues::new();
-    unknown.insert("no_such".into(), PartValue::Mm(1.0));
+    unknown.insert("no_such".into(), PartValue::Nm(1_000_000));
     assert_eq!(code(evaluate(bytes(), &unknown)), "part_file.value");
     let mut unit = PartValues::new();
     unit.insert("can_height".into(), PartValue::Count(2));
     assert_eq!(code(evaluate(bytes(), &unit)), "part_file.value");
     let mut name = PartValues::new();
-    name.insert("can height; x".into(), PartValue::Mm(1.0));
+    name.insert("can height; x".into(), PartValue::Nm(1_000_000));
     assert_eq!(code(evaluate(bytes(), &name)), "part_file.value");
     let mut huge = PartValues::new();
-    huge.insert("can_height".into(), PartValue::Mm(f64::INFINITY));
+    huge.insert("can_height".into(), PartValue::Nm(i64::MAX));
     assert_eq!(code(evaluate(bytes(), &huge)), "part_file.value");
     Ok(())
 }
@@ -357,7 +357,7 @@ fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
     let part = evaluate(&unmapped, &PartValues::new())?;
     assert!(codes(&part).contains(&("part_file.material", true)));
     let mut board = Native::new("board")?;
-    assert!(insert(&mut board, &part.stem(), &part).is_err());
+    assert!(insert(&mut board, &part.stem(), &part, &Default::default()).is_err());
     assert!(
         board.find_component(&part.stem()).is_none(),
         "nothing inserted"
@@ -393,7 +393,7 @@ fn convention_breaks_are_findings_and_block_the_insert() -> Fallible {
     assert!(found.contains(&("part_file.marking", true)), "{found:?}");
     // A feature failing at the values.
     let mut v = PartValues::new();
-    v.insert("body_height".into(), PartValue::Mm(0.0));
+    v.insert("body_height".into(), PartValue::Nm(0));
     let part = evaluate(&good, &v)?;
     assert!(
         codes(&part).contains(&("part_file.feature", true)),
@@ -506,7 +506,7 @@ fn the_mechanical_built_ins_pass_their_check_and_follow_their_values() -> Fallib
     let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
     // The nut's height, and its marking area on top.
     let mut values = PartValues::new();
-    values.insert("height".into(), PartValue::Mm(4.0));
+    values.insert("height".into(), PartValue::Nm(4_000_000));
     let nut = evaluate(builtin("smd-nut").unwrap(), &values)?;
     assert!(!nut.blocked(), "{:?}", nut.findings);
     assert!(close(nut.bounds_mm[1][2], 4.0), "{:?}", nut.bounds_mm);
@@ -522,7 +522,7 @@ fn the_mechanical_built_ins_pass_their_check_and_follow_their_values() -> Fallib
     // circle but are not tight (they come from its edges' outline), so the
     // check is that the box holds 8 mm and scales with the diameter.
     let mut values = PartValues::new();
-    values.insert("outer_d".into(), PartValue::Mm(8.0));
+    values.insert("outer_d".into(), PartValue::Nm(8_000_000));
     let spacer = evaluate(builtin("round-spacer").unwrap(), &values)?;
     assert!(!spacer.blocked(), "{:?}", spacer.findings);
     let six = evaluate(builtin("round-spacer").unwrap(), &PartValues::new())?;

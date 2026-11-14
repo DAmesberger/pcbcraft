@@ -9,7 +9,8 @@
 //!
 //! # Unsafe code
 //!
-//! The SDK itself has none. A WebAssembly export needs `#[unsafe(no_mangle)]`
+//! The SDK itself has none but the import block of [`host`], which allows
+//! it for that block alone. A WebAssembly export needs `#[unsafe(no_mangle)]`
 //! (Rust has no safe way to name an exported symbol), so
 //! [`export_generator!`] expands to four exported functions that allow
 //! `unsafe_code` for that attribute alone; a generator crate therefore sets
@@ -25,6 +26,7 @@ pub mod args;
 pub mod draw;
 pub mod entry;
 pub mod golden;
+pub mod host;
 pub mod land;
 pub mod units;
 
@@ -45,7 +47,8 @@ pub trait Generator {
 /// Parse a generator's preset table: a JSON array of [`v1::Preset`]s,
 /// usually `include_str!`'d from the crate's `presets.json`.
 pub fn presets(json: &str) -> Result<Vec<v1::Preset>, alloc::string::String> {
-    serde_json::from_str(json).map_err(|e| alloc::format!("presets.json: {e}"))
+    sparksmith_generator_abi::codec::read(json.as_bytes(), usize::MAX)
+        .map_err(|e| alloc::format!("presets.json: {e}"))
 }
 
 /// Export `$generator` (a type implementing [`Generator`]) as the module's
@@ -56,29 +59,29 @@ macro_rules! export_generator {
         /// ABI export: the ABI version.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn sparksmith_gen_abi() -> u32 {
+        pub extern "C" fn sparksmith_abi() -> u32 {
             $crate::entry::abi()
         }
 
         /// ABI export: a request buffer.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn sparksmith_gen_alloc(len: u32) -> u32 {
+        pub extern "C" fn sparksmith_alloc(len: u32) -> u32 {
             $crate::entry::alloc(len)
         }
 
         /// ABI export: the canonical description.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn sparksmith_gen_describe() -> u64 {
+        pub extern "C" fn sparksmith_describe() -> u64 {
             $crate::entry::describe::<$generator>()
         }
 
-        /// ABI export: generate from the request in the buffer.
+        /// ABI export: invoke the capability the request in the buffer names.
         #[allow(unsafe_code)] // An exported symbol name; see the SDK's "Unsafe code".
         #[unsafe(no_mangle)]
-        pub extern "C" fn sparksmith_gen_generate(ptr: u32, len: u32) -> u64 {
-            $crate::entry::generate::<$generator>(ptr, len)
+        pub extern "C" fn sparksmith_invoke(ptr: u32, len: u32) -> u64 {
+            $crate::entry::invoke::<$generator>(ptr, len)
         }
     };
 }

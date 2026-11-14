@@ -17,6 +17,7 @@ workspace = true
 sparksmith-core.workspace = true
 sparksmith-automation.workspace = true
 sparksmith-io.workspace = true
+sparksmith-generators.workspace = true
 sparksmith-assist.workspace = true
 sparksmith-kicad.workspace = true
 serde_json.workspace = true

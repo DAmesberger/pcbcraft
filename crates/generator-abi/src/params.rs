@@ -32,7 +32,7 @@ pub fn mm_text(nm: i64) -> String {
 pub fn check(description: &Description, params: &Params) -> Result<(), Vec<Problem>> {
     let mut problems = Vec::new();
     for key in params.keys() {
-        if !description.params.iter().any(|p| &p.key == key) {
+        if !description.params().iter().any(|p| &p.key == key) {
             problems.push(problem(
                 "param.unknown",
                 key,
@@ -40,7 +40,7 @@ pub fn check(description: &Description, params: &Params) -> Result<(), Vec<Probl
             ));
         }
     }
-    for param in &description.params {
+    for param in description.params() {
         match params.get(&param.key) {
             None => problems.push(problem(
                 "param.missing",

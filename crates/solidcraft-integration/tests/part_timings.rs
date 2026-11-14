@@ -71,7 +71,7 @@ fn part_file_timings() {
         let mut values = part_file::PartValues::new();
         values.insert(
             "can_round".into(),
-            PartValue::Mm(0.25 + f64::from(round) * 0.01),
+            PartValue::Nm(250_000 + i64::from(round) * 10_000),
         );
         let t = Instant::now();
         let part = part_file::evaluate(bytes, &values).unwrap();
@@ -85,7 +85,7 @@ fn part_file_timings() {
         // Into a board design: one definition, one evaluation.
         let mut board = Native::new("board").unwrap();
         let t = Instant::now();
-        part_file::insert(&mut board, &part.stem(), &part).unwrap();
+        part_file::insert(&mut board, &part.stem(), &part, &Default::default()).unwrap();
         let insert = t.elapsed();
         assert!(board.evaluation_error().is_none());
         eprintln!(

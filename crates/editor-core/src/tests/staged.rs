@@ -246,7 +246,6 @@ fn schemas_name_the_new_operations_queries_and_drafts() -> Result<()> {
     for name in [
         "library.new_draft",
         "library.publish",
-        "library.generate_pads",
         "component.place",
         "component.remove",
         "instance.set_unit_unused",

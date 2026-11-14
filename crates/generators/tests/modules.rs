@@ -33,21 +33,26 @@ struct Golden {
     cases: Vec<(String, Request, String)>,
 }
 
+/// Every generator crate under `generators/`, and the test plugin
+/// (`crates/generators-fixture`), with golden cases.
 fn goldens() -> Result<Vec<Golden>, String> {
     let dir = modules_dir()?;
     let generators = workspace().join("generators");
     let mut found = Vec::new();
     let entries = std::fs::read_dir(&generators).map_err(|e| e.to_string())?;
-    let mut names: Vec<String> = entries
+    let mut crates: Vec<(String, PathBuf)> = entries
         .filter_map(|e| e.ok())
         .filter(|e| e.path().join("golden.json").is_file())
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter_map(|e| Some((e.file_name().to_str()?.to_string(), e.path())))
         .collect();
-    names.sort();
-    for name in names {
+    crates.sort();
+    crates.push((
+        "fixture".into(),
+        workspace().join("crates").join("generators-fixture"),
+    ));
+    for (name, path) in crates {
         let golden: Value = serde_json::from_str(
-            &std::fs::read_to_string(generators.join(&name).join("golden.json"))
-                .map_err(|e| e.to_string())?,
+            &std::fs::read_to_string(path.join("golden.json")).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
         let module_path = dir.join(format!("sparksmith_gen_{}.wasm", name.replace('-', "_")));
@@ -140,7 +145,12 @@ fn probe_input(module: &[u8], request: &Request) -> Result<Vec<u8>, String> {
 fn golden_hashes_match_under_wasmi_built_for_wasm32() -> TestResult {
     let probe = std::fs::read(modules_dir()?.join("sparksmith_generators_probe.wasm"))
         .map_err(|e| format!("probe module: {e}"))?;
-    let outer = WasmiRuntime::new(PROBE_LIMITS);
+    // The probe is the interpreter itself, which uses floats: it runs
+    // under a host that allows them. The generator inside it is still
+    // validated by the probe's own host, which refuses floats.
+    let mut outer = config();
+    outer.floats(true);
+    let outer = WasmiRuntime::with_config(outer, PROBE_LIMITS);
     // The wasm32 build of the host imports nothing either.
     let probe = outer.load(&probe).map_err(|f| f.to_string())?;
     let native = WasmiRuntime::new(Limits::DEFAULT);
@@ -186,7 +196,7 @@ fn median(mut times: Vec<Duration>) -> Duration {
 /// set is switched off in turn and the module validated without it.
 fn features_used(module: &[u8]) -> Vec<&'static str> {
     type Toggle = fn(&mut wasmi::Config) -> &mut wasmi::Config;
-    let toggles: [(&str, Toggle); 7] = [
+    let toggles: [(&str, Toggle); 6] = [
         ("mutable-global", |c| c.wasm_mutable_global(false)),
         ("sign-extension", |c| c.wasm_sign_extension(false)),
         ("saturating-float-to-int", |c| {
@@ -195,7 +205,6 @@ fn features_used(module: &[u8]) -> Vec<&'static str> {
         ("multi-value", |c| c.wasm_multi_value(false)),
         ("bulk-memory", |c| c.wasm_bulk_memory(false)),
         ("reference-types", |c| c.wasm_reference_types(false)),
-        ("floats", |c| c.floats(false)),
     ];
     toggles
         .into_iter()

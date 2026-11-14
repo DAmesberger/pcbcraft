@@ -4,8 +4,8 @@
 //! rules then apply as to any authored part (slice GP1).
 use sparksmith_generator_abi::Failure;
 use sparksmith_generator_abi::v1::{
-    Description, Footprint, Generation, Graphic, HoleShape, Model, PadShape, ParamType, ParamValue,
-    Point, Primitive, Scope, Symbol, limits,
+    Description, Effect, Footprint, GENERATE_PART, Generation, Graphic, HoleShape, Model, PadShape,
+    ParamType, ParamValue, Point, Primitive, Scope, Symbol, limits,
 };
 use std::collections::BTreeSet;
 
@@ -104,16 +104,31 @@ fn graphic(g: &Graphic) -> Result<(), Failure> {
             positive("circle radius", *radius_nm)
         }
         Primitive::Arc {
-            center,
-            radius_nm,
-            start_mdeg,
-            sweep_mdeg,
+            center, start, end, ..
         } => {
             point(center)?;
-            positive("arc radius", *radius_nm)?;
-            if start_mdeg.unsigned_abs() > 360_000 || sweep_mdeg.unsigned_abs() > 360_000 {
+            point(start)?;
+            point(end)?;
+            // Squared distances in i128: coordinates are within 1 m, so
+            // nothing overflows.
+            let squared = |p: &[i64; 2]| {
+                let dx = i128::from(p[0]) - i128::from(center[0]);
+                let dy = i128::from(p[1]) - i128::from(center[1]);
+                dx * dx + dy * dy
+            };
+            let (a, b) = (squared(start), squared(end));
+            if a == 0 {
                 return Err(invalid(
-                    "The generator returned an arc angle beyond one turn.".into(),
+                    "The generator returned an arc that starts at its centre.".into(),
+                ));
+            }
+            // |ra - rb| <= t  <=>  |a - b| <= t (ra + rb), and
+            // ra + rb <= 2 * max(ra, rb) + 1 with integer square roots.
+            let tolerance = i128::from(limits::ARC_RADIUS_NM);
+            let reach = 2 * a.max(b).isqrt() + 2;
+            if (a - b).abs() > tolerance * reach {
+                return Err(invalid(
+                    "The generator returned an arc whose ends are not on one circle about its centre.".into(),
                 ));
             }
             Ok(())
@@ -151,6 +166,10 @@ fn symbol(symbol: &Symbol, terminals: &BTreeSet<&str>) -> Result<(), Failure> {
     for unit in &symbol.units {
         count("symbol pins", unit.pins.len(), limits::TERMINALS)?;
         graphics("symbol graphics", &unit.graphics)?;
+        unique(
+            "symbol drawing",
+            unit.graphics.iter().map(|g| g.key.as_str()),
+        )?;
         for pin in &unit.pins {
             if !terminals.contains(pin.terminal.as_str()) {
                 return Err(invalid(format!(
@@ -246,7 +265,16 @@ fn footprint(footprint: &Footprint, package_terminals: &BTreeSet<&str>) -> Resul
     )?;
     footprint.courtyard.iter().try_for_each(point)?;
     graphics("silkscreen graphics", &footprint.silk)?;
-    graphics("assembly graphics", &footprint.assembly)
+    graphics("assembly graphics", &footprint.assembly)?;
+    unique(
+        "footprint drawing",
+        footprint
+            .silk
+            .iter()
+            .chain(&footprint.assembly)
+            .map(|g| g.key.as_str()),
+    )?;
+    Ok(())
 }
 
 /// Longest part-file parameter name (as the document bounds it).
@@ -407,8 +435,12 @@ pub fn generation(g: &Generation, scope: Scope) -> Result<(), Failure> {
     Ok(())
 }
 
-/// Check a description: ABI 1, at least one scope, unique parameter keys,
-/// every default of its parameter's type, presets naming known parameters.
+/// Check a description: ABI 1, an id, a version from 1, unique
+/// capabilities, a [`GENERATE_PART`] capability (a generator) of effect
+/// `none` with at least one scope, unique parameter keys, every default of
+/// its parameter's type, presets naming known parameters, a deterministic
+/// plugin whenever a capability is of effect `none`, and `needs` only for
+/// a plugin with `read` or `edit` capabilities.
 pub fn description(d: &Description) -> Result<(), Failure> {
     let bad = |message: String| {
         Failure::one(
@@ -422,18 +454,55 @@ pub fn description(d: &Description) -> Result<(), Failure> {
             d.abi
         )));
     }
-    if d.scopes.is_empty() {
-        return Err(bad("The generator offers no scope.".into()));
-    }
-    key("generator id", &d.id_hint).map_err(|f| bad(f.to_string()))?;
+    key("generator id", &d.id).map_err(|f| bad(f.to_string()))?;
+    text("title", &d.title).map_err(|f| bad(f.to_string()))?;
+    text("licence", &d.licence).map_err(|f| bad(f.to_string()))?;
     if d.version == 0 {
         return Err(bad(
             "The generator gives version 0; versions count from 1.".into()
         ));
     }
-    let keys = unique("parameter", d.params.iter().map(|p| p.key.as_str()))
+    count("capabilities", d.capabilities.len(), MAX_CAPABILITIES)
         .map_err(|f| bad(f.to_string()))?;
-    for param in &d.params {
+    unique("capability", d.capabilities.iter().map(|c| c.name.as_str()))
+        .map_err(|f| bad(f.to_string()))?;
+    if d.capabilities.iter().any(|c| c.effect == Effect::None) && !d.deterministic {
+        return Err(bad(
+            "The plugin offers a capability of effect none, whose results are hashed, but does not declare itself deterministic.".into(),
+        ));
+    }
+    if d.pure() && !d.needs.is_empty() {
+        return Err(bad(
+            "The plugin's capabilities are all of effect none, so it can need no catalog module."
+                .into(),
+        ));
+    }
+    for need in &d.needs {
+        key("needed module", &need.module).map_err(|f| bad(f.to_string()))?;
+        if need.class == Effect::None {
+            return Err(bad(format!(
+                "The plugin needs module \"{}\" for effect none; a need is for read or edit.",
+                need.module
+            )));
+        }
+    }
+    let Some(part) = d.part() else {
+        return Err(bad(format!(
+            "The plugin offers no \"{GENERATE_PART}\" capability, so it makes no parts."
+        )));
+    };
+    if part.effect != Effect::None {
+        return Err(bad(format!(
+            "Its \"{GENERATE_PART}\" capability declares effect {:?}; making a part is of effect none.",
+            part.effect
+        )));
+    }
+    if d.scopes().is_empty() {
+        return Err(bad("The generator offers no scope.".into()));
+    }
+    let keys = unique("parameter", d.params().iter().map(|p| p.key.as_str()))
+        .map_err(|f| bad(f.to_string()))?;
+    for param in d.params() {
         if !crate::params::fits(&param.ty, &param.default) {
             return Err(bad(format!(
                 "The default of parameter \"{}\" does not fit its type.",
@@ -449,8 +518,8 @@ pub fn description(d: &Description) -> Result<(), Failure> {
             )));
         }
     }
-    unique("preset", d.presets.iter().map(|p| p.key.as_str())).map_err(|f| bad(f.to_string()))?;
-    for preset in &d.presets {
+    unique("preset", d.presets().iter().map(|p| p.key.as_str())).map_err(|f| bad(f.to_string()))?;
+    for preset in d.presets() {
         if let Some(unknown) = preset.params.keys().find(|k| !keys.contains(k.as_str())) {
             return Err(bad(format!(
                 "Preset \"{}\" sets \"{unknown}\", which is not a parameter.",
@@ -461,34 +530,85 @@ pub fn description(d: &Description) -> Result<(), Failure> {
     Ok(())
 }
 
+/// Most capabilities one plugin offers.
+const MAX_CAPABILITIES: usize = 64;
+
 #[cfg(test)]
 mod tests {
     use super::description;
-    use sparksmith_generator_abi::v1::{ABI, Description, Scope};
+    use sparksmith_generator_abi::v1::{
+        ABI, Capability, Description, Effect, GENERATE_PART, Need, PartOffer, Scope,
+    };
+
+    pub fn fixture() -> Description {
+        Description {
+            abi: ABI,
+            id: "fixture".into(),
+            version: 1,
+            title: "Fixture".into(),
+            licence: "MIT".into(),
+            deterministic: true,
+            capabilities: vec![Capability {
+                name: GENERATE_PART.into(),
+                effect: Effect::None,
+                title: None,
+                params: Vec::new(),
+                rules: Vec::new(),
+                presets: Vec::new(),
+                part: Some(PartOffer {
+                    families: Vec::new(),
+                    scopes: vec![Scope::Package],
+                    grammar: Vec::new(),
+                    instance_fields: Vec::new(),
+                }),
+            }],
+            needs: Vec::new(),
+        }
+    }
+
+    fn refusal(d: &Description) -> String {
+        description(d)
+            .err()
+            .map(|f| f.to_string())
+            .unwrap_or_default()
+    }
 
     #[test]
     fn a_generator_at_version_0_is_refused() {
-        let mut d = Description {
-            abi: ABI,
-            id_hint: "fixture".into(),
-            version: 1,
-            name: "Fixture".into(),
-            families: Vec::new(),
-            scopes: vec![Scope::Package],
+        let mut d = fixture();
+        assert!(description(&d).is_ok());
+        d.version = 0;
+        assert!(refusal(&d).contains("version 0; versions count from 1"));
+    }
+
+    #[test]
+    fn effects_needs_and_determinism_are_checked() {
+        let mut d = fixture();
+        d.deterministic = false;
+        assert!(refusal(&d).contains("does not declare itself deterministic"));
+        let mut d = fixture();
+        d.needs.push(Need {
+            module: "layout".into(),
+            major: 1,
+            minor: 0,
+            class: Effect::Edit,
+        });
+        assert!(refusal(&d).contains("can need no catalog module"));
+        // A plugin that also offers an edit command may need modules.
+        d.capabilities.push(Capability {
+            name: "vias".into(),
+            effect: Effect::Edit,
+            title: None,
             params: Vec::new(),
             rules: Vec::new(),
             presets: Vec::new(),
-            grammar: Vec::new(),
-            instance_fields: Vec::new(),
-        };
+            part: None,
+        });
         assert!(description(&d).is_ok());
-        d.version = 0;
-        let refused = description(&d).err().map(|f| f.to_string());
-        assert!(
-            refused
-                .as_deref()
-                .is_some_and(|m| m.contains("version 0; versions count from 1")),
-            "{refused:?}"
-        );
+        let mut d = fixture();
+        if let Some(c) = d.capabilities.first_mut() {
+            c.effect = Effect::Read;
+        }
+        assert!(refusal(&d).contains("making a part is of effect none"));
     }
 }

@@ -5,8 +5,9 @@
 //! them with its own wasm32 copy of the host under the default limits, and
 //! the native test compares result hash and fuel with its own run.
 //!
-//! It speaks generator ABI 1's calling convention so the native host can
-//! load it, with its own request format:
+//! It speaks the plugin ABI's calling convention so the native host can
+//! load it (its own exports; it is never described or invoked as a
+//! plugin), with its own request format:
 //! - request: module length (u32, little-endian), module bytes, canonical
 //!   request bytes;
 //! - reply: `STATUS_OK`, the 32-byte result hash, the fuel used (u64,
@@ -16,7 +17,7 @@
 //! Test code only: it is built by `cargo xtask generators check` and never
 //! shipped. Buffers cross without pointer dereferences, as in the SDK's
 //! `entry` module.
-use sparksmith_generator_abi::v1::{self, Description, ErrorBody, Request, Scope};
+use sparksmith_generator_abi::v1::{self, Capability, Description, Effect, ErrorBody, Request};
 use sparksmith_generator_abi::{Failure, codec};
 use sparksmith_generators::{Limits, WasmiRuntime};
 use std::sync::Mutex;
@@ -78,14 +79,14 @@ fn run(input: &[u8]) -> Vec<u8> {
 /// ABI export: the ABI version.
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn sparksmith_gen_abi() -> u32 {
+pub extern "C" fn sparksmith_abi() -> u32 {
     v1::ABI
 }
 
 /// ABI export: an input buffer.
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn sparksmith_gen_alloc(len: u32) -> u32 {
+pub extern "C" fn sparksmith_alloc(len: u32) -> u32 {
     let Ok(len) = usize::try_from(len) else {
         return 0;
     };
@@ -106,19 +107,24 @@ pub extern "C" fn sparksmith_gen_alloc(len: u32) -> u32 {
 /// ABI export: a description of the probe (no parameters).
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn sparksmith_gen_describe() -> u64 {
+pub extern "C" fn sparksmith_describe() -> u64 {
     let description = Description {
         abi: v1::ABI,
-        id_hint: "probe".into(),
+        id: "probe".into(),
         version: 1,
-        name: "Generator host probe".into(),
-        families: Vec::new(),
-        scopes: vec![Scope::Package],
-        params: Vec::new(),
-        rules: Vec::new(),
-        presets: Vec::new(),
-        grammar: Vec::new(),
-        instance_fields: Vec::new(),
+        title: "Generator host probe".into(),
+        licence: "MIT OR Apache-2.0".into(),
+        deterministic: false,
+        capabilities: vec![Capability {
+            name: "probe".into(),
+            effect: Effect::Edit,
+            title: None,
+            params: Vec::new(),
+            rules: Vec::new(),
+            presets: Vec::new(),
+            part: None,
+        }],
+        needs: Vec::new(),
     };
     reply(codec::encode(&description).unwrap_or_default())
 }
@@ -126,7 +132,7 @@ pub extern "C" fn sparksmith_gen_describe() -> u64 {
 /// ABI export: run the module and request in the input buffer.
 #[allow(unsafe_code)] // An exported symbol name: no safe spelling exists.
 #[unsafe(no_mangle)]
-pub extern "C" fn sparksmith_gen_generate(ptr: u32, len: u32) -> u64 {
+pub extern "C" fn sparksmith_invoke(ptr: u32, len: u32) -> u64 {
     let input = INPUT
         .lock()
         .map(|mut input| std::mem::take(&mut *input))

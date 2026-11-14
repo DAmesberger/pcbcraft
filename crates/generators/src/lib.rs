@@ -1,10 +1,17 @@
-//! Runs generator modules in a bounded wasmi sandbox.
+//! Runs plugin modules in a bounded wasmi sandbox: the one host of the one
+//! plugin ABI (`docs/design/extension-abi-design.md` §2.6). This slice
+//! serves capabilities of effect `none` only, which is what a generator's
+//! `generate-part` is.
 //!
 //! A module is checked before anything runs (size, a valid core module of
-//! the allowed features, no imports, no start function, the ABI exports, a
-//! memory within the limit), then every call gets a fresh instance with a
-//! fuel budget and a memory cap, so a module can waste at most bounded work
-//! and keeps no state between calls. Results are decoded with the canonical
+//! the allowed features with no float instruction, imports only of the
+//! three host functions, no start function, the ABI exports, a memory
+//! within the limit), then every call gets a fresh instance with a fuel
+//! budget and a memory cap, so a module can waste at most bounded work and
+//! keeps no state between calls. In an invoke of effect `none` the host
+//! answers `call` with the fixed refusal `plugin.pure`, drops `log` and
+//! answers `cancelled` with 0, so the result depends on the request alone;
+//! a plugin whose capabilities are all of effect `none` may import nothing. Results are decoded with the canonical
 //! codec and checked ([`validate`]) before anyone sees them. Every refusal is
 //! a [`Failure`] in plain words; nothing outside the call changes.
 //!
@@ -21,8 +28,8 @@ use sparksmith_generator_abi::v1::{self, Description, ErrorBody, Generation, Req
 use sparksmith_generator_abi::{CodecError, Failure, Generated, GeneratorRuntime, codec};
 use wasmi::errors::{ErrorKind, MemoryError};
 use wasmi::{
-    CompilationMode, Config, Engine, ExternType, Instance, Linker, Memory, Module, Store,
-    StoreLimits, StoreLimitsBuilder, TrapCode, TypedFunc,
+    Caller, CompilationMode, Config, Engine, Extern, ExternType, FuncType, Instance, Linker,
+    Memory, Module, Store, StoreLimits, StoreLimitsBuilder, TrapCode, TypedFunc, ValType,
 };
 
 pub use sparksmith_generator_abi as abi;
@@ -66,6 +73,19 @@ impl Limits {
     };
 }
 
+impl Limits {
+    /// The limits of an invoke of `effect`, one table by effect
+    /// (`docs/design/extension-abi-design.md` §2.6): [`Limits::DEFAULT`]
+    /// for effect `none`; `None` for `read` and `edit`, which this host
+    /// does not serve yet (their limits are set from measurement in S9).
+    pub fn for_effect(effect: v1::Effect) -> Option<Self> {
+        match effect {
+            v1::Effect::None => Some(Self::DEFAULT),
+            v1::Effect::Read | v1::Effect::Edit => None,
+        }
+    }
+}
+
 impl Default for Limits {
     fn default() -> Self {
         Self::DEFAULT
@@ -82,6 +102,9 @@ pub struct WasmiRuntime {
 pub struct Loaded<'r> {
     runtime: &'r WasmiRuntime,
     module: Module,
+    /// Whether it imports any host function (then its description must
+    /// offer a capability of an effect other than `none`).
+    imports: bool,
 }
 
 /// The raw reply of a `generate` call: its status byte and body, before
@@ -99,14 +122,17 @@ fn fail(code: &str, message: impl Into<String>) -> Failure {
     Failure::one(code, message.into())
 }
 
-/// The engine configuration every generator runs under: fuel metering, no
-/// start function, and only the deterministic scalar feature set that
-/// rustc emits for `wasm32-unknown-unknown` (SIMD is not compiled into
-/// this wasmi; threads, memory64 and GC are not supported by it either).
+/// The engine configuration every plugin runs under: fuel metering, no
+/// start function, and only the deterministic integer feature set that
+/// rustc emits for `wasm32-unknown-unknown` with floats left out: a plugin
+/// whose results are hashed (effect `none`) may contain no float
+/// instruction (part-generation slice B3). SIMD is not compiled into this
+/// wasmi; threads, memory64 and GC are not supported by it either.
 pub fn config() -> Config {
     let mut config = Config::default();
     config
         .consume_fuel(true)
+        .floats(false)
         // Compile every function at load, so no call pays for compiling and
         // the fuel a call takes is the same on every call.
         .compilation_mode(CompilationMode::Eager)
@@ -155,6 +181,18 @@ impl WasmiRuntime {
         }
         let module = Module::new(&self.engine, bytes).map_err(|e| {
             let detail = e.to_string();
+            // wasmparser (pinned) words a float instruction as
+            // "floating-point instruction disallowed" and a float type as
+            // "floating-point support is disabled"; the refusal tests pin
+            // both.
+            if detail.contains("floating-point") {
+                return fail(
+                    "generator.float",
+                    format!(
+                        "The plugin uses floating-point arithmetic ({detail}), which a plugin whose results are hashed may not: its results must be the same bits on every computer. It was not run."
+                    ),
+                );
+            }
             // wasmi (pinned) words a disabled proposal as "… support is not
             // enabled", and SIMD, which this build cannot run at all, as an
             // "unexpected SIMD opcode"; the refusal tests pin both.
@@ -175,22 +213,31 @@ impl WasmiRuntime {
                 )
             }
         })?;
-        if let Some(import) = module.imports().next() {
-            return Err(fail(
-                "generator.has_imports",
-                format!(
-                    "This generator asks for host functions ({}.{}), which generators may not use. It was not run.",
-                    import.module(),
-                    import.name()
-                ),
-            ));
+        let mut imports = false;
+        for import in module.imports() {
+            let expected = host_import(import.module(), import.name());
+            let fits = match (expected, import.ty()) {
+                (Some(ty), ExternType::Func(found)) => *found == ty,
+                _ => false,
+            };
+            if !fits {
+                return Err(fail(
+                    "generator.has_imports",
+                    format!(
+                        "This plugin asks for the host function {}.{}, which the plugin ABI does not offer with that signature (only sparksmith.call, sparksmith.log and sparksmith.cancelled). It was not run.",
+                        import.module(),
+                        import.name()
+                    ),
+                ));
+            }
+            imports = true;
         }
         let mut memory = None;
         for name in [
             v1::exports::ABI,
             v1::exports::ALLOC,
             v1::exports::DESCRIBE,
-            v1::exports::GENERATE,
+            v1::exports::INVOKE,
             v1::exports::MEMORY,
         ] {
             let found = module.exports().find(|e| e.name() == name);
@@ -221,8 +268,67 @@ impl WasmiRuntime {
         Ok(Loaded {
             runtime: self,
             module,
+            imports,
         })
     }
+}
+
+/// The type of host function `module.name`, if the plugin ABI offers it.
+fn host_import(module: &str, name: &str) -> Option<FuncType> {
+    use ValType::{I32, I64};
+    if module != v1::imports::MODULE {
+        return None;
+    }
+    match name {
+        v1::imports::CALL => Some(FuncType::new([I32, I32], [I64])),
+        v1::imports::LOG => Some(FuncType::new([I32, I32, I32], [])),
+        v1::imports::CANCELLED => Some(FuncType::new([], [I32])),
+        _ => None,
+    }
+}
+
+/// The reply of `call` in an invoke of effect `none`: a status byte and
+/// the fixed refusal.
+fn pure_refusal() -> Vec<u8> {
+    let mut bytes = vec![v1::STATUS_ERR];
+    if let Ok(encoded) = codec::encode(&v1::pure_refusal()) {
+        bytes.extend_from_slice(&encoded);
+    }
+    bytes
+}
+
+/// `call` in an invoke of effect `none`: the fixed refusal, written into a
+/// buffer the module allocates; 0 when it allocates none.
+fn answer_pure(caller: &mut Caller<'_, StoreLimits>) -> Result<u64, wasmi::Error> {
+    let reply = pure_refusal();
+    let Ok(len) = u32::try_from(reply.len()) else {
+        return Ok(0);
+    };
+    let Some(alloc) = caller
+        .get_export(v1::exports::ALLOC)
+        .and_then(Extern::into_func)
+    else {
+        return Ok(0);
+    };
+    let ptr = alloc.typed::<u32, u32>(&*caller)?.call(&mut *caller, len)?;
+    let Some(memory) = caller
+        .get_export(v1::exports::MEMORY)
+        .and_then(Extern::into_memory)
+    else {
+        return Ok(0);
+    };
+    if ptr == 0
+        || memory
+            .write(
+                &mut *caller,
+                usize::try_from(ptr).unwrap_or(usize::MAX),
+                &reply,
+            )
+            .is_err()
+    {
+        return Ok(0);
+    }
+    Ok((u64::from(ptr) << 32) | u64::from(len))
 }
 
 /// The WebAssembly page size (custom page sizes are refused).
@@ -360,7 +466,39 @@ impl Loaded<'_> {
         store
             .set_fuel(limits.fuel)
             .map_err(|e| call_failure(&e, &limits))?;
-        let linker = Linker::<StoreLimits>::new(&self.runtime.engine);
+        let mut linker = Linker::<StoreLimits>::new(&self.runtime.engine);
+        if self.imports {
+            // Effect `none`: the only effect this host serves.
+            let link = |e: wasmi::errors::LinkerError| {
+                fail(
+                    "generator.has_imports",
+                    format!("The host could not offer its functions ({e}). It was not run."),
+                )
+            };
+            linker
+                .func_wrap(
+                    v1::imports::MODULE,
+                    v1::imports::CALL,
+                    |mut caller: Caller<'_, StoreLimits>, _ptr: u32, _len: u32| {
+                        answer_pure(&mut caller)
+                    },
+                )
+                .map_err(link)?;
+            linker
+                .func_wrap(
+                    v1::imports::MODULE,
+                    v1::imports::LOG,
+                    |_: Caller<'_, StoreLimits>, _level: u32, _ptr: u32, _len: u32| {},
+                )
+                .map_err(link)?;
+            linker
+                .func_wrap(
+                    v1::imports::MODULE,
+                    v1::imports::CANCELLED,
+                    |_: Caller<'_, StoreLimits>| -> u32 { 0 },
+                )
+                .map_err(link)?;
+        }
         let instance = linker
             .instantiate_and_start(&mut store, &self.module)
             .map_err(|e| call_failure(&e, &limits))?;
@@ -393,10 +531,17 @@ impl Loaded<'_> {
         let description: Description = codec::decode(&bytes, call.limits.description_bytes)
             .map_err(|e| invalid_output("description", &e))?;
         validate::description(&description)?;
+        if self.imports && description.pure() {
+            return Err(fail(
+                "generator.has_imports",
+                "This plugin imports host functions, but every capability it offers is of effect none, which may import nothing. It was not run.",
+            ));
+        }
         Ok(description)
     }
 
-    /// Run `generate` on raw request bytes and return the raw reply.
+    /// Run `sparksmith_invoke` on raw request bytes and return the raw
+    /// reply.
     pub fn generate_raw(&self, request: &[u8]) -> Result<Raw, Failure> {
         let limit = self.runtime.limits.request_bytes;
         if request.len() > limit {
@@ -434,7 +579,7 @@ impl Loaded<'_> {
                     "The generator's request buffer lies outside its memory. Nothing was changed.",
                 )
             })?;
-        let generate = call.func::<(u32, u32), u64>(v1::exports::GENERATE)?;
+        let generate = call.func::<(u32, u32), u64>(v1::exports::INVOKE)?;
         let packed = generate
             .call(&mut call.store, (ptr, len))
             .map_err(|e| call_failure(&e, &call.limits))?;
@@ -455,9 +600,14 @@ impl Loaded<'_> {
         })
     }
 
-    /// Run `request` and return the validated result.
+    /// Run `request` (the `generate-part` capability, effect `none`) and
+    /// return the validated result.
     pub fn generate(&self, request: &Request) -> Result<Generated, Failure> {
-        let bytes = codec::encode(request).map_err(|e| {
+        if self.imports {
+            // Checks that a plugin with imports offers some other effect.
+            self.describe()?;
+        }
+        let bytes = codec::encode(&request.invoke()).map_err(|e| {
             fail(
                 "generator.request_invalid",
                 format!("The request could not be written: {e}. It was not run."),

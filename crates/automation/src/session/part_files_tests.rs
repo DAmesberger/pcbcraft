@@ -306,3 +306,29 @@ fn write_the_example_part_file() -> TestResult {
     )?;
     Ok(())
 }
+
+/// Slice B2: using the WROOM-3 part file binds each of its pad bodies to
+/// the terminal of the footprint pad under it, so they highlight and pick
+/// with their nets; the binding is stored with the derived data.
+#[test]
+fn the_wroom3_pad_bodies_bind_to_their_pads_terminals() -> TestResult {
+    let (mut session, package) = open()?;
+    let start = session.engine().revision();
+    let used = call(
+        &mut session,
+        "library.use_part_file",
+        json!({"package": package, "builtin": "esp32-s31-wroom-3", "expected_revision": start,
+            "values": wroom3_values()}),
+    );
+    assert_eq!(used["ok"], true, "{used}");
+    let Some(PackageModel::PartFile(part)) = model(&session, package) else {
+        return Err("the package uses no part file".into());
+    };
+    let leads = &part.derived.leads;
+    println!("WROOM-3: {} lead bodies bound", leads.len());
+    assert_eq!(leads.len(), 107, "every pad body bound");
+    let terminals: std::collections::BTreeSet<&str> =
+        leads.iter().map(|l| l.terminal.as_str()).collect();
+    assert!(terminals.len() > 1, "{terminals:?}");
+    Ok(())
+}

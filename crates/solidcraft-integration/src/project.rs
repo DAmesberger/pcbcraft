@@ -372,6 +372,7 @@ impl Builder {
         package: &str,
         use_: &sparksmith_core::library::package_model::PartFileModel,
         bytes: &[u8],
+        definition: Option<&PackageDefinition>,
     ) -> Result<String> {
         use crate::models::part_file;
         let part = part_file::evaluate(bytes, &use_.values)?;
@@ -384,11 +385,41 @@ impl Builder {
                  recorded (bounds, bodies or marking surfaces); set its values again"
             )));
         }
-        let stem = part.stem();
+        // Each lead body's package terminal (slice B2), by designation.
+        let terminals: BTreeMap<String, u32> = definition
+            .map(|package| {
+                use_.derived
+                    .leads
+                    .iter()
+                    .filter_map(|lead| {
+                        let terminal = package
+                            .terminals
+                            .iter()
+                            .find(|t| t.designation == lead.terminal)?;
+                        Some((lead.body.clone(), terminal.id.0))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        // Packages with the same file and values share a definition unless
+        // their lead bodies belong to other terminals.
+        let stem = if terminals.is_empty() {
+            part.stem()
+        } else {
+            let mut text = Vec::new();
+            for (body, terminal) in &terminals {
+                text.extend_from_slice(body.as_bytes());
+                text.push(0);
+                text.extend_from_slice(&terminal.to_le_bytes());
+            }
+            let digest = sparksmith_core::library::bundle::asset_hash(&text).0;
+            let hex: String = digest[..4].iter().map(|b| format!("{b:02x}")).collect();
+            format!("{}t{hex}", part.stem())
+        };
         if self.models.iter().any(|d| d.component == stem) {
             return Ok(stem);
         }
-        let definition = part_file::insert(&mut self.native, &stem, &part)?;
+        let definition = part_file::insert(&mut self.native, &stem, &part, &terminals)?;
         for body in &definition.bodies {
             self.record(&body.name, body.kind())?;
         }
@@ -1728,7 +1759,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
                 b.define_library(&stem, library_model(project, use_)?)?
             }
             PackageModel::PartFile(use_) => {
-                b.define_part(&stem, use_, part_bytes(project, use_)?)?;
+                b.define_part(&stem, use_, part_bytes(project, use_)?, Some(package))?;
             }
             _ if models::is_generated(package) => b.define(&stem, package)?,
             _ => {}
@@ -1766,7 +1797,7 @@ fn build_on(mut b: Builder, project: &Project) -> Result<NativeModel> {
                 (created, Some(created.occurrence))
             }
             PartModel::PartFile(use_, bytes) => {
-                let stem = b.define_part(&part.stem, use_, bytes)?;
+                let stem = b.define_part(&part.stem, use_, bytes, Some(part.package))?;
                 let created = b.model_occurrence(&stem)?;
                 (created, Some(created.occurrence))
             }
@@ -2688,7 +2719,7 @@ pub fn preview_part(package: &PackageDefinition, bytes: &[u8]) -> Result<NativeM
         ));
     };
     let mut b = Builder::new("Package model", &SourceCache::default())?;
-    let stem = b.define_part(DRAFT_MODEL, use_, bytes)?;
+    let stem = b.define_part(DRAFT_MODEL, use_, bytes, Some(package))?;
     let created = b.model_occurrence(&stem)?;
     move_by(&mut b.native, created.occurrence, &package.placement)?;
     b.finish(vec![])

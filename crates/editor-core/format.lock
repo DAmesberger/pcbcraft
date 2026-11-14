@@ -5,6 +5,6 @@
     "board_only_parts",
     "project_rule_source"
   ],
-  "schema_sha256": "6e15dc3ef25a17cb18984b91c50aacd9d24a4e5464e0640800c30bf6746353c1",
-  "version": 2
+  "schema_sha256": "50d19931e61279dfc1d2676baa6324a3e027cc18ca379efe8f9eba372f27a04b",
+  "version": 3
 }

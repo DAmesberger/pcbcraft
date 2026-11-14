@@ -1,9 +1,18 @@
-//! ABI version 1: exports, wire types and the bounds both sides rely on.
+//! The one plugin ABI, version 1: exports, imports, the description
+//! format, the invoke envelope, the `generate-part` capability's wire types
+//! and the bounds both sides rely on (`docs/design/extension-abi-design.md`
+//! §2.6 and §3.5).
 //!
-//! Everything is keyed by generation keys (pad `"1"`, terminal `"A"`, unit
-//! `"A"`), never by Sparksmith ids; the host maps keys to persistent ids.
-//! Lengths are integer nanometres (`_nm`, or a bare [`Point`]), angles
-//! integer millidegrees (`_mdeg`). No floats cross the boundary.
+//! A plugin describes itself once ([`Description`]): its id and version,
+//! and its capabilities, each declaring its [`Effect`]. A generator is a
+//! plugin with the capability [`GENERATE_PART`], of effect
+//! [`Effect::None`]: a pure function whose result is hashed.
+//!
+//! Generation output is keyed by generation keys (pad `"1"`, terminal
+//! `"A"`, unit `"A"`, graphic `"body"`), never by Sparksmith ids; the host
+//! maps keys to persistent ids. Lengths are integer nanometres (`_nm`, or a
+//! bare [`Point`]), angles integer millidegrees (`_mdeg`). No floats cross
+//! the boundary.
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -13,24 +22,70 @@ use serde::{Deserialize, Serialize};
 /// The ABI version this module describes.
 pub const ABI: u32 = 1;
 
-/// The module's exports. A module exports exactly these functions plus its
-/// linear memory as `memory`, and imports nothing.
+/// The module's exports: these four functions and its linear memory as
+/// `memory`.
 pub mod exports {
     /// `() -> u32`: returns [`super::ABI`].
-    pub const ABI: &str = "sparksmith_gen_abi";
-    /// `(len: u32) -> u32`: a buffer of `len` bytes for the request, or 0
-    /// when `len` exceeds [`super::limits::REQUEST_BYTES`].
-    pub const ALLOC: &str = "sparksmith_gen_alloc";
+    pub const ABI: &str = "sparksmith_abi";
+    /// `(len: u32) -> u32`: a buffer of `len` bytes for a request (or a
+    /// reply the host hands back from `call`), or 0 when `len` is 0 or
+    /// exceeds [`super::limits::REQUEST_BYTES`].
+    pub const ALLOC: &str = "sparksmith_alloc";
     /// `() -> u64`: `(ptr << 32) | len` of the canonical [`super::Description`].
-    pub const DESCRIBE: &str = "sparksmith_gen_describe";
-    /// `(ptr: u32, len: u32) -> u64`: takes the canonical [`super::Request`]
+    pub const DESCRIBE: &str = "sparksmith_describe";
+    /// `(ptr: u32, len: u32) -> u64`: takes the canonical [`super::Invoke`]
     /// in the buffer from `ALLOC` and returns `(ptr << 32) | len` of the
     /// response: one status byte ([`super::STATUS_OK`] or
-    /// [`super::STATUS_ERR`]) then the canonical [`super::Generation`] or
+    /// [`super::STATUS_ERR`]) then the capability's result (a
+    /// [`super::Generation`] for [`super::GENERATE_PART`]) or an
     /// [`super::ErrorBody`].
-    pub const GENERATE: &str = "sparksmith_gen_generate";
+    pub const INVOKE: &str = "sparksmith_invoke";
     /// The exported linear memory.
     pub const MEMORY: &str = "memory";
+}
+
+/// The host functions a module may import, all from module
+/// [`imports::MODULE`] and all optional. Anything else is refused before
+/// the module runs, and a plugin whose capabilities are all of effect
+/// [`Effect::None`] may import nothing at all.
+pub mod imports {
+    /// The import module name.
+    pub const MODULE: &str = "sparksmith";
+    /// `(ptr: u32, len: u32) -> u64`: one envelope `{entry, params}` in;
+    /// `(ptr << 32) | len` of a status byte and the reply or error out, in a
+    /// buffer the host took from the module's `sparksmith_alloc`. During an
+    /// invoke of effect [`super::Effect::None`] it is refused, always, with
+    /// [`super::REFUSED_PURE`].
+    pub const CALL: &str = "call";
+    /// `(level: u32, ptr: u32, len: u32)`: a line for the run's log. Dropped
+    /// in an invoke of effect [`super::Effect::None`].
+    pub const LOG: &str = "log";
+    /// `() -> u32`: 1 when the run should stop. Always 0 in an invoke of
+    /// effect [`super::Effect::None`].
+    pub const CANCELLED: &str = "cancelled";
+    /// The three, in order.
+    pub const ALL: [&str; 3] = [CALL, LOG, CANCELLED];
+}
+
+/// The capability that makes a part: effect [`Effect::None`], parameters
+/// in, a [`Generation`] out, hashed.
+pub const GENERATE_PART: &str = "generate-part";
+
+/// The error code `call` answers in an invoke of effect [`Effect::None`].
+pub const REFUSED_PURE: &str = "plugin.pure";
+
+/// What `call` answers in an invoke of effect [`Effect::None`], always:
+/// [`STATUS_ERR`] and this body, canonical. The same bytes on every host
+/// and in the SDK's native build, so a module that calls during a pure
+/// invoke still gives one result.
+pub fn pure_refusal() -> ErrorBody {
+    ErrorBody {
+        errors: alloc::vec![Problem {
+            code: REFUSED_PURE.into(),
+            field: None,
+            message: "A capability of effect none calls nothing: its result depends on its request alone.".into(),
+        }],
+    }
 }
 
 /// Response status byte: a [`Generation`] follows.
@@ -67,6 +122,9 @@ pub mod limits {
     pub const COORDINATE_NM: i64 = 1_000_000_000;
     /// Most values a model gives its part file.
     pub const MODEL_VALUES: usize = 256;
+    /// Most an arc's start and end may differ in their distance from its
+    /// centre: each is rounded to the nanometre once.
+    pub const ARC_RADIUS_NM: i64 = 1;
 }
 
 /// A point in nm.
@@ -86,32 +144,133 @@ pub enum Scope {
 
 // ---------------------------------------------------------------- describe
 
-/// What a generator offers: read by the host, UI, MCP and the AI without
-/// running anything.
+/// What a plugin offers, in the one description format: read by the host,
+/// UI, MCP and the AI without running anything.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Description {
     /// Always [`ABI`].
     pub abi: u32,
-    /// A short stable name for the generator lineage, e.g. `chip`.
-    pub id_hint: String,
-    /// The generator's version within its `id_hint`: a whole number from 1,
-    /// raised whenever a release changes what the generator makes. A higher
-    /// version of the same `id_hint` is newer.
+    /// The plugin's stable id, e.g. `chip`: with the parameters, what
+    /// identifies a part it makes.
+    pub id: String,
+    /// The plugin's version within its `id`: a whole number from 1, raised
+    /// whenever a release changes what it makes. A higher version of the
+    /// same `id` is newer.
     pub version: u32,
     /// A display name.
+    pub title: String,
+    /// The plugin's licence (SPDX).
+    pub licence: String,
+    /// Whether its results are hashed: required, and then checked by the
+    /// host (no float instructions), when any capability has effect
+    /// [`Effect::None`].
+    pub deterministic: bool,
+    pub capabilities: Vec<Capability>,
+    /// Catalog modules the plugin's `read` and `edit` capabilities call;
+    /// empty for a plugin whose capabilities are all of effect
+    /// [`Effect::None`].
+    pub needs: Vec<Need>,
+}
+
+impl Description {
+    /// The [`GENERATE_PART`] capability, if the plugin makes parts.
+    pub fn part(&self) -> Option<&Capability> {
+        self.capabilities.iter().find(|c| c.name == GENERATE_PART)
+    }
+
+    /// The part capability's parameters (none when it makes no parts).
+    pub fn params(&self) -> &[Param] {
+        self.part().map_or(&[], |c| c.params.as_slice())
+    }
+
+    /// The part capability's presets.
+    pub fn presets(&self) -> &[Preset] {
+        self.part().map_or(&[], |c| c.presets.as_slice())
+    }
+
+    /// The part capability's rules.
+    pub fn rules(&self) -> &[Rule] {
+        self.part().map_or(&[], |c| c.rules.as_slice())
+    }
+
+    /// The scopes the part capability makes.
+    pub fn scopes(&self) -> &[Scope] {
+        self.part()
+            .and_then(|c| c.part.as_ref())
+            .map_or(&[], |p| p.scopes.as_slice())
+    }
+
+    /// The part capability's own facts (families, scopes, grammar).
+    pub fn offer(&self) -> Option<&PartOffer> {
+        self.part().and_then(|c| c.part.as_ref())
+    }
+
+    /// Whether every capability is of effect [`Effect::None`].
+    pub fn pure(&self) -> bool {
+        self.capabilities.iter().all(|c| c.effect == Effect::None)
+    }
+}
+
+/// What a capability may do while it runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Effect {
+    /// Nothing: `call` is refused, `log` dropped, `cancelled` answers 0;
+    /// the result is canonical bytes, hashed.
+    None,
+    /// Queries on a frozen fork of the document (not served yet).
+    Read,
+    /// Queries and operations on a private fork (not served yet).
+    Edit,
+}
+
+/// One thing the plugin can be asked to do.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Capability {
+    /// Its name within the plugin, e.g. [`GENERATE_PART`].
     pub name: String,
-    /// Package families it covers.
-    pub families: Vec<String>,
-    /// The scopes it can produce.
-    pub scopes: Vec<Scope>,
+    pub effect: Effect,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
     pub params: Vec<Param>,
     /// Cross-field rules, stated in plain words and enforced by the module.
     pub rules: Vec<Rule>,
     pub presets: Vec<Preset>,
+    /// For [`GENERATE_PART`]: the families, scopes and search phrases.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part: Option<PartOffer>,
+}
+
+/// What a part capability makes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PartOffer {
+    /// Package families it covers.
+    pub families: Vec<String>,
+    /// The scopes it can produce.
+    pub scopes: Vec<Scope>,
     pub grammar: Vec<Grammar>,
     /// Standard fields an instance of the part carries (outside the part key).
     pub instance_fields: Vec<InstanceField>,
+}
+
+/// A catalog module a plugin's `read` or `edit` capabilities call: the
+/// host refuses the plugin, naming both versions, when it cannot meet it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Need {
+    pub module: String,
+    pub major: u32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub minor: u32,
+    /// What the plugin does with it: [`Effect::Read`] or [`Effect::Edit`].
+    pub class: Effect,
+}
+
+fn is_zero(v: &u32) -> bool {
+    *v == 0
 }
 
 /// One parameter.
@@ -189,14 +348,56 @@ pub struct Choice {
 }
 
 /// A parameter value: an integer (lengths, angles, counts), a boolean, text
-/// (enum keys, free text, decimal quantities) or a list.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// (enum keys, free text, decimal quantities) or a list. Written as the
+/// bare JSON value; read by its JSON kind (by hand rather than serde's
+/// `untagged`, whose buffer has float paths a module must not contain).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
 pub enum ParamValue {
     Int(i64),
     Bool(bool),
     Text(String),
     List(Vec<ParamValue>),
+}
+
+impl<'de> Deserialize<'de> for ParamValue {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Kind;
+        impl<'de> serde::de::Visitor<'de> for Kind {
+            type Value = ParamValue;
+            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+                f.write_str("an integer, a boolean, text or a list")
+            }
+            fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<ParamValue, E> {
+                Ok(ParamValue::Int(v))
+            }
+            fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<ParamValue, E> {
+                i64::try_from(v)
+                    .map(ParamValue::Int)
+                    .map_err(|_| E::custom("an integer beyond the range of a parameter"))
+            }
+            fn visit_bool<E: serde::de::Error>(self, v: bool) -> Result<ParamValue, E> {
+                Ok(ParamValue::Bool(v))
+            }
+            fn visit_str<E: serde::de::Error>(self, v: &str) -> Result<ParamValue, E> {
+                Ok(ParamValue::Text(String::from(v)))
+            }
+            fn visit_string<E: serde::de::Error>(self, v: String) -> Result<ParamValue, E> {
+                Ok(ParamValue::Text(v))
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> Result<ParamValue, A::Error> {
+                let mut items = Vec::new();
+                while let Some(item) = seq.next_element()? {
+                    items.push(item);
+                }
+                Ok(ParamValue::List(items))
+            }
+        }
+        deserializer.deserialize_any(Kind)
+    }
 }
 
 /// Complete parameters, keyed by [`Param::key`].
@@ -265,8 +466,9 @@ pub struct InstanceField {
 
 // ---------------------------------------------------------------- generate
 
-/// A generate request. `params` are complete: the host fills every default
-/// from the [`Description`] before calling and before hashing.
+/// A [`GENERATE_PART`] request. `params` are complete: the host fills
+/// every default from the [`Description`] before calling and before
+/// hashing. Its canonical bytes are what the params hash covers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
@@ -274,6 +476,44 @@ pub struct Request {
     pub abi: u32,
     pub scope: Scope,
     pub params: Params,
+}
+
+impl Request {
+    /// The invoke envelope that asks for this part.
+    pub fn invoke(&self) -> Invoke {
+        Invoke {
+            abi: self.abi,
+            capability: GENERATE_PART.into(),
+            params: self.params.clone(),
+            scope: Some(self.scope),
+        }
+    }
+}
+
+/// What `sparksmith_invoke` reads: a capability by name, its parameters,
+/// and for [`GENERATE_PART`] the scope.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Invoke {
+    /// Always [`ABI`].
+    pub abi: u32,
+    pub capability: String,
+    pub params: Params,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<Scope>,
+}
+
+impl Invoke {
+    /// The part request this invoke carries, if it asks for
+    /// [`GENERATE_PART`] with a scope.
+    pub fn request(&self) -> Option<Request> {
+        (self.capability == GENERATE_PART).then_some(())?;
+        Some(Request {
+            abi: self.abi,
+            scope: self.scope?,
+            params: self.params.clone(),
+        })
+    }
 }
 
 /// A problem in plain words: a parameter the module refuses, or a host
@@ -387,6 +627,12 @@ pub struct SymbolPin {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Graphic {
+    /// Its generation key: unique within its symbol unit, or within the
+    /// footprint's silkscreen and assembly drawings together. The host
+    /// keeps the drawing's id for the key across regenerations, so a key
+    /// should name the drawing (`body`, `outline-top-1`), not its place
+    /// in the list.
+    pub key: String,
     pub shape: Primitive,
     pub stroke_nm: i64,
     pub fill: Fill,
@@ -424,12 +670,17 @@ pub enum Primitive {
         center: Point,
         radius_nm: i64,
     },
-    /// Counter-clockwise from `start_mdeg` by `sweep_mdeg` (negative: clockwise).
+    /// An arc about `center` from `start` to `end`, counter-clockwise
+    /// unless `clockwise`; `start == end` is a full circle. The points are
+    /// exact: the host does no trigonometry. Both lie on one circle, their
+    /// distances from `center` agreeing within [`limits::ARC_RADIUS_NM`]
+    /// (the module rounds each to the nanometre; the SDK's `draw::arc`
+    /// computes them in integers).
     Arc {
         center: Point,
-        radius_nm: i64,
-        start_mdeg: i64,
-        sweep_mdeg: i64,
+        start: Point,
+        end: Point,
+        clockwise: bool,
     },
     Text {
         at: Point,

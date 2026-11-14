@@ -101,6 +101,9 @@ pub fn convert_project(path: &Path, options: &Options) -> Result<Vec<String>> {
         done.identity.fill_moved_nm,
         backup.display()
     )];
+    for note in &done.notes {
+        lines.push(format!("{shown}: {note}"));
+    }
     for fill in &done.identity.stale_fills {
         lines.push(format!(
             "{shown}: fill {fill} would refill to other copper, so it was already stale; refill it in the app"

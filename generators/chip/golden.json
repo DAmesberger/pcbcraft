@@ -3,42 +3,42 @@
   {
    "name": "resistor 0603, component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "resistor", "length": 1600000, "width": 800000, "height": 450000, "termination": 300000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "2d1ab9874de6a77346d1182c4fcaba7c7dd586056ee67a55b659d92904a2269a"
+   "result": "9ea7cdd95e26d03daf0b4988e550fa7006a420391c223bda1834c53ce58fc2fa"
   },
   {
    "name": "resistor 0603 US symbol, component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "resistor", "length": 1600000, "width": 800000, "height": 450000, "termination": 300000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "us"}},
-   "result": "7af733669058dc55beab3be867ffe07ed417e8d6dfafba1c0fbb6417a5659515"
+   "result": "ef71abd1e69896256335bd2dde5ebefa8220a898311358b2bbc3c2fb90c9c63a"
   },
   {
    "name": "resistor 0603, package",
    "request": {"abi": 1, "scope": "package", "params": {"part": "resistor", "length": 1600000, "width": 800000, "height": 450000, "termination": 300000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "4a84c7e5839503e4dec6a260ef6d150990b1b07294ceda4eceb66eafe2638082"
+   "result": "ce172ff42c913455bd40ca4703766528473be0fb8753ccd9c0425ac9bb2b974a"
   },
   {
    "name": "resistor 0201 (trimmed heel), component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "resistor", "length": 600000, "width": 300000, "height": 230000, "termination": 150000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "930d81891e29fb71b631a7462697da7460059d3163847d8137082c08fbb7b938"
+   "result": "d8c32f1a68c8d3a507ecc5f2ed4c4fcd15510d616ceadfdb07c60c7539ecba93"
   },
   {
    "name": "capacitor 0805, component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "capacitor", "length": 2000000, "width": 1250000, "height": 1250000, "termination": 500000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "1d575547fe5f72ddc60de8f3c0d494c42ae03188b178888c7931333a6dcf5090"
+   "result": "b8a1ce7bff9a59d1aa53b4dd3ca0c5059129f61c70aabf745b2435876b77b897"
   },
   {
    "name": "inductor 1206, component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "inductor", "length": 3200000, "width": 1600000, "height": 1100000, "termination": 500000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "22b6bdc09de412b0d957dfd53562750ad7ebee0978eb552f3a3e14fd7737ca76"
+   "result": "9bac19e630218ee0394f81fe54cd5475c0e01d30d5e09171147d057c8b7d2a9f"
   },
   {
    "name": "ferrite bead 0603, component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "ferrite", "length": 1600000, "width": 800000, "height": 800000, "termination": 300000, "lands": "estimated", "land_length": 900000, "land_width": 1000000, "land_pitch": 1300000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "87ef6d9154cec7a32cdfc76db1378ebd72395f937b0a364f58082628017ffd2e"
+   "result": "d0add90def42a722dbd24ffdaa702fef5f56833261cb05f7be851af14f991fde"
   },
   {
    "name": "LED 0603 (given lands), component",
    "request": {"abi": 1, "scope": "component", "params": {"part": "led", "length": 1600000, "width": 800000, "height": 750000, "termination": 300000, "lands": "explicit", "land_length": 800000, "land_width": 800000, "land_pitch": 1650000, "land_gap_min": 200000, "resistor_style": "iec"}},
-   "result": "8ea442fe3518a7a76e6c03b00eb081de244e4b623b998ff2ff3901b919f7830a"
+   "result": "2f3244630894f97778ecbe1d1eaa66a3697762b8dcf931f1934d85a5cf5fa199"
   }
  ]
 }

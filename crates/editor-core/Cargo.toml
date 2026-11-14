@@ -29,7 +29,3 @@ qrcodegen = "1.8"
 # The Gerber and Excellon readers the fabrication tests read files back with.
 sparksmith-fabcheck.workspace = true
 rqrr = { version = "0.10", default-features = false }
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
-

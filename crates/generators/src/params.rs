@@ -14,18 +14,18 @@ pub fn complete(
     scope: Scope,
     given: &Params,
 ) -> Result<Request, Failure> {
-    if !description.scopes.contains(&scope) {
+    if !description.scopes().contains(&scope) {
         let what = match scope {
             Scope::Component => "complete parts",
             Scope::Package => "packages on their own",
         };
         return Err(Failure::one(
             "param.scope",
-            format!("The {} generator does not make {what}.", description.name),
+            format!("The {} generator does not make {what}.", description.title),
         ));
     }
     let mut params = given.clone();
-    for param in &description.params {
+    for param in description.params() {
         params
             .entry(param.key.clone())
             .or_insert_with(|| param.default.clone());

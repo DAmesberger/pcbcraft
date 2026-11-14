@@ -36,8 +36,71 @@ const SHIPPED: &str = "library/generators";
 /// The probe: the generator host itself built for wasm32 (a test module,
 /// not locked: it only has to agree with the native host).
 const PROBE: &str = "sparksmith-generators-probe";
+/// A test plugin (`crates/generators-fixture`): not locked or shipped;
+/// its golden case runs natively, under wasmi and under the probe.
+const FIXTURE: &str = "sparksmith-gen-fixture";
 /// Where `check` points the host's module tests.
 const MODULES_ENV: &str = "SPARKSMITH_GENERATOR_MODULES";
+/// Set on the generator builds, so this program runs as their rustc
+/// wrapper ([`wrap_rustc`]).
+pub const WRAP_ENV: &str = "SPARKSMITH_GENERATOR_RUSTC";
+
+/// Run as cargo's rustc wrapper for a generator build: `args` are the
+/// rustc program and its arguments. Cargo's `-C metadata` value hashes,
+/// among other things, rustc's verbose version, which names the build
+/// host; the value seeds each crate's stable id, and with it the order of
+/// the module's functions. It is replaced by a hash of what identifies the
+/// crate within the build (package name and version, crate name and types,
+/// the `--cfg` set and the target), so two hosts with the same toolchain,
+/// sources and lock give the same bytes.
+pub fn wrap_rustc(args: &[std::ffi::OsString]) -> Result<std::process::ExitCode> {
+    let (rustc, rest) = args
+        .split_first()
+        .ok_or("the rustc wrapper was called without a program")?;
+    let text: Vec<String> = rest
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
+    let mut identity = Vec::new();
+    for key in ["CARGO_PKG_NAME", "CARGO_PKG_VERSION"] {
+        identity.push(std::env::var(key).unwrap_or_default());
+    }
+    let mut k = 0;
+    while k < text.len() {
+        let arg = text[k].as_str();
+        if matches!(arg, "--crate-name" | "--crate-type" | "--cfg" | "--target") {
+            let value = text.get(k + 1).map(String::as_str).unwrap_or_default();
+            identity.push(format!("{arg}={value}"));
+            k += 1;
+        }
+        k += 1;
+    }
+    let digest = hex(&Sha256::digest(identity.join("\u{1f}").as_bytes()));
+    let metadata = format!("metadata={}", &digest[..16]);
+    let mut out: Vec<std::ffi::OsString> = Vec::with_capacity(rest.len());
+    let mut k = 0;
+    while k < rest.len() {
+        let arg = text[k].as_str();
+        if arg == "-C" && text.get(k + 1).is_some_and(|v| v.starts_with("metadata=")) {
+            out.push("-C".into());
+            out.push(metadata.clone().into());
+            k += 2;
+            continue;
+        }
+        if arg.starts_with("-Cmetadata=") {
+            out.push(format!("-C{metadata}").into());
+        } else {
+            out.push(rest[k].clone());
+        }
+        k += 1;
+    }
+    let status = Command::new(rustc).args(&out).status()?;
+    Ok(match status.code().and_then(|c| u8::try_from(c).ok()) {
+        Some(0) => std::process::ExitCode::SUCCESS,
+        Some(code) => std::process::ExitCode::from(code),
+        None => std::process::ExitCode::FAILURE,
+    })
+}
 
 /// One generator crate under `generators/`.
 struct Generator {
@@ -160,6 +223,12 @@ fn build_package(package: &str, target_dir: &Path) -> Result<()> {
         // not depend on the caller's settings.
         .env("CARGO_ENCODED_RUSTFLAGS", remap_flags(&root)?)
         .env_remove("RUSTFLAGS")
+        // Every rustc call goes through this program (`wrap_rustc`), which
+        // gives each crate a `-C metadata` that does not name the build
+        // host; any caching wrapper of the environment is left out.
+        .env("RUSTC_WRAPPER", std::env::current_exe()?)
+        .env_remove("RUSTC_WORKSPACE_WRAPPER")
+        .env(WRAP_ENV, "1")
         .current_dir(&root)
         .status()?;
     if !status.success() {
@@ -196,6 +265,7 @@ fn build_all(target_dir: &Path, with_probe: bool) -> Result<Vec<Built>> {
     }
     if with_probe {
         build_package(PROBE, target_dir)?;
+        build_package(FIXTURE, target_dir)?;
     }
     Ok(built)
 }
@@ -574,14 +644,16 @@ fn check() -> Result<()> {
     Ok(())
 }
 
-/// The golden cases natively, in each generator crate.
+/// The golden cases natively, in each generator crate and the fixture.
 fn golden_native() -> Result<()> {
-    for generator in generators()? {
+    let mut packages: Vec<String> = generators()?.into_iter().map(|g| g.package).collect();
+    packages.push(FIXTURE.into());
+    for package in &packages {
         crate::cargo(&[
             "test",
             "--locked",
             "--package",
-            &generator.package,
+            package,
             "--lib",
             "--profile",
             "ci",

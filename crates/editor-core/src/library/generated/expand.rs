@@ -1,13 +1,23 @@
 //! The expansion: a validated generation (ABI 1 wire types, keyed by
 //! generation keys) mapped to the project's definitions (keyed by local
-//! ids). A pure function of the generation and the five lineage references,
-//! so a stored part can be expanded again and compared exactly
-//! (`docs/generator-plugins.md`, "Expansion").
+//! ids). A pure function of the generation, the five lineage references
+//! and the part's key-to-id map ([`KeyIds`]), so a stored part can be
+//! expanded again and compared exactly (`docs/generator-plugins.md`,
+//! "Expansion").
 //!
-//! Local ids are numbered in the generation's own order: terminals
-//! 1…n with their fixed functions n+1…2n; symbol units, each followed by
-//! its graphics; package terminals 1…m; pads 1…p, then the footprint's
-//! drawings (silkscreen, assembly, courtyard).
+//! **Stable keys (slice B1).** Every generated object has a generation key
+//! (terminal, unit, symbol drawing, package terminal, pad, footprint
+//! drawing), and its local id comes from the map: a key the map holds
+//! keeps its id, a new key takes the next id after every id the map has
+//! ever held. The map never forgets a key, so a key that comes back gets
+//! its old id and no id is ever reused for another key. A part's ids
+//! therefore do not depend on the order the module emits things in, and
+//! regenerating with a module that inserts a pad leaves every other pad's
+//! id, and the tracks on it, where they were. For a fresh map the ids
+//! follow the generation's order: terminals 1…n with their fixed functions
+//! n+1…2n; symbol units, each followed by its graphics; package terminals
+//! 1…m; pads 1…p, then the footprint's drawings (silkscreen, assembly,
+//! courtyard).
 use crate::diagnostics::{Error, Result};
 use crate::functions::{Direction, TerminalFunctions};
 use crate::ids::ContentHash;
@@ -20,7 +30,6 @@ use crate::library::graphics::{
     TextContent, VAlign,
 };
 use crate::library::package_model::PartValue;
-use crate::library::templates::footprint::COURTYARD_STROKE_MM;
 use crate::library::{
     BindingDefinition, ComponentDefinition, CornerMask, Definition, DrawingLayer,
     FootprintDefinition, Hole, HoleShape, MaskRule, ModelPlacement, Outline, PackageDefinition,
@@ -28,6 +37,8 @@ use crate::library::{
     Segment, SymbolDefinition, Terminal, TerminalClass, TerminalMap, Unit,
 };
 use crate::units::{Angle, ArcDirection, MILLIDEGREES_PER_TURN, Nm, PointNm};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use sparksmith_generator_abi::v1;
 use std::collections::BTreeMap;
 
@@ -39,6 +50,13 @@ pub struct Refs {
     pub package: PackageRef,
     pub footprint: FootprintRef,
 }
+
+/// The courtyard outline's stroke, 0.05 mm, as the footprint templates
+/// draw it (`templates::footprint::COURTYARD_STROKE_MM`).
+const COURTYARD_STROKE: Nm = match Nm::try_new(50_000) {
+    Some(nm) => nm,
+    None => Nm::ZERO,
+};
 
 fn refused(message: String) -> Error {
     Error::Invalid(format!("generated.expansion: {message}"))
@@ -52,54 +70,154 @@ fn point(p: v1::Point) -> Result<PointNm> {
     Ok(PointNm::new(nm(p[0])?, nm(p[1])?))
 }
 
-fn local(index: usize, base: u32) -> Result<u32> {
-    u32::try_from(index)
-        .ok()
-        .and_then(|i| i.checked_add(base))
-        .ok_or_else(|| refused("the part has more items than local ids".into()))
+/// Keys a part's map holds, all namespaces together.
+pub const MAX_KEYS: usize = 16 * 1024;
+
+/// A generated part's generation keys and the local ids they were given,
+/// one map per definition (each definition numbers its own locals). Keys
+/// carry their kind: `t:` a terminal, `f:` its function (component); `u:` a
+/// unit, `g:UNIT/KEY` a unit's drawing (symbol); `t:` a package terminal
+/// (package); `p:` a pad, `g:` a drawing, `courtyard` (footprint).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct KeyIds {
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub component: BTreeMap<String, u32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub symbol: BTreeMap<String, u32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub package: BTreeMap<String, u32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub footprint: BTreeMap<String, u32>,
 }
 
-/// Keys to the local ids they were numbered as.
-fn numbered<'a>(keys: impl Iterator<Item = &'a str>, base: u32) -> Result<BTreeMap<&'a str, u32>> {
-    let mut map = BTreeMap::new();
-    for (index, key) in keys.enumerate() {
-        if map.insert(key, local(index, base)?).is_some() {
-            return Err(refused(format!("the key \"{key}\" is used twice")));
+impl KeyIds {
+    /// Every key, all namespaces.
+    pub fn len(&self) -> usize {
+        self.component.len() + self.symbol.len() + self.package.len() + self.footprint.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Bounded, and every id in a namespace used once and nonzero.
+    pub fn validate(&self) -> Result<()> {
+        if self.len() > MAX_KEYS {
+            return Err(Error::Limit(format!(
+                "generated.record: a generated part maps at most {MAX_KEYS} keys"
+            )));
+        }
+        for map in [
+            &self.component,
+            &self.symbol,
+            &self.package,
+            &self.footprint,
+        ] {
+            let mut ids = std::collections::BTreeSet::new();
+            for (key, id) in map {
+                if *id == 0 || !ids.insert(*id) || key.is_empty() || key.len() > 2048 {
+                    return Err(Error::Invalid(format!(
+                        "generated.record: the key map gives \"{}\" an id another key has, or none",
+                        key.chars().take(80).collect::<String>()
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Ids of one namespace: the map's, then new ones after every id it holds.
+struct Ids {
+    map: BTreeMap<String, u32>,
+    next: u32,
+    /// Keys given in this expansion, to refuse one given twice.
+    given: std::collections::BTreeSet<String>,
+}
+
+impl Ids {
+    fn new(map: &BTreeMap<String, u32>) -> Self {
+        let next = map.values().max().map_or(1, |m| m.saturating_add(1));
+        Self {
+            map: map.clone(),
+            next,
+            given: Default::default(),
         }
     }
-    Ok(map)
-}
 
-fn lookup(map: &BTreeMap<&str, u32>, key: &str, what: &str) -> Result<u32> {
-    map.get(key)
-        .copied()
-        .ok_or_else(|| refused(format!("{what} \"{key}\" is not declared")))
+    /// The id of `key`: the map's, or the next free one.
+    fn id(&mut self, key: String) -> Result<u32> {
+        if !self.given.insert(key.clone()) {
+            return Err(refused(format!("the key \"{key}\" is used twice")));
+        }
+        if let Some(id) = self.map.get(&key) {
+            return Ok(*id);
+        }
+        let id = self.next;
+        self.next = self
+            .next
+            .checked_add(1)
+            .ok_or_else(|| refused("the part has more items than local ids".into()))?;
+        self.map.insert(key, id);
+        Ok(id)
+    }
+
+    /// The id `key` was given in this expansion.
+    fn of(&self, key: &str, what: &str) -> Result<u32> {
+        self.map
+            .get(key)
+            .copied()
+            .filter(|_| self.given.contains(key))
+            .ok_or_else(|| refused(format!("{what} \"{key}\" is not declared")))
+    }
+
+    /// The definition's next local id: after every id the map holds.
+    fn next_local(&self) -> u32 {
+        self.next
+    }
 }
 
 /// The definitions of `generation` at `refs`, its package holding `model`
 /// (the generation's part file as a Model revision of the project, at the
-/// generation's values), in order: component, symbol,
-/// package, footprint, binding for a complete part; package and footprint
-/// for a package.
+/// generation's values), with local ids from `ids` (a new part's map is
+/// empty), in order: component, symbol, package, footprint, binding for a
+/// complete part; package and footprint for a package. Also returns the
+/// map with every new key added.
 pub fn definitions(
     generation: &v1::Generation,
     refs: Refs,
     model: PackageModel,
-) -> Result<Vec<(DefinitionId, Definition)>> {
-    let package_terminals = numbered(generation.package.terminals.iter().map(String::as_str), 1)?;
+    ids: &KeyIds,
+) -> Result<(Vec<(DefinitionId, Definition)>, KeyIds)> {
+    let mut package_terminals = Ids::new(&ids.package);
+    for key in &generation.package.terminals {
+        package_terminals.id(format!("t:{key}"))?;
+    }
     let package = package(generation, &package_terminals, model)?;
-    let footprint = footprint(generation, refs.package, &package_terminals)?;
+    let mut pads = Ids::new(&ids.footprint);
+    let footprint = footprint(generation, refs.package, &package_terminals, &mut pads)?;
     let mut out = Vec::with_capacity(5);
+    let mut used = KeyIds {
+        package: package_terminals.map.clone(),
+        footprint: pads.map,
+        ..KeyIds::default()
+    };
     match (refs.component, &generation.component, &generation.symbol) {
         (Some((component_id, symbol_ref, binding_ref)), Some(component), Some(symbol)) => {
-            let terminals = numbered(component.terminals.iter().map(|t| t.key.as_str()), 1)?;
-            out.push((
-                component_id,
-                Definition::Component(component_definition(component, symbol_ref, binding_ref)?),
-            ));
+            let mut terminals = Ids::new(&ids.component);
+            let definition =
+                component_definition(component, symbol_ref, binding_ref, &mut terminals)?;
+            out.push((component_id, Definition::Component(definition)));
+            let mut units = Ids::new(&ids.symbol);
             out.push((
                 symbol_ref.id,
-                Definition::Symbol(symbol_definition(symbol, component_id, &terminals)?),
+                Definition::Symbol(symbol_definition(
+                    symbol,
+                    component_id,
+                    &terminals,
+                    &mut units,
+                )?),
             ));
             out.push((refs.package.id, Definition::Package(package)));
             out.push((refs.footprint.id, Definition::Footprint(footprint)));
@@ -108,15 +226,18 @@ pub fn definitions(
                 .iter()
                 .map(|entry| {
                     Ok(TerminalMap {
-                        package_terminal: PackageTerminalId(lookup(
-                            &package_terminals,
-                            &entry.package_terminal,
-                            "package terminal",
-                        )?),
-                        terminal: TerminalId(lookup(&terminals, &entry.terminal, "terminal")?),
+                        package_terminal: PackageTerminalId(
+                            package_terminals
+                                .of(&format!("t:{}", entry.package_terminal), "package terminal")?,
+                        ),
+                        terminal: TerminalId(
+                            terminals.of(&format!("t:{}", entry.terminal), "terminal")?,
+                        ),
                     })
                 })
                 .collect::<Result<_>>()?;
+            used.component = terminals.map;
+            used.symbol = units.map;
             out.push((
                 binding_ref.id,
                 Definition::Binding(BindingDefinition {
@@ -131,6 +252,8 @@ pub fn definitions(
         (None, None, None) => {
             out.push((refs.package.id, Definition::Package(package)));
             out.push((refs.footprint.id, Definition::Footprint(footprint)));
+            used.component = ids.component.clone();
+            used.symbol = ids.symbol.clone();
         }
         _ => {
             return Err(refused(
@@ -139,7 +262,7 @@ pub fn definitions(
             ));
         }
     }
-    Ok(out)
+    Ok((out, used))
 }
 
 fn direction(d: v1::Direction) -> Direction {
@@ -157,25 +280,35 @@ fn component_definition(
     component: &v1::Component,
     symbol: SymbolRef,
     binding: BindingRef,
+    ids: &mut Ids,
 ) -> Result<ComponentDefinition> {
-    let n = component.terminals.len();
+    // Every terminal first, then every function, so a fresh map numbers
+    // terminals 1…n and functions n+1…2n.
+    let terminal_ids = component
+        .terminals
+        .iter()
+        .map(|t| ids.id(format!("t:{}", t.key)))
+        .collect::<Result<Vec<_>>>()?;
+    let function_ids = component
+        .terminals
+        .iter()
+        .map(|t| ids.id(format!("f:{}", t.key)))
+        .collect::<Result<Vec<_>>>()?;
     let terminals = component
         .terminals
         .iter()
-        .enumerate()
-        .map(|(index, t)| {
-            Ok(Terminal {
-                id: TerminalId(local(index, 1)?),
-                name: t.name.clone(),
-                class: TerminalClass::Electrical(TerminalFunctions::fixed(
-                    FunctionId(local(index, local(n, 1)?)?),
-                    direction(t.direction),
-                )),
-            })
+        .zip(terminal_ids.into_iter().zip(function_ids))
+        .map(|(t, (id, function))| Terminal {
+            id: TerminalId(id),
+            name: t.name.clone(),
+            class: TerminalClass::Electrical(TerminalFunctions::fixed(
+                FunctionId(function),
+                direction(t.direction),
+            )),
         })
-        .collect::<Result<_>>()?;
+        .collect();
     Ok(ComponentDefinition {
-        next_local: local(2 * n, 1)?,
+        next_local: ids.next_local(),
         designator_prefix: component.prefix.clone(),
         terminals,
         resources: Vec::new(),
@@ -195,23 +328,16 @@ fn component_definition(
 fn symbol_definition(
     symbol: &v1::Symbol,
     component: DefinitionId,
-    terminals: &BTreeMap<&str, u32>,
+    terminals: &Ids,
+    ids: &mut Ids,
 ) -> Result<SymbolDefinition> {
-    let mut next: u32 = 1;
-    let mut take = || -> Result<u32> {
-        let id = next;
-        next = next
-            .checked_add(1)
-            .ok_or_else(|| refused("the symbol has more items than local ids".into()))?;
-        Ok(id)
-    };
     let mut units = Vec::with_capacity(symbol.units.len());
     for unit in &symbol.units {
-        let id = UnitId(take()?);
+        let id = UnitId(ids.id(format!("u:{}", unit.key))?);
         let mut graphics = Vec::with_capacity(unit.graphics.len());
         for graphic in &unit.graphics {
             graphics.push(Graphic {
-                id: GraphicId(take()?),
+                id: GraphicId(ids.id(format!("g:{}/{}", unit.key, graphic.key))?),
                 item: item(graphic)?,
             });
         }
@@ -220,7 +346,7 @@ fn symbol_definition(
             .iter()
             .map(|pin| {
                 let mut out = Pin::new(
-                    TerminalId(lookup(terminals, &pin.terminal, "terminal")?),
+                    TerminalId(terminals.of(&format!("t:{}", pin.terminal), "terminal")?),
                     point(pin.at)?,
                     pin_direction(pin.rot_mdeg)?,
                     nm(pin.length_nm)?,
@@ -239,7 +365,7 @@ fn symbol_definition(
     }
     Ok(SymbolDefinition {
         component,
-        next_local: take()?,
+        next_local: ids.next_local(),
         pin_text_height_nm: graphics::PIN_TEXT_HEIGHT,
         units,
     })
@@ -263,31 +389,6 @@ fn fill(f: v1::Fill) -> graphics::Fill {
         v1::Fill::Body => graphics::Fill::Body,
         v1::Fill::Solid => graphics::Fill::Solid,
     }
-}
-
-/// The exact cosine and sine of a quarter-turn angle, else `None`.
-fn quarter(mdeg: i64) -> Option<(i64, i64)> {
-    match mdeg.rem_euclid(i64::from(MILLIDEGREES_PER_TURN)) {
-        0 => Some((1, 0)),
-        90_000 => Some((0, 1)),
-        180_000 => Some((-1, 0)),
-        270_000 => Some((0, -1)),
-        _ => None,
-    }
-}
-
-/// The point at `mdeg` on the circle about `center` of `radius`: exact at
-/// quarter turns, else rounded once to nanometres.
-fn on_circle(center: v1::Point, radius: i64, mdeg: i64) -> Result<PointNm> {
-    if let Some((c, s)) = quarter(mdeg) {
-        return point([center[0] + c * radius, center[1] + s * radius]);
-    }
-    let angle = (mdeg as f64 / 1000.0).to_radians();
-    let to_mm = |v: i64| v as f64 / 1_000_000.0;
-    PointNm::from_mm_f64_rounded([
-        to_mm(center[0]) + to_mm(radius) * angle.cos(),
-        to_mm(center[1]) + to_mm(radius) * angle.sin(),
-    ])
 }
 
 fn shape(primitive: &v1::Primitive) -> Result<ShapeNm> {
@@ -315,27 +416,19 @@ fn shape(primitive: &v1::Primitive) -> Result<ShapeNm> {
         },
         v1::Primitive::Arc {
             center,
-            radius_nm,
-            start_mdeg,
-            sweep_mdeg,
-        } => {
-            let start = on_circle(*center, *radius_nm, *start_mdeg)?;
-            let full = sweep_mdeg.unsigned_abs() >= MILLIDEGREES_PER_TURN.unsigned_abs().into();
-            ShapeNm::Arc {
-                start,
-                end: if full {
-                    start
-                } else {
-                    on_circle(*center, *radius_nm, start_mdeg.saturating_add(*sweep_mdeg))?
-                },
-                centre: point(*center)?,
-                direction: if *sweep_mdeg < 0 {
-                    ArcDirection::Clockwise
-                } else {
-                    ArcDirection::CounterClockwise
-                },
-            }
-        }
+            start,
+            end,
+            clockwise,
+        } => ShapeNm::Arc {
+            start: point(*start)?,
+            end: point(*end)?,
+            centre: point(*center)?,
+            direction: if *clockwise {
+                ArcDirection::Clockwise
+            } else {
+                ArcDirection::CounterClockwise
+            },
+        },
         v1::Primitive::Text { .. } => {
             return Err(refused("text is not a shape".into()));
         }
@@ -402,8 +495,8 @@ pub fn part_file(generation: &v1::Generation) -> Result<(ContentHash, &v1::Param
 }
 
 /// Whether `stored` are the generation's part-file `values`: the same
-/// names, each a length in mm equal to the nanometres, an angle in degrees
-/// equal to the millidegrees, or the count itself.
+/// names, each a length of the same nanometres, an angle of the same
+/// millidegrees, or the same count.
 pub fn part_values_match(values: &v1::Params, stored: &BTreeMap<String, PartValue>) -> Result<()> {
     let differs = |name: &str| {
         refused(format!(
@@ -420,10 +513,9 @@ pub fn part_values_match(values: &v1::Params, stored: &BTreeMap<String, PartValu
             return Err(differs(name));
         };
         let same = match *stored {
-            PartValue::Mm(mm) => Nm::from_mm_f64_rounded(mm).is_ok_and(|n| n.get() == *int),
-            PartValue::Deg(deg) => deg.is_finite() && (deg * 1000.0).round() == *int as f64,
+            PartValue::Nm(v) | PartValue::Mdeg(v) => v == *int,
             PartValue::Count(n) => i64::from(n) == *int,
-            PartValue::Number(_) => false,
+            PartValue::Milli(_) => false,
         };
         if !same {
             return Err(differs(name));
@@ -434,7 +526,7 @@ pub fn part_values_match(values: &v1::Params, stored: &BTreeMap<String, PartValu
 
 fn package(
     generation: &v1::Generation,
-    terminals: &BTreeMap<&str, u32>,
+    terminals: &Ids,
     model: PackageModel,
 ) -> Result<PackageDefinition> {
     let geometry = &generation.package.geometry;
@@ -447,14 +539,14 @@ fn package(
     };
     part_values_match(values, &part.values)?;
     let package = PackageDefinition {
-        next_local: local(terminals.len(), 1)?,
+        next_local: terminals.next_local(),
         terminals: generation
             .package
             .terminals
             .iter()
             .map(|key| {
                 Ok(PackageTerminal {
-                    id: PackageTerminalId(lookup(terminals, key, "package terminal")?),
+                    id: PackageTerminalId(terminals.of(&format!("t:{key}"), "package terminal")?),
                     designation: key.clone(),
                 })
             })
@@ -541,11 +633,12 @@ fn hole(hole: &v1::Hole) -> Result<Hole> {
 fn footprint(
     generation: &v1::Generation,
     package: PackageRef,
-    terminals: &BTreeMap<&str, u32>,
+    terminals: &Ids,
+    ids: &mut Ids,
 ) -> Result<FootprintDefinition> {
     let source = &generation.footprint;
     let mut pads = Vec::with_capacity(source.pads.len());
-    for (index, pad) in source.pads.iter().enumerate() {
+    for pad in &source.pads {
         let shape = pad_shape(&pad.shape)?;
         let rotation = shape.canonical_rotation(Angle::normalized(pad.rot_mdeg));
         let hole = pad.hole.as_ref().map(hole).transpose()?;
@@ -555,13 +648,11 @@ fn footprint(
             Some(_) => PadKind::NonPlatedHole,
         };
         pads.push(Pad {
-            id: PadId(local(index, 1)?),
+            id: PadId(ids.id(format!("p:{}", pad.key))?),
             kind,
-            terminal: Some(PackageTerminalId(lookup(
-                terminals,
-                &pad.terminal,
-                "package terminal",
-            )?)),
+            terminal: Some(PackageTerminalId(
+                terminals.of(&format!("t:{}", pad.terminal), "package terminal")?,
+            )),
             number: pad.key.clone(),
             position: point(pad.at)?,
             rotation_mdeg: rotation,
@@ -584,15 +675,10 @@ fn footprint(
             vias: Vec::new(),
         });
     }
-    let mut next = local(pads.len(), 1)?;
     let mut graphics = Vec::new();
-    let mut push = |layer: DrawingLayer, item: Item, graphics: &mut Vec<FootprintGraphic>| {
-        let id = GraphicId(next);
-        next = next
-            .checked_add(1)
-            .ok_or_else(|| refused("the footprint has more items than local ids".into()))?;
+    let mut push = |key: String, layer: DrawingLayer, item: Item| {
         graphics.push(FootprintGraphic {
-            id,
+            id: GraphicId(ids.id(key)?),
             layer,
             side: graphics::Side::Component,
             item,
@@ -600,10 +686,18 @@ fn footprint(
         Ok::<(), Error>(())
     };
     for graphic in &source.silk {
-        push(DrawingLayer::Silkscreen, item(graphic)?, &mut graphics)?;
+        push(
+            format!("g:{}", graphic.key),
+            DrawingLayer::Silkscreen,
+            item(graphic)?,
+        )?;
     }
     for graphic in &source.assembly {
-        push(DrawingLayer::Assembly, item(graphic)?, &mut graphics)?;
+        push(
+            format!("g:{}", graphic.key),
+            DrawingLayer::Assembly,
+            item(graphic)?,
+        )?;
     }
     if !source.courtyard.is_empty() {
         let courtyard = Item::Shape {
@@ -615,14 +709,14 @@ fn footprint(
                     .collect::<Result<_>>()?,
                 radii_nm: Vec::new(),
             },
-            width_nm: Nm::from_mm_f64_rounded(COURTYARD_STROKE_MM)?,
+            width_nm: COURTYARD_STROKE,
             fill: graphics::Fill::None,
         };
-        push(DrawingLayer::Courtyard, courtyard, &mut graphics)?;
+        push("courtyard".into(), DrawingLayer::Courtyard, courtyard)?;
     }
     Ok(FootprintDefinition {
         package,
-        next_local: next,
+        next_local: ids.next_local(),
         source: None,
         pads,
         graphics,
