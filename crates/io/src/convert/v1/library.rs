@@ -13,7 +13,7 @@
 //! - [`marking`]: marking specs and their placement;
 //! - [`models`]: 3D model definitions, model placement and lead fits.
 use super::{footprints, forms, marking, models, symbols};
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 
 /// The library arrays of a project and the kind each holds.

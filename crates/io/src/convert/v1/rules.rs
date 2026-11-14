@@ -28,7 +28,7 @@
 //! saying so, and every project override of a `via_hole` pair gains its
 //! `npth_hole` twin, so a converted board is checked as before; enter the
 //! fabricator's NPTH values afterwards.
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value, json};
 
 /// Rules the old profiles did not hold, with the value the code used.

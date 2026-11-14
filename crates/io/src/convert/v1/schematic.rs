@@ -2,7 +2,7 @@
 //! `[x, y]` point becomes `{"x_nm", "y_nm"}`, and `radius`, `offset` and
 //! `height` become `radius_nm`, `offset_nm` and `height_nm`.
 use super::json::{items, length, point};
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 
 /// Rewrites the schematic's stored lengths; the number of values changed.

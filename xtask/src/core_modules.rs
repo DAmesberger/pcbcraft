@@ -235,7 +235,10 @@ const MAP: &[(&str, &[&str])] = &[
     ),
     ("updates", BELOW_UPDATES),
     ("commands", BELOW_COMMANDS),
-    ("format", &["diagnostics", "model", "library", "validate"]),
+    (
+        "format",
+        &["product", "diagnostics", "model", "library", "validate"],
+    ),
 ];
 
 const BELOW_UPDATES: &[&str] = &[

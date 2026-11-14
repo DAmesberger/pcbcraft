@@ -11,7 +11,7 @@
 //! anchors and heights, pins (position, length, name and number offsets),
 //! a symbol's pin text height and the drafts' grid become nanometres.
 use super::json::{items, length, object, point};
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 use sparksmith_core::geometry::Shape;
 use sparksmith_core::library::ShapeNm;

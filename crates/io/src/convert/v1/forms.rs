@@ -8,7 +8,7 @@
 //! keep-out's growth, the envelope) become `_nm` integer arrays; a
 //! ground-pad array's turn becomes whole millidegrees.
 use super::json::{angle, items, length, lengths, object, point};
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 
 /// One definition body of `kind`; the number of values changed.

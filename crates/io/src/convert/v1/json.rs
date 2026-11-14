@@ -4,7 +4,7 @@
 //! `units::Angle::from_degrees_f64_rounded`) does. Each edit reports how many
 //! values it changed and leaves an already converted value alone, so a
 //! second run changes nothing.
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 
 /// `units::MAX_COORD_NM`.

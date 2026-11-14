@@ -11,7 +11,7 @@
 //! surfaces' planes and cylinders convert as above (`base_nm`,
 //! `radius_nm`, `length_nm`). Lead fits are replies and never stored.
 use super::json::{angles, bounds, items, length, lengths, object};
-use crate::Result;
+use crate::convert::Result;
 use serde_json::{Map, Value};
 
 /// One definition body of `kind`; the number of values changed.

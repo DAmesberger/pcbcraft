@@ -195,7 +195,7 @@ fn missing_mismatched_unreferenced_and_unknown_entries_are_refused_by_name() -> 
         ),
         (
             vec![(CONTAINER_DOCUMENT, &newer, D)],
-            "unsupported editor file version 999".into(),
+            "format version 999, from a newer".into(),
         ),
         (vec![(CONTAINER_DOCUMENT, b"not json", D)], "".into()),
     ];
