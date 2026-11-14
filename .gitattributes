@@ -2,3 +2,7 @@
 # golden outputs are compared exactly, so Git must not convert line endings
 # (for example to CRLF on Windows).
 * -text
+
+# Hashed by their bytes (the generator bundles and their source part files).
+library/generators/** -text
+generators/*/parts/** -text

@@ -113,8 +113,8 @@ opt-level = 2
 debug = false
 
 # Generator modules (`generators/*`, built by `cargo xtask generators build`):
-# small, panic-free and byte-reproducible. A module's SHA-256 is its identity,
-# recorded in generators/modules.lock, so every setting here is part of it.
+# small, panic-free and byte-reproducible. The committed module's SHA-256 is
+# its hash (library/generators/<name>/), so every setting here is part of it.
 [profile.generator]
 inherits = "release"
 opt-level = "s"
