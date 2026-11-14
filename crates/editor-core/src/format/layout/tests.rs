@@ -251,7 +251,15 @@ fn the_declared_orders_are_pinned() {
         (
             &records::PLACEMENTS,
             None,
-            &["instance", "layer", "position", "rotation_deg", "locked"],
+            &[
+                "instance",
+                "layer",
+                "position",
+                "rotation_deg",
+                "locked",
+                "fill_override",
+                "pad_fill_overrides",
+            ],
         ),
         (&records::NETS, None, &["id", "name", "terminals"]),
         (

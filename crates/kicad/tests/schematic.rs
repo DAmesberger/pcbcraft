@@ -119,7 +119,12 @@ fn the_schematic_is_drawn_and_its_nets_equal_the_boards() -> Fallible<()> {
             sparksmith_core::Revision::FIRST,
         ))
         .ok_or("symbol")?;
-    let pins: Vec<_> = symbol.definition.units.iter().flat_map(|u| &u.pins).collect();
+    let pins: Vec<_> = symbol
+        .definition
+        .units
+        .iter()
+        .flat_map(|u| &u.pins)
+        .collect();
     assert_eq!(pins.len(), 2);
     let p = pins[0].position.to_mm_f64();
     assert!(p[0].abs() < 1e-9 && (p[1] - 3.81).abs() < 1e-9, "{p:?}");

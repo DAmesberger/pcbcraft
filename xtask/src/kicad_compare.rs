@@ -225,7 +225,7 @@ fn findings_line(project: &sparksmith_core::Project) -> String {
 fn import(
     bytes: &[u8],
     project_file: Option<&[u8]>,
-    schematic: Option<&(String, std::collections::BTreeMap<String, Vec<u8>>)>,
+    schematic: Option<&sparksmith_io::kicad_files::SchematicFiles>,
 ) -> Result<sparksmith_kicad::Imported> {
     let defaults = sparksmith_io::new_project::shipped()?;
     let profile = sparksmith_io::rule_profiles::for_new_board_from_env(None)?;
@@ -237,10 +237,8 @@ fn import(
             profile: Some(&profile),
             evaluators: evaluators(),
             project_file,
-            schematic: schematic.map(|(root, files)| sparksmith_kicad::schematic::SchematicFiles {
-                root,
-                files,
-            }),
+            schematic: schematic
+                .map(|(root, files)| sparksmith_kicad::schematic::SchematicFiles { root, files }),
         },
     )?)
 }
@@ -474,7 +472,7 @@ mod tests {
               (property \"Value\" \"QQSECRETVALUE\" (at 0 0 0) (layer \"F.Fab\")) \
               (pad \"QQ7\" smd rect (at 0.4321 0 90) (size 1.2345 0.6789) (layers \"F.Cu\" \"F.Paste\" \"F.Mask\") \
                 (net 1 \"QQSECRETNET\") (pinfunction \"QQPINFN\") (zqxtoken 1))))";
-        let imported = import(text.as_bytes(), None)?;
+        let imported = import(text.as_bytes(), None, None)?;
         let set = fabrication::generate(imported.engine.project(), &FabricationOptions::default())?;
         let ours: Vec<File> = set
             .files

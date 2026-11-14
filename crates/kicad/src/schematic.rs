@@ -204,7 +204,10 @@ fn unit_of(name: &str) -> (u32, u32) {
 fn lib_symbol(node: &Node) -> Result<LibSymbol> {
     let mut out = LibSymbol {
         power: node.child("power").is_some(),
-        extends: node.child("extends").and_then(|e| e.arg(0)).map(str::to_owned),
+        extends: node
+            .child("extends")
+            .and_then(|e| e.arg(0))
+            .map(str::to_owned),
         ..LibSymbol::default()
     };
     let mut pins = |unit: u32, n: &Node| -> Result<()> {
@@ -397,16 +400,25 @@ pub fn read_file(bytes: &[u8]) -> Result<SheetFile> {
 
 /// Read a schematic's hierarchy from its root file.
 pub fn read(files: SchematicFiles<'_>) -> Result<Schematic> {
+    /// A sheet instance still to read: its file, name, paths, parent
+    /// (sheet and sheet-symbol index) and depth.
+    type Pending = (
+        String,
+        String,
+        String,
+        String,
+        Option<(usize, usize)>,
+        usize,
+    );
     let mut out = Schematic::default();
-    let mut stack: Vec<(String, String, String, String, Option<(usize, usize)>, usize)> =
-        vec![(
-            files.root.to_owned(),
-            String::new(),
-            String::new(),
-            String::new(),
-            None,
-            0,
-        )];
+    let mut stack: Vec<Pending> = vec![(
+        files.root.to_owned(),
+        String::new(),
+        String::new(),
+        String::new(),
+        None,
+        0,
+    )];
     while let Some((file, name, path, short, parent, depth)) = stack.pop() {
         if depth > MAX_DEPTH {
             return Err(SchematicError::Limit("a hierarchy deeper than 32 sheets"));
@@ -468,14 +480,22 @@ impl Schematic {
 
     /// The library symbol `symbol` uses, its pins those of what it
     /// extends.
-    pub fn lib<'a>(&self, file: &'a SheetFile, symbol: &KSymbol) -> Option<(bool, Vec<&'a LibPin>)> {
+    pub fn lib<'a>(
+        &self,
+        file: &'a SheetFile,
+        symbol: &KSymbol,
+    ) -> Option<(bool, Vec<&'a LibPin>)> {
         let (power, base) = self.library(file, symbol)?;
         Some((power, base.pins.iter().collect()))
     }
 
     /// The library symbol with the pins and body: its own, or what it
     /// extends.
-    pub fn library<'a>(&self, file: &'a SheetFile, symbol: &KSymbol) -> Option<(bool, &'a LibSymbol)> {
+    pub fn library<'a>(
+        &self,
+        file: &'a SheetFile,
+        symbol: &KSymbol,
+    ) -> Option<(bool, &'a LibSymbol)> {
         let own = file.lib.get(&symbol.lib_id)?;
         if own.pins.is_empty()
             && let Some(base) = own.extends.as_ref().and_then(|b| {
@@ -554,15 +574,11 @@ pub fn strokes(
         );
         let mut on: Vec<PointNm> = points
             .iter()
-            .filter(|p| {
-                p[0] >= lo[0] && p[0] <= hi[0] && p[1] >= lo[1] && p[1] <= hi[1]
-            })
+            .filter(|p| p[0] >= lo[0] && p[0] <= hi[0] && p[1] >= lo[1] && p[1] <= hi[1])
             .filter(|p| inside(**p, w[0], w[1]))
             .copied()
             .collect();
-        let d = |p: &PointNm| {
-            ((p[0] - w[0][0]) as i128).pow(2) + ((p[1] - w[0][1]) as i128).pow(2)
-        };
+        let d = |p: &PointNm| ((p[0] - w[0][0]) as i128).pow(2) + ((p[1] - w[0][1]) as i128).pow(2);
         on.sort_by_key(d);
         let mut prev = w[0];
         for p in on.into_iter().chain([w[1]]) {

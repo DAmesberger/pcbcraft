@@ -130,12 +130,7 @@ impl<'a> Ctx<'a> {
             .collect();
         let override_reach = pads
             .iter()
-            .map(|p| {
-                let o = &p.fill_override;
-                let clearance = o.clearance.unwrap_or(0.0);
-                let relief = o.thermal_gap.unwrap_or(0.0) + o.spoke_width.unwrap_or(0.0);
-                clearance.max(relief)
-            })
+            .map(|p| p.fill_override.reach_mm())
             .fold(0.0, f64::max);
         Self {
             project,
@@ -466,7 +461,8 @@ impl<'a> Ctx<'a> {
                     PadConnection::None => {
                         let class = self.class(pad.net);
                         let gap =
-                            self.clearance_over(fill, CopperObject::Pad, class, o.clearance) + tol;
+                            self.clearance_over(fill, CopperObject::Pad, class, o.clearance_mm())
+                                + tol;
                         if let Some(shape) = pad.pad.shape.grown(gap, tol) {
                             rings.extend(geom::ccw(shape.transformed(&frame).flatten(tol)));
                         }

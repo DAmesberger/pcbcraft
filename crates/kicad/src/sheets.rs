@@ -14,13 +14,11 @@ use sparksmith_core::library::graphics::{
     self, HAlign, Justify, Pin, PinDirection, Rotation, TextContent, VAlign,
 };
 use sparksmith_core::library::{SymbolDefinition, Unit};
-use sparksmith_core::{DefinitionId, GraphicId, UnitId};
 use sparksmith_core::model::sheet::{Paper, PaperOrientation, PortShape, SheetSide};
-use sparksmith_core::model::{
-    Corner, FreeEnd, JunctionRef, LabelKind, LabelRef, SheetPinRef,
-};
+use sparksmith_core::model::{Corner, FreeEnd, JunctionRef, LabelKind, LabelRef, SheetPinRef};
 use sparksmith_core::schematic::{SchematicCommand, WirePoint, WireTarget};
 use sparksmith_core::units::{Nm, PointNm as OurPoint};
+use sparksmith_core::{DefinitionId, GraphicId, UnitId};
 use sparksmith_core::{Endpoint, Id, InstanceCommand, Operation, Outcome, SheetId, TerminalId};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -282,13 +280,14 @@ pub(crate) fn sheets(
                         child: None,
                         name: Some(name),
                         position: nm_point(top_left)?,
-                        size: nm_point([
-                            symbol.size[0] as f64 / 1e6,
-                            symbol.size[1] as f64 / 1e6,
-                        ])?,
+                        size: nm_point([symbol.size[0] as f64 / 1e6, symbol.size[1] as f64 / 1e6])?,
                     }),
                 )?;
-                let Outcome::SheetSymbolPlaced { symbol: ours_id, child } = outcome else {
+                let Outcome::SheetSymbolPlaced {
+                    symbol: ours_id,
+                    child,
+                } = outcome
+                else {
                     return Err(refused("sheet_symbol.place", "no sheet symbol"));
                 };
                 plan.symbols.insert((parent, k), ours_id);
@@ -318,7 +317,10 @@ pub(crate) fn sheets(
                 continue;
             }
             let (rotation, mirror) = orientation(symbol);
-            let units = plan.places.entry(reference.to_ascii_uppercase()).or_default();
+            let units = plan
+                .places
+                .entry(reference.to_ascii_uppercase())
+                .or_default();
             // One place per unit; a unit drawn twice keeps its first.
             if !units.iter().any(|u| u.unit == unit) {
                 units.push(UnitPlace {
@@ -639,7 +641,10 @@ pub(crate) fn wire(
             let (reference, unit) = schematic.reference(sheet, symbol);
             if is_power {
                 for pin in pins {
-                    power.push((schematic::pin_on_sheet(symbol, pin.at), symbol.value.clone()));
+                    power.push((
+                        schematic::pin_on_sheet(symbol, pin.at),
+                        symbol.value.clone(),
+                    ));
                 }
                 continue;
             }
@@ -707,7 +712,9 @@ pub(crate) fn wire(
                     "sheet_pin.add",
                     Operation::Schematic(SchematicCommand::AddSheetPin {
                         symbol: ours_id,
-                        name: naming.label(k_child(plan, index, k), Rank::Hierarchical, name).1,
+                        name: naming
+                            .label(k_child(plan, index, k), Rank::Hierarchical, name)
+                            .1,
                         shape: PortShape::default(),
                         side,
                         offset: Nm::try_new(offset.max(0)).unwrap_or(Nm::ZERO),
@@ -806,21 +813,28 @@ pub(crate) fn wire(
             if !touched {
                 report.add_n(Case::PinUnconnected, anchors.pins.len());
             }
-            let mid = file
-                .wires
-                .iter()
-                .any(|w| schematic::inside(*p, w[0], w[1]))
+            let mid = file.wires.iter().any(|w| schematic::inside(*p, w[0], w[1]))
                 && !file.wires.iter().any(|w| w[0] == *p || w[1] == *p)
                 && !file.junctions.contains(p);
             if mid {
-                report.add_n(Case::PinOnWire, anchors.pins.len().max(anchors.labels.len()));
+                report.add_n(
+                    Case::PinOnWire,
+                    anchors.pins.len().max(anchors.labels.len()),
+                );
             }
         }
         // Several pins at one point: wired to the first.
         for anchors in at.values() {
             if let Some((first, rest)) = anchors.pins.split_first() {
                 for other in rest {
-                    draw(session, sid, WireTarget::Terminal(*other), &[], WireTarget::Terminal(*first), report);
+                    draw(
+                        session,
+                        sid,
+                        WireTarget::Terminal(*other),
+                        &[],
+                        WireTarget::Terminal(*first),
+                        report,
+                    );
                 }
             }
         }
@@ -838,7 +852,11 @@ pub(crate) fn wire(
             }
         }
         // Wires, as strokes between anchored points.
-        let extra: Vec<PointNm> = at.keys().copied().chain(file.junctions.iter().copied()).collect();
+        let extra: Vec<PointNm> = at
+            .keys()
+            .copied()
+            .chain(file.junctions.iter().copied())
+            .collect();
         let keyed: BTreeSet<PointNm> = at
             .iter()
             .filter(|(_, a)| a.target().is_some())
@@ -861,9 +879,8 @@ pub(crate) fn wire(
                     on_sheet(session, sid, p)
                 };
                 let (a, b) = (end(session, *first), end(session, *last));
-                let dangling = |p: &PointNm| {
-                    !keyed.contains(p) && !stroke_through(&file.wires, *p, &stroke)
-                };
+                let dangling =
+                    |p: &PointNm| !keyed.contains(p) && !stroke_through(&file.wires, *p, &stroke);
                 let a = a.or_else(|| dangling(first).then(|| free(*first)).flatten());
                 let b = b.or_else(|| dangling(last).then(|| free(*last)).flatten());
                 match (a, b) {
@@ -936,12 +953,19 @@ fn on_sheet(session: &Session<'_>, sid: SheetId, p: PointNm) -> Option<WireTarge
         let d = sparksmith_core::geometry::segment_distance(at, a, b);
         d < 1e-6
     };
-    project.wires.iter().filter(|w| w.sheet == sid).find_map(|w| {
-        let path = sparksmith_core::schematic::wire_path(project, w)?;
-        path.windows(2)
-            .any(|s| on(s[0], s[1]))
-            .then_some(WireTarget::OnWire(WirePoint { wire: w.id, at: here }))
-    })
+    project
+        .wires
+        .iter()
+        .filter(|w| w.sheet == sid)
+        .find_map(|w| {
+            let path = sparksmith_core::schematic::wire_path(project, w)?;
+            path.windows(2)
+                .any(|s| on(s[0], s[1]))
+                .then_some(WireTarget::OnWire(WirePoint {
+                    wire: w.id,
+                    at: here,
+                }))
+        })
 }
 
 fn draw(

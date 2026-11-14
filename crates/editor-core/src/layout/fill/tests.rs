@@ -1481,7 +1481,7 @@ fn part_and_pad_overrides_change_how_the_fill_joins_a_pad() -> Fallible<()> {
     // names (above the rule's).
     let none = PadFillOverride {
         connection: Some(PadConnection::None),
-        clearance: Some(0.6),
+        clearance: Some(crate::units::Nm::from_mm_f64_rounded(0.6)?),
         ..Default::default()
     };
     set_override(&mut engine, instance, Some(pad), none)?;
@@ -1495,8 +1495,10 @@ fn part_and_pad_overrides_change_how_the_fill_joins_a_pad() -> Fallible<()> {
     // the turned spokes run, none along the fill's own spoke directions.
     let turned = PadFillOverride {
         connection: Some(PadConnection::Thermal),
-        spoke_angle_deg: Some(t.angle_deg + 45.0),
-        spoke_width: Some(t.spoke_width * 1.5),
+        spoke_angle: Some(crate::units::Angle::from_degrees_f64_rounded(
+            t.angle_deg + 45.0,
+        )?),
+        spoke_width: Some(crate::units::Nm::from_mm_f64_rounded(t.spoke_width * 1.5)?),
         ..Default::default()
     };
     set_override(&mut engine, instance, Some(pad), turned)?;
@@ -1507,7 +1509,7 @@ fn part_and_pad_overrides_change_how_the_fill_joins_a_pad() -> Fallible<()> {
 
     // Empty settings remove the override; out-of-bounds ones are refused.
     let bad = PadFillOverride {
-        spoke_width: Some(0.0),
+        spoke_width: Some(crate::units::Nm::ZERO),
         ..Default::default()
     };
     assert!(

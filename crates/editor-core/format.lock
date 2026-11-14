@@ -1,5 +1,10 @@
 {
-  "features": [],
-  "schema_sha256": "1c76e6142ce8fdf742de92a2aa46fd5945e57435ca14eefdd7226efe37fada68",
+  "features": [
+    "pad_fill_overrides",
+    "parts_without_terminals",
+    "board_only_parts",
+    "project_rule_source"
+  ],
+  "schema_sha256": "6e15dc3ef25a17cb18984b91c50aacd9d24a4e5464e0640800c30bf6746353c1",
   "version": 2
 }

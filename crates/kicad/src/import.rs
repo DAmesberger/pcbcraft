@@ -198,7 +198,9 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
         per_footprint.push(records);
         terminal_nets.push(nets);
         zone_overrides.push(overrides);
-        let symbol = by_reference.get(&fp.reference.to_ascii_uppercase()).cloned();
+        let symbol = by_reference
+            .get(&fp.reference.to_ascii_uppercase())
+            .cloned();
         let mut key = serde_json::to_string(&pads).map_err(|e| ImportError::Refused {
             step: "footprint key",
             reason: e.to_string(),
@@ -327,8 +329,7 @@ pub fn import(bytes: &[u8], setup: &Setup<'_>) -> Result<Imported, ImportError> 
             properties: vec![],
             representation: set.symbol,
             unit,
-            position: PointNm::from_mm_f64_rounded(position)
-            .map_err(|e| ImportError::Refused {
+            position: PointNm::from_mm_f64_rounded(position).map_err(|e| ImportError::Refused {
                 step: "component.place",
                 reason: e.to_string(),
             })?,

@@ -124,17 +124,23 @@ fn footprint_and_pad_zone_overrides_become_fill_overrides() -> Fallible<()> {
         placement.fill_override,
         PadFillOverride {
             connection: Some(PadConnection::None),
-            spoke_width: Some(0.3),
+            spoke_width: sparksmith_core::units::Nm::try_new(300_000),
             ..Default::default()
         }
     );
     assert_eq!(placement.pad_fill_overrides.len(), 1);
     let pad = placement.pad_fill_overrides[0];
     assert_eq!(pad.settings.connection, Some(PadConnection::Thermal));
-    assert_eq!(pad.settings.spoke_angle_deg, Some(45.0));
-    assert_eq!(pad.settings.clearance, Some(0.4));
+    assert_eq!(
+        pad.settings.spoke_angle.map(|a| a.to_degrees_f64()),
+        Some(45.0)
+    );
+    assert_eq!(pad.settings.clearance_mm(), Some(0.4));
     // Pad 2 keeps the footprint's spoke width.
-    assert_eq!(placement.fill_override_of(pad.pad).spoke_width, Some(0.3));
+    assert_eq!(
+        placement.fill_override_of(pad.pad).spoke_width,
+        sparksmith_core::units::Nm::try_new(300_000)
+    );
     assert_eq!(imported.report.count(Case::PadZoneOverrides), 1);
     assert_eq!(imported.report.count(Case::FootprintZoneOverrides), 1);
     // Pad 1 follows the footprint, pad 2 its own.

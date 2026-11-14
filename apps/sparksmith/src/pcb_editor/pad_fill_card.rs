@@ -11,6 +11,7 @@ use egui::Ui;
 use sparksmith_core::layout::fill::FillCommand;
 use sparksmith_core::model::fill::PadFillOverride;
 use sparksmith_core::rules::PadConnection;
+use sparksmith_core::units::{Angle, Nm};
 use sparksmith_core::{Id, Operation, PadId, Placement, Project};
 
 /// Lengths an override takes, mm.
@@ -137,45 +138,60 @@ impl PcbEditor {
             )
             .collect();
             kit::choice_row(ui, "Connection", &mut d.connection, &connections);
-            optional_row(
+            let length = |ui: &mut Ui,
+                          label: &str,
+                          v: &mut Option<Nm>,
+                          under: Option<Nm>,
+                          rule: f64,
+                          range| {
+                let under = under.map(Nm::to_mm_f64);
+                let mut mm_value = v.map(Nm::to_mm_f64);
+                optional_row(
+                    ui,
+                    label,
+                    &mut mm_value,
+                    under.unwrap_or(rule),
+                    "mm",
+                    range,
+                    &follows(under.map(mm)),
+                );
+                *v = mm_value.and_then(|x| Nm::from_mm_f64_rounded(x).ok());
+            };
+            length(
                 ui,
                 "Spoke width",
                 &mut d.spoke_width,
-                under.spoke_width.unwrap_or(rules.thermal.spoke_width),
-                "mm",
+                under.spoke_width,
+                rules.thermal.spoke_width,
                 SPOKE_RANGE,
-                &follows(under.spoke_width.map(mm)),
             );
+            let under_angle = under.spoke_angle.map(Angle::to_degrees_f64);
+            let mut angle = d.spoke_angle.map(Angle::to_degrees_f64);
             optional_row(
                 ui,
                 "Spoke angle",
-                &mut d.spoke_angle_deg,
-                under.spoke_angle_deg.unwrap_or(rules.thermal.angle_deg),
+                &mut angle,
+                under_angle.unwrap_or(rules.thermal.angle_deg),
                 "°",
                 ANGLE_RANGE,
-                &follows(
-                    under
-                        .spoke_angle_deg
-                        .map(|a| format!("{}°", kit::number_text(a))),
-                ),
+                &follows(under_angle.map(|a| format!("{}°", kit::number_text(a)))),
             );
-            optional_row(
+            d.spoke_angle = angle.and_then(|a| Angle::from_degrees_f64_rounded(a).ok());
+            length(
                 ui,
                 "Relief gap",
                 &mut d.thermal_gap,
-                under.thermal_gap.unwrap_or(rules.thermal.gap),
-                "mm",
+                under.thermal_gap,
+                rules.thermal.gap,
                 MM_RANGE,
-                &follows(under.thermal_gap.map(mm)),
             );
-            optional_row(
+            length(
                 ui,
                 "Clearance",
                 &mut d.clearance,
-                under.clearance.unwrap_or(rules.clearance),
-                "mm",
+                under.clearance,
+                rules.clearance,
                 MM_RANGE,
-                &follows(under.clearance.map(mm)),
             );
         });
         if target != self.pad_fill_target.map(|(_, pad)| pad) {

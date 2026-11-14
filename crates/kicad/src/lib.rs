@@ -15,8 +15,8 @@ pub mod report;
 mod routing;
 pub mod schematic;
 pub mod sexpr;
-mod sheets;
 pub mod shape;
+mod sheets;
 pub mod translate;
 mod zones;
 

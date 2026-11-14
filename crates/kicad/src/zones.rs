@@ -4,7 +4,7 @@
 //! per copper layer; its copper is then computed by our engine
 //! (`fill.refill`), never taken from the file's stored fill (decision:
 //! fills are recomputed). A rule area becomes a keepout.
-use crate::board::{Board, Nm, PointNm, ZoneOverride};
+use crate::board::{Board, PointNm, ZoneOverride};
 use crate::import::{ImportError, Session};
 use crate::items::{KZone, ZoneConnect};
 use crate::report::{Case, Report};
@@ -17,13 +17,14 @@ use sparksmith_core::model::fill::{
     PadConnections, PadFillOverride,
 };
 use sparksmith_core::rules::{PadConnection, ThermalRelief};
+use sparksmith_core::units::Nm;
 use sparksmith_core::{CopperLayer, Id, Operation};
 use std::collections::BTreeMap;
 
 /// Spokes KiCad draws per thermal relief.
 const SPOKES: u32 = 4;
 
-fn mm(nm: Nm) -> f64 {
+fn mm(nm: crate::board::Nm) -> f64 {
     nm as f64 / 1e6
 }
 
@@ -61,10 +62,12 @@ pub(crate) fn pad_override(z: &ZoneOverride, through_hole: Option<bool>) -> PadF
     };
     PadFillOverride {
         connection,
-        spoke_width: z.thermal_width.filter(|w| *w > 0).map(mm),
-        spoke_angle_deg: z.thermal_angle,
-        thermal_gap: z.thermal_gap.map(mm),
-        clearance: z.clearance.filter(|c| *c > 0).map(mm),
+        spoke_width: z.thermal_width.filter(|w| *w > 0).and_then(Nm::try_new),
+        spoke_angle: z
+            .thermal_angle
+            .and_then(|a| sparksmith_core::units::Angle::from_degrees_f64_rounded(a).ok()),
+        thermal_gap: z.thermal_gap.filter(|g| *g >= 0).and_then(Nm::try_new),
+        clearance: z.clearance.filter(|c| *c > 0).and_then(Nm::try_new),
     }
 }
 

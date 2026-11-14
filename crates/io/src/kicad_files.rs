@@ -10,11 +10,12 @@ pub const MAX_SCHEMATIC: u64 = 64 * 1024 * 1024;
 /// Most schematic files read from one folder.
 pub const MAX_FILES: usize = 512;
 
-/// The root schematic's name and every schematic file's bytes, or `None`
-/// when the board has no root schematic beside it.
-pub fn schematic_files(
-    board: &Path,
-) -> std::io::Result<Option<(String, BTreeMap<String, Vec<u8>>)>> {
+/// The root schematic's name and every schematic file's bytes by name.
+pub type SchematicFiles = (String, BTreeMap<String, Vec<u8>>);
+
+/// The schematic files beside `board`, or `None` when it has no root
+/// schematic beside it.
+pub fn schematic_files(board: &Path) -> std::io::Result<Option<SchematicFiles>> {
     let Some(dir) = board.parent() else {
         return Ok(None);
     };

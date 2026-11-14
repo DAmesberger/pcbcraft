@@ -457,7 +457,11 @@ impl Case {
                 Report,
                 "pads without a pin of their number on the KiCad symbol (a pin inside the body)",
             ),
-            Self::UnitRefused => ("K5", Refused, "symbol units the engine refused to place or turn"),
+            Self::UnitRefused => (
+                "K5",
+                Refused,
+                "symbol units the engine refused to place or turn",
+            ),
             Self::PinUnconnected => (
                 "K5",
                 Report,

@@ -6,6 +6,7 @@ use crate::geometry::Point;
 use crate::ids::Id;
 use crate::library::Outline;
 use crate::rules::{PadConnection, ThermalRelief};
+use crate::units::{Angle, Nm};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -57,20 +58,20 @@ pub struct PadFillOverride {
     /// Solid, thermal spokes or not joined.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection: Option<PadConnection>,
-    /// Thermal spoke width, mm.
+    /// Thermal spoke width.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spoke_width: Option<f64>,
-    /// First spoke's angle in the pad frame, degrees.
+    pub spoke_width: Option<Nm>,
+    /// First spoke's angle in the pad frame.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spoke_angle_deg: Option<f64>,
-    /// Thermal relief gap between the pad and the fill, mm.
+    pub spoke_angle: Option<Angle>,
+    /// Thermal relief gap between the pad and the fill.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub thermal_gap: Option<f64>,
-    /// Gap from fill copper to the pad where the fill does not join it, mm,
-    /// in place of the fill's own clearance; the clearance rules still set
+    pub thermal_gap: Option<Nm>,
+    /// Gap from fill copper to the pad where the fill does not join it, in
+    /// place of the fill's own clearance; the clearance rules still set
     /// the floor.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub clearance: Option<f64>,
+    pub clearance: Option<Nm>,
 }
 
 impl PadFillOverride {
@@ -83,35 +84,46 @@ impl PadFillOverride {
         Self {
             connection: self.connection.or(under.connection),
             spoke_width: self.spoke_width.or(under.spoke_width),
-            spoke_angle_deg: self.spoke_angle_deg.or(under.spoke_angle_deg),
+            spoke_angle: self.spoke_angle.or(under.spoke_angle),
             thermal_gap: self.thermal_gap.or(under.thermal_gap),
             clearance: self.clearance.or(under.clearance),
         }
     }
 
     /// Lengths within 0–[`crate::rules::MAX_RULE_MM`] (a spoke wider than
-    /// 0), an angle within ±360°.
+    /// 0).
     pub fn valid(&self) -> bool {
-        let mm = |v: Option<f64>| {
-            v.is_none_or(|v| v.is_finite() && (0.0..=crate::rules::MAX_RULE_MM).contains(&v))
+        let mm = |v: Option<Nm>| {
+            v.is_none_or(|v| (0.0..=crate::rules::MAX_RULE_MM).contains(&v.to_mm_f64()))
         };
         mm(self.spoke_width)
-            && self.spoke_width.is_none_or(|w| w > 0.0)
+            && self.spoke_width.is_none_or(|w| w > Nm::ZERO)
             && mm(self.thermal_gap)
             && mm(self.clearance)
-            && self
-                .spoke_angle_deg
-                .is_none_or(|a| a.is_finite() && (-360.0..=360.0).contains(&a))
+    }
+
+    /// The clearance, mm.
+    pub fn clearance_mm(&self) -> Option<f64> {
+        self.clearance.map(Nm::to_mm_f64)
     }
 
     /// The thermal relief `base` with this override's spoke and gap.
     pub fn thermal(&self, base: ThermalRelief) -> ThermalRelief {
         ThermalRelief {
-            spoke_width: self.spoke_width.unwrap_or(base.spoke_width),
+            spoke_width: self.spoke_width.map_or(base.spoke_width, Nm::to_mm_f64),
             spoke_count: base.spoke_count,
-            gap: self.thermal_gap.unwrap_or(base.gap),
-            angle_deg: self.spoke_angle_deg.unwrap_or(base.angle_deg),
+            gap: self.thermal_gap.map_or(base.gap, Nm::to_mm_f64),
+            angle_deg: self
+                .spoke_angle
+                .map_or(base.angle_deg, Angle::to_degrees_f64),
         }
+    }
+
+    /// How far it reaches from a pad: its clearance, or its relief gap and
+    /// spoke, mm.
+    pub fn reach_mm(&self) -> f64 {
+        let mm = |v: Option<Nm>| v.map_or(0.0, Nm::to_mm_f64);
+        mm(self.clearance).max(mm(self.thermal_gap) + mm(self.spoke_width))
     }
 }
 

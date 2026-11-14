@@ -50,6 +50,8 @@ The project file carries a format `version` (`sparksmith_core::format::FILE_VERS
 - **Before the first release** the chain runs only as `sparksmith convert [--profile PROFILE.json] PATH…`. The app opens only the current version; an older file is refused with that command named, a newer one as "from a newer Sparksmith". The same command converts library folders, replays and old profile files with the units conversion in place (original kept as `.pre-nm`); their formats have no version step yet.
 - **Golden files.** `crates/io/tests/fixtures/format/v<N>/demo.sparksmith` holds the same small original design (`Engine::demo`) for every version, never regenerated once committed. Each old golden converts to the current golden byte for byte; the current golden opens and saves byte for byte. When the version rises, `cargo test -p sparksmith-io --lib write_missing_golden_files -- --ignored` writes the new golden by converting the previous one; check it before committing.
 
+Named features so far: `pad_fill_overrides` (a part's or pad's fill override), `parts_without_terminals` (a component or package without terminals that no part file models), `board_only_parts` (an instance on the board only) and `project_rule_source` (the project's own rule set names its source).
+
 To raise the version: change the types, raise `FILE_VERSION`, add the step to `STEPS`, write the new golden, convert the files in `examples/`, then run `cargo xtask format-lock --update` and commit `crates/editor-core/format.lock` with the change.
 
 ## CLI, JSON lines and MCP

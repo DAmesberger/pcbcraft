@@ -39,9 +39,8 @@ pub fn import_with_schematic(
             profile: Some(&profile),
             evaluators: Default::default(),
             project_file,
-            schematic: schematic.map(|(root, files)| {
-                sparksmith_kicad::schematic::SchematicFiles { root, files }
-            }),
+            schematic: schematic
+                .map(|(root, files)| sparksmith_kicad::schematic::SchematicFiles { root, files }),
         },
     )
 }

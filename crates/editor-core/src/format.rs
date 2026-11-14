@@ -38,7 +38,21 @@ pub const FILE_VERSION: u32 = 2;
 /// The optional capabilities this build reads, by the name a file lists
 /// them under. None are defined yet; a feature is added here together with
 /// its test in [`features_used`].
-pub const FEATURES: &[&str] = &[];
+pub const FEATURES: &[&str] = &[
+    PAD_FILL_OVERRIDES,
+    PARTS_WITHOUT_TERMINALS,
+    BOARD_ONLY_PARTS,
+    PROJECT_RULE_SOURCE,
+];
+/// A placed part or pad overrides how fills join it
+/// (`Placement::fill_override`, `pad_fill_overrides`).
+pub const PAD_FILL_OVERRIDES: &str = "pad_fill_overrides";
+/// A component or package without terminals that no part file models.
+pub const PARTS_WITHOUT_TERMINALS: &str = "parts_without_terminals";
+/// An instance on the board only (`ComponentInstance::board_only`).
+pub const BOARD_ONLY_PARTS: &str = "board_only_parts";
+/// The project's own rule set names its source (`ProjectRules::source`).
+pub const PROJECT_RULE_SOURCE: &str = "project_rule_source";
 pub const EXTENSION: &str = "sparksmith";
 /// The extension before the rename from Pcbcraft (docs/rename-phase-b.md).
 /// Such a file holds this same format, so it opens through the same reader
@@ -90,8 +104,38 @@ pub fn encode_container_document(file: &EditorFile) -> Result<Vec<u8>> {
 
 /// The features `file` uses, sorted: what its saved form lists. Each
 /// feature in [`FEATURES`] adds its test here.
-pub fn features_used(_file: &EditorFile) -> Vec<&'static str> {
-    Vec::new()
+pub fn features_used(file: &EditorFile) -> Vec<&'static str> {
+    let project = &file.project;
+    let mut out = Vec::new();
+    if project
+        .placements
+        .iter()
+        .any(|p| !p.fill_override.is_empty() || !p.pad_fill_overrides.is_empty())
+    {
+        out.push(PAD_FILL_OVERRIDES);
+    }
+    let library = &project.library;
+    let pinless_component = library.components.iter().any(|c| {
+        c.definition.terminals.is_empty()
+            && !crate::library::mechanical::implemented_mechanically(library, &c.definition)
+    });
+    let pinless_package = library.packages.iter().any(|p| {
+        p.definition.terminals.is_empty()
+            && !matches!(
+                p.definition.model,
+                crate::library::PackageModel::PartFile(_)
+            )
+    });
+    if pinless_component || pinless_package {
+        out.push(PARTS_WITHOUT_TERMINALS);
+    }
+    if project.instances.iter().any(|i| i.board_only) {
+        out.push(BOARD_ONLY_PARTS);
+    }
+    if project.rules.source.is_some() {
+        out.push(PROJECT_RULE_SOURCE);
+    }
+    out
 }
 
 /// The saved form of an [`EditorFile`]: its fields, with the features it
@@ -293,6 +337,25 @@ mod tests {
         let mut listed = value.clone();
         listed["features"] = serde_json::json!([]);
         assert_eq!(refusal(&listed)?, "accepted");
+        Ok(())
+    }
+
+    /// A file that names its project rule source lists that feature, and
+    /// one that leaves the list out is refused.
+    #[test]
+    fn a_used_feature_is_listed_and_required() -> Result<()> {
+        let mut document = Document::default();
+        std::sync::Arc::make_mut(&mut document.project).rules.source =
+            Some("From the KiCad project".into());
+        let file = EditorFile::from_document(&document);
+        let value: serde_json::Value = serde_json::from_slice(&encode(&file)?)?;
+        assert_eq!(value["features"], serde_json::json!([PROJECT_RULE_SOURCE]));
+        assert_eq!(refusal(&value)?, "accepted");
+        let mut unlisted = value.clone();
+        if let Some(object) = unlisted.as_object_mut() {
+            object.remove("features");
+        }
+        assert!(refusal(&unlisted)?.contains("project_rule_source"));
         Ok(())
     }
 
